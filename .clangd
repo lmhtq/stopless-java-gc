@@ -1,0 +1,11 @@
+# clangd configuration. Forces C++17 mode for .cc/.h in this repo even before
+# a compile_commands.json exists (cmake generates one in build/ on configure).
+CompileFlags:
+  Add:
+    - -xc++
+    - -std=c++17
+    - -Wall
+    - -Isrc/cap_runtime
+    - -Isrc/measurement
+  Remove:
+    - -W*-fortran-*
