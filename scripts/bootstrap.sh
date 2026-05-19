@@ -3,7 +3,16 @@
 # build CheriBSD image. Idempotent: safe to re-run after a fresh clone or after
 # a pin bump.
 #
-# See docs/03_build_setup.md for prerequisites and expected runtime (~2–6h).
+# Modes:
+#   (default)    full bootstrap: preflight + clone all + build Morello SDK
+#                (~2–6 hours total; the SDK build dominates)
+#   --no-build   preflight + clone only; skip the SDK build. Useful for dev
+#                iteration where source analysis is enough.
+#   --check      preflight only; report which steps would run.
+#   --skip-mojo  skip MOJO patches download (they're an empty URL placeholder
+#                until MOJO publishes a stable patch-series tarball).
+#
+# See docs/03_build_setup.md for prerequisites and expected runtime.
 
 set -euo pipefail
 
@@ -12,6 +21,21 @@ THIRD_PARTY="${REPO_ROOT}/third_party"
 
 # shellcheck source=/dev/null
 source "${REPO_ROOT}/scripts/upstream_pins.env"
+
+MODE_BUILD=1
+MODE_CLONE=1
+SKIP_MOJO=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --no-build)  MODE_BUILD=0; shift ;;
+        --check)     MODE_BUILD=0; MODE_CLONE=0; shift ;;
+        --skip-mojo) SKIP_MOJO=1; shift ;;
+        -h|--help)
+            sed -n '2,16p' "$0"; exit 0 ;;
+        *) printf 'bootstrap.sh: unknown arg: %s\n' "$1" >&2; exit 2 ;;
+    esac
+done
 
 log()  { printf '\033[1;36m[bootstrap]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[bootstrap warn]\033[0m %s\n' "$*" >&2; }
@@ -80,6 +104,10 @@ fetch_mojo() {
     log "step 3/5: MOJO patch series"
     local mojo_dir="${THIRD_PARTY}/mojo-patches"
     mkdir -p "${mojo_dir}"
+    if [[ "${SKIP_MOJO}" -eq 1 ]]; then
+        warn "--skip-mojo set; will need manual placement at ${mojo_dir}"
+        return
+    fi
     if [[ -f "${mojo_dir}/.fetched" ]]; then
         log "MOJO patches already fetched; skipping"
         return
@@ -89,8 +117,12 @@ fetch_mojo() {
         return
     fi
     log "downloading ${MOJO_PATCHES_URL}"
-    curl -fL -o "${mojo_dir}/patches.tgz" "${MOJO_PATCHES_URL}" \
-        || { warn "MOJO download failed (URL may have moved). See docs/03_build_setup.md."; return; }
+    if ! curl -fL -o "${mojo_dir}/patches.tgz" "${MOJO_PATCHES_URL}" 2>&1; then
+        warn "MOJO download failed (URL may have moved or be a placeholder)."
+        warn "Get patches manually from https://www.mojo-jvm.org/ and unpack into ${mojo_dir}/."
+        warn "Or re-run with --skip-mojo to silence this step."
+        return
+    fi
     tar -xzf "${mojo_dir}/patches.tgz" -C "${mojo_dir}"
     touch "${mojo_dir}/.fetched"
 }
@@ -131,15 +163,54 @@ verify_fvp() {
     fi
 }
 
+final_summary() {
+    log ""
+    log "=== bootstrap summary ==="
+    for d in cheribuild openjdk-jdk17 cheribsd mojo-patches; do
+        if [[ -d "${THIRD_PARTY}/${d}" ]]; then
+            log "  third_party/${d}                    present"
+        else
+            log "  third_party/${d}                    MISSING"
+        fi
+    done
+    if [[ -x "${THIRD_PARTY}/cheri/output/sdk/bin/clang" ]]; then
+        log "  third_party/cheri/output/sdk/clang  present"
+    else
+        log "  third_party/cheri/output/sdk/clang  not yet built"
+    fi
+    if [[ -x "${REPO_ROOT}/${MORELLO_FVP_PATH}" ]]; then
+        log "  Morello FVP                         present"
+    else
+        log "  Morello FVP                         missing (manual download)"
+    fi
+    log ""
+    if [[ "${MODE_BUILD}" -eq 1 ]]; then
+        log "Next: ./scripts/apply_patches.sh (no-op until patch series populates)"
+    else
+        log "Skipped SDK build (--no-build / --check). Re-run without flags to complete."
+    fi
+}
+
 main() {
     preflight
-    fetch_cheribuild
-    fetch_openjdk
-    fetch_mojo
-    fetch_cheribsd
-    build_morello_sdk
+
+    if [[ "${MODE_CLONE}" -eq 1 ]]; then
+        fetch_cheribuild
+        fetch_openjdk
+        fetch_mojo
+        fetch_cheribsd
+    else
+        log "--check: would clone cheribuild, openjdk-jdk17, cheribsd, mojo-patches"
+    fi
+
+    if [[ "${MODE_BUILD}" -eq 1 ]]; then
+        build_morello_sdk
+    else
+        log "skipping Morello SDK build (--no-build / --check)"
+    fi
+
     verify_fvp
-    log "bootstrap complete. Next: ./scripts/apply_patches.sh"
+    final_summary
 }
 
 main "$@"
