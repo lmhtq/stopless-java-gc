@@ -1,0 +1,149 @@
+% paper/phase_ii.tex — Main paper draft
+% Title: CHERI-Native Load Barriers for ZGC
+%
+% Target venues: ASPLOS, ISMM, or PLDI. arXiv preprint on submission.
+% Builds on the Phase 1 port (paper/phase_i.tex).
+
+\documentclass[acmsmall,nonacm]{acmart}
+
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\title{{CHERI}-Native Load Barriers for {ZGC}: \\
+       Hardware-Checked Tags Replace Software Color Masks
+       in a Concurrent Moving GC}
+\author{[Anonymised for review]}
+\affiliation{\institution{[Anonymised]}\country{}}
+\email{}
+
+\begin{abstract}
+Concurrent moving garbage collectors—exemplified by OpenJDK's ZGC—pay
+a per-load CPU tax to detect references to objects being relocated.
+The check is a software \texttt{AND}+branch executed on every reference
+load. ARM's CHERI capability hardware provides a hardware-checked tag
+bit on every capability load, with no software overhead in the fast
+path. We propose using CHERI's tag check, driven by Cornucopia
+Reloaded's per-page revocation bitmap, as ZGC's load barrier:
+mutators issue ordinary capability loads, the LSU traps stale caps
+into a software handler, and the handler self-heals via the
+forwarding table from our previous ZGC-on-CHERI port. We measure on
+the Morello FVP a [TODO]$\times$ reduction in per-reference-load
+barrier CPU cost on pointer-chasing benchmarks, with no statistically
+significant regression in p99.9 pause time. The result demonstrates
+that a moving GC can use capability hardware as its load barrier
+without ISA changes.
+\end{abstract}
+
+\begin{document}
+\maketitle
+
+% ---------------------------------------------------------------------
+\section{Introduction}
+\label{sec:intro}
+
+% [Placeholder: motivation reuse from phase_i.tex § intro, then
+% pivot to: "Phase 1 produced a CHERI-compatible ZGC. Phase 2
+% replaces the software barrier with a hardware-checked one."]
+
+% ---------------------------------------------------------------------
+\section{Background}
+\label{sec:bg}
+
+% [Placeholder: pointer to phase_i.tex for ZGC-on-CHERI port;
+% summarise Cornucopia Reloaded's revocation primitive; describe
+% SIGCAPRVOKE.]
+
+% ---------------------------------------------------------------------
+\section{Design}
+\label{sec:design}
+
+\subsection{The cap-load-as-barrier substitution}
+\label{sec:design:swap}
+
+% [Placeholder: code snippet showing before/after, identical to
+% docs/02_phase_ii_cheri_barrier.md §2.]
+
+\subsection{Forwarding cache}
+\label{sec:design:cache}
+
+% [Placeholder: per-thread LRU cache of resolved forwardings;
+% amortises SIGCAPRVOKE entry cost.]
+
+\subsection{Cornucopia integration}
+\label{sec:design:cornucopia}
+
+% [Placeholder: marking and unmarking pages, epoch coordination
+% with ZGC's existing phase machinery.]
+
+% ---------------------------------------------------------------------
+\section{Implementation}
+\label{sec:impl}
+
+% [Placeholder: ~2.5–5.4 kLOC delta over Phase 1; module breakdown
+% per docs/02_phase_ii_cheri_barrier.md §6.]
+
+% ---------------------------------------------------------------------
+\section{Evaluation}
+\label{sec:eval}
+
+\subsection{Setup}
+
+% [Placeholder: Morello FVP, baselines, workloads.]
+
+\subsection{Per-load barrier cost}
+
+% [Placeholder: PMU samples from cap-load barrier vs. software barrier.]
+
+\subsection{Pause time}
+
+% [Placeholder: p50 / p99 / p99.9 GC pause CDFs.]
+
+\subsection{Throughput}
+
+% [Placeholder: DaCapo, Renaissance, SPECjbb2015.]
+
+% ---------------------------------------------------------------------
+\section{Discussion}
+\label{sec:disc}
+
+\subsection{When CHERI-native barriers help}
+
+% [Placeholder: workloads with high pointer-load density;
+% memory-bound vs. compute-bound contrast.]
+
+\subsection{What an ISA \texttt{cforward} would buy}
+
+% [Placeholder: speculative — if Arm adds a forwarding primitive
+% that lets the LSU rewrite stale caps in place, how much further
+% can we go.]
+
+% ---------------------------------------------------------------------
+\section{Related work}
+\label{sec:related}
+
+% [Placeholder: CHERIvoke, Cornucopia, Cornucopia Reloaded for
+% revocation; C4, ZGC, Shenandoah for software barriers; hardware
+% transactional memory barriers for an alternative substrate.]
+
+% ---------------------------------------------------------------------
+\section{Conclusion}
+\label{sec:conc}
+
+% [Placeholder.]
+
+% ---------------------------------------------------------------------
+\paragraph{Acknowledgements.}
+This work was implemented with substantial assistance from Claude Opus
+4.7 via Claude Code (Anthropic). All design decisions, evaluations,
+and the final manuscript were authored by humans; the LLM acted as a
+literature-review accelerator, design-space enumerator, and code
+generator under human direction. See \texttt{docs/04\_risk\_register.md}
+in the project repository for a detailed account of what the model
+did and did not contribute.
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}

@@ -1,0 +1,147 @@
+% Bibliography for stopless-java-gc papers.
+% Sorted loosely by topic: CHERI hardware/ISA, CHERI memory-safety runtimes,
+% Java GC, related concurrent memory management.
+
+% ----- CHERI ISA & Morello -----
+
+@techreport{cheri-isa-v9,
+  title  = {Capability Hardware Enhanced {RISC} Instructions: {CHERI}
+            Instruction-Set Architecture (Version 9)},
+  author = {Watson, Robert N. M. and Neumann, Peter G. and Woodruff,
+            Jonathan and Roe, Michael and Almatary, Hesham and Anderson,
+            Jonathan and Filardo, Nathaniel Wesley and Naylor, Alfredo
+            and Davis, Brooks and others},
+  institution = {University of Cambridge Computer Laboratory},
+  number = {UCAM-CL-TR-987},
+  year   = {2023},
+}
+
+@inproceedings{morello-platform,
+  author    = {Grisenthwaite, Richard and Barnes, Graeme and Watson,
+               Robert N. M. and others},
+  title     = {The {Arm Morello} Evaluation Platform — Validating {CHERI}-Based
+               Security in a High-Performance System},
+  booktitle = {IEEE Symposium on Security and Privacy (S\&P)},
+  year      = {2024},
+}
+
+% ----- CHERI memory safety runtimes -----
+
+@inproceedings{cherivoke,
+  author    = {Xia, Hongyan and Woodruff, Jonathan and Ainsworth, Sam
+               and Filardo, Nathaniel W. and Roe, Michael and Richardson,
+               Alexander and Rugg, Peter and Neumann, Peter G. and
+               Moore, Simon W. and Watson, Robert N. M. and Jones, Timothy M.},
+  title     = {{CHERIvoke}: Characterising Pointer Revocation Using
+               {CHERI} Capabilities for Temporal Memory Safety},
+  booktitle = {Proceedings of the 52nd Annual IEEE/ACM International
+               Symposium on Microarchitecture (MICRO)},
+  year      = {2019},
+}
+
+@inproceedings{cornucopia,
+  author    = {Filardo, Nathaniel Wesley and Gutstein, Brett F. and Woodruff,
+               Jonathan and Ainsworth, Sam and Paul-Trifu, Lucian and Davis,
+               Brooks and Xia, Hongyan and Tomasz Napierala, Edward and
+               Richardson, Alexander and Baldwin, John and Chisnall, David
+               and Clarke, Jessica and Gudka, Khilan and Joannou, Alexandre
+               and Markettos, A. Theodore and Mazzinghi, Alfredo and Norton,
+               Robert M. and Roe, Michael and Sewell, Peter and Son, Stacey
+               and Jones, Timothy M. and Moore, Simon W. and Neumann, Peter G.
+               and Watson, Robert N. M.},
+  title     = {Cornucopia: Temporal Safety for {CHERI} Heaps},
+  booktitle = {IEEE Symposium on Security and Privacy (S\&P)},
+  year      = {2020},
+}
+
+@inproceedings{cornucopia-reloaded,
+  author    = {Filardo, Nathaniel Wesley and Gutstein, Brett F. and
+               Watson, Robert N. M. and others},
+  title     = {Cornucopia Reloaded: Load Barriers for {CHERI} Heap
+               Temporal Safety},
+  booktitle = {Proceedings of the 29th ACM International Conference on
+               Architectural Support for Programming Languages and
+               Operating Systems (ASPLOS)},
+  year      = {2024},
+}
+
+% ----- Java GC -----
+
+@inproceedings{zgc-toplas,
+  author    = {{\"O}sterlund, Erik and Liden, Per and Karlsson, Stefan},
+  title     = {Deep Dive into {ZGC}: A Modern Garbage Collector in {OpenJDK}},
+  journal   = {ACM Transactions on Programming Languages and Systems},
+  volume    = {44},
+  number    = {4},
+  year      = {2022},
+  publisher = {ACM},
+}
+
+@inproceedings{shenandoah,
+  author    = {Flood, Christine H. and Kennke, Roman and Dinn, Andrew
+               and Haley, Andrew and Westrelin, Roland},
+  title     = {Shenandoah: An Open-Source Concurrent Compacting Garbage
+               Collector for {OpenJDK}},
+  booktitle = {Proceedings of the 13th International Conference on
+               Principles and Practices of Programming on the Java Platform
+               (PPPJ)},
+  year      = {2016},
+}
+
+@inproceedings{g1,
+  author    = {Detlefs, David and Flood, Christine and Heller, Steve
+               and Printezis, Tony},
+  title     = {Garbage-First Garbage Collection},
+  booktitle = {Proceedings of the 4th International Symposium on
+               Memory Management (ISMM)},
+  year      = {2004},
+}
+
+@inproceedings{c4,
+  author    = {Tene, Gil and Iyengar, Balaji and Wolf, Michael},
+  title     = {{C4}: The Continuously Concurrent Compacting Collector},
+  booktitle = {Proceedings of the International Symposium on Memory
+               Management (ISMM)},
+  year      = {2011},
+}
+
+% ----- Java on CHERI / Morello -----
+
+@misc{mojo-jvm,
+  title  = {{MOJO}: Memory Optimisations for the {Java} Virtual Machine on
+            {CHERI} {Capability} Hardware},
+  author = {{University of Manchester} and {THG}},
+  year   = {2024},
+  note   = {Project site: \url{https://www.mojo-jvm.org}.
+            Patches: \url{https://www.mojo-jvm.org/dist/openjdk17-cheribsd-patches-latest.tar.gz}.},
+}
+
+@article{cheri-allocators,
+  author = {Hosking, Antony L. and Almatary, Hesham and Watson, Robert N. M.},
+  title  = {Picking a {CHERI} Allocator: Security and Performance Considerations},
+  journal = {arXiv preprint arXiv:2303.15130},
+  year   = {2023},
+}
+
+@article{cheri-interpreter,
+  author = {Watson, Robert N. M. and others},
+  title  = {{CHERI} Performance Enhancement for a Bytecode Interpreter},
+  journal = {arXiv preprint arXiv:2308.05076},
+  year   = {2023},
+}
+
+% ----- Concurrent memory management classics (related work) -----
+
+@inproceedings{hazard-pointers,
+  author    = {Michael, Maged M.},
+  title     = {Hazard Pointers: Safe Memory Reclamation for Lock-Free Objects},
+  booktitle = {IEEE Transactions on Parallel and Distributed Systems},
+  year      = {2004},
+}
+
+@article{rcu,
+  author    = {McKenney, Paul E. and Slingwine, John D.},
+  title     = {Read-Copy Update},
+  booktitle = {Parallel and Distributed Computing and Systems (PDCS)},
+  year      = {1998},
+}

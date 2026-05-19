@@ -1,0 +1,54 @@
+# 0001-cap-runtime-hook.patch.template
+#
+# This is a TEMPLATE, not a real patch. The real patch will be generated
+# by scripts/regen-patches.sh once we have a working OpenJDK 17u checkout
+# at the pinned SHA (Phase 0 spike S2). It is committed here as a template
+# so that the intended contract is visible without an OpenJDK clone.
+#
+# Once generated, the file becomes 0001-cap-runtime-hook.patch and the
+# .template suffix is removed.
+#
+# ---------------------------------------------------------------------
+# What this patch will do (intended scope):
+#
+#   1. Add a new HotSpot build rule that compiles
+#      ${STOPLESS_REPO}/src/cap_runtime/ as a static library and links it
+#      into libjvm.so.
+#
+#   2. Add include paths so HotSpot sources can `#include "cap_runtime.h"`
+#      (with the C-compatible public ABI from
+#      ${STOPLESS_REPO}/src/cap_runtime/cap_runtime.h).
+#
+#   3. Touch only one or two HotSpot files (likely
+#      `make/autoconf/lib-cap-runtime.m4` and `make/hotspot/lib/JvmFlags.gmk`,
+#      modulo the exact OpenJDK 17u build-system layout). The rest of
+#      HotSpot is untouched by THIS patch — subsequent patches in the
+#      series add the actual cap-aware semantics inside ZGC.
+#
+# ---------------------------------------------------------------------
+# Generator contract (scripts/regen-patches.sh, to be written in spike S2):
+#
+#   - Apply this patch into a clean OpenJDK 17u worktree at the pinned SHA.
+#   - The resulting build should still produce a working JDK (no semantic
+#     changes yet); the new cap_runtime library should link in but be
+#     dead code until the ZGC patches reference it.
+#   - `git diff` against the pinned SHA produces the real patch content.
+#
+# ---------------------------------------------------------------------
+# Template body (placeholder until generated):
+
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: Hook src/cap_runtime/ into the HotSpot build
+
+This patch wires our out-of-tree cap_runtime static library into the
+HotSpot libjvm link line, and exposes its public header via the
+JVM build's include path. No HotSpot source changes beyond the build
+system are made by this patch. Subsequent patches in patches/openjdk-jdk17/
+add the actual ZGC modifications that consume the cap_runtime ABI.
+
+Refs: docs/01_phase_i_zgc_port.md §4
+
+--- a/make/autoconf/lib-cap-runtime.m4   (created by this patch)
++++ b/make/autoconf/lib-cap-runtime.m4
+@@ -0,0 +1,1 @@
++# Generated during Phase 0 spike S2.

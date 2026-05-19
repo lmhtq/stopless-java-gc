@@ -1,0 +1,258 @@
+% paper/phase_i.tex — Workshop paper draft
+% Title: Porting ZGC to CHERI/Morello — design choices for moving GC
+%        on immutable capabilities
+%
+% Target venues: VMIL @ SPLASH, ICOOLPS @ ECOOP, MARC, DSbD annual.
+% First arXiv preprint goes up on submission.
+
+\documentclass[acmsmall,nonacm]{acmart}
+
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{hyperref}
+
+\title{Porting ZGC to CHERI/Morello: \\
+       Design Choices for Moving GC on Immutable Capabilities}
+\author{[Anonymised for review]}
+\affiliation{\institution{[Anonymised]}\country{}}
+\email{}
+
+\begin{abstract}
+ZGC is OpenJDK's flagship low-latency concurrent moving garbage collector.
+Its design rests on two structural features—colored pointers in
+unused virtual address bits, and a four-way virtual mapping of the heap—
+that collide with the immutability and bounds-discipline of CHERI
+capabilities. As a result, MOJO's existing port of OpenJDK 17 to
+Morello/CheriBSD covers only the non-moving (Epsilon, Serial) and
+region-based (G1) collectors. We present a port of ZGC to CHERI/Morello,
+discuss the three design choices forced on us by CHERI's pointer
+discipline, and report initial functional results on the Morello FVP.
+The port preserves ZGC's pause-time properties while introducing a
+side-table color encoding and a per-region capability derivation
+strategy. This is the substrate for our follow-up work on a
+CHERI-native hardware load barrier, where the cap-load tag itself
+subsumes ZGC's software color check.
+\end{abstract}
+
+\begin{document}
+\maketitle
+
+% ---------------------------------------------------------------------
+\section{Introduction}
+\label{sec:intro}
+
+Modern Java workloads demand garbage collectors that bound pause time to
+the sub-millisecond range. ZGC~\cite{zgc-toplas} achieves this by
+concurrently relocating objects in the background while mutators run, at
+the cost of a software \emph{load barrier} executed on every reference
+load—typically an \texttt{AND} against a precomputed ``bad mask''
+followed by a conditional branch into a slow path. On pointer-chasing
+workloads this overhead can consume a non-trivial fraction of CPU.
+
+CHERI~\cite{cheri-isa-v9} provides hardware-checked, tagged pointers in
+which every load is already validated by the LSU at no software cost.
+The natural cross-domain idea—use CHERI's hardware tag as ZGC's load
+barrier—has not been built. Existing CHERI work on memory management
+(CHERIvoke~\cite{cherivoke}, Cornucopia~\cite{cornucopia}, Cornucopia
+Reloaded~\cite{cornucopia-reloaded}) addresses \emph{revocation} of
+capabilities for C/C++ temporal safety; it does not address the
+\emph{forwarding} needed by a Java-class moving GC, where every
+reference to a relocated object must resolve to the new location.
+
+Before that idea can be tested, ZGC has to exist on CHERI. The MOJO
+project~\cite{mojo-jvm} has ported OpenJDK 17's non-moving and
+region-based collectors to CheriBSD on Morello, but not ZGC—because
+ZGC's two defining optimisations, colored pointers and multi-mapping,
+both conflict with CHERI's pointer format.
+
+This paper is the engineering substrate. We describe the design
+choices needed to port ZGC to CHERI semantically (without yet
+exploiting CHERI as a hardware barrier), implement them in a fork of
+OpenJDK 17u, and report initial functional results.
+
+% ---------------------------------------------------------------------
+\section{Background}
+\label{sec:bg}
+
+\subsection{ZGC's pointer encoding}
+
+ZGC stores GC state in unused virtual address bits of every
+\texttt{oop}~\cite{zgc-toplas}. Four colors—\texttt{marked0},
+\texttt{marked1}, \texttt{remapped}, and \texttt{finalizable}—occupy
+the top bits. The fast-path load barrier checks the loaded oop's color
+against a current bad mask in a global; if any bad bit is set, the
+slow path consults the forwarding table and self-heals the load site.
+
+Color flipping at GC phase boundaries is fast because the four colors
+map to four virtual mappings of the same physical heap. The hardware
+MMU does the disambiguation; only the bad mask changes between phases.
+
+\subsection{CHERI's pointer discipline}
+
+A Morello capability is 128 bits: a 64-bit address plus bounds,
+permissions, an \texttt{otype}, and an out-of-band tag controlled by
+hardware. Three properties matter for ZGC:
+
+\begin{itemize}
+\item \textbf{Tag is immutable per cap.} Capabilities cannot be rewritten
+      in place; you can derive narrower caps from wider ones, but you
+      cannot move a cap's target.
+\item \textbf{High address bits are real.} The address must lie within
+      the cap's bounds; smuggling GC state into the top bits would
+      either escape the bounds or rewrite into the wrong object.
+\item \textbf{Tagged loads need cap-aware instructions.} Loading a
+      memory location with a non-cap instruction discards the tag,
+      breaking subsequent dereferences.
+\end{itemize}
+
+\subsection{Prior art on CHERI moving runtimes}
+
+Cornucopia Reloaded~\cite{cornucopia-reloaded} achieves near-zero pause
+times for capability revocation on Morello by using per-page hardware
+load barriers. The mechanism is well-suited to \emph{invalidating}
+stale caps, but it does not address forwarding: revoked caps go to a
+trap, not to a new target. MOJO~\cite{mojo-jvm} ports the non-moving
+and region-based OpenJDK collectors, deferring ZGC and Shenandoah.
+
+% ---------------------------------------------------------------------
+\section{Design choices}
+\label{sec:design}
+
+We identify three sub-problems forced by CHERI on a ZGC port and
+discuss the design space for each.
+
+\subsection{Colored-pointer encoding}
+\label{sec:design:color}
+
+ZGC's high-bit color encoding cannot survive CHERI's address
+discipline. Three alternatives:
+
+\paragraph{(a) Side-table.} Per-object color in a shadow bitmap addressed
+by object address. Costs one extra load per barrier; that load is
+L1-hot in steady state. Color flip becomes a region scan. No change to
+cap format.
+
+\paragraph{(b) Cap permissions.} Re-purpose two cap permission bits as
+color. Hardware-checked per load (free). Cost: every color flip mints
+new caps for every reference—the immutability problem in miniature.
+
+\paragraph{(c) Sealed caps / \texttt{otype}.} Sealed capabilities cannot
+be dereferenced, defeating the purpose of in-flight pointers.
+
+We choose (a). It also becomes the substrate for our follow-up Phase
+2 work, where Cornucopia Reloaded's per-page revocation bitmap takes
+the side-table's role.
+
+\subsection{Multi-mapping}
+\label{sec:design:multimap}
+
+Once color lives in a side-table, multi-mapping becomes redundant. We
+collapse ZGC's four virtual mappings to a single mapping plus the
+side-table from \S\ref{sec:design:color}. We lose the cheap color flip
+(a global bad-mask update is replaced by a side-table sweep), but
+color flips happen at most once per GC cycle.
+
+\subsection{Forwarding table}
+\label{sec:design:fwd}
+
+ZGC's forwarding table maps \texttt{from\_addr -> to\_addr}. On CHERI
+the destination must be a real capability with bounds. We adopt
+per-region cap roots: each ZGC region installs a root cap covering
+its extent, and forwarding-table entries are derived from the
+destination region's root via \texttt{csetbounds}. Lookup pays one
+extra indirection (region table) in the slow path.
+
+% ---------------------------------------------------------------------
+\section{Implementation}
+\label{sec:impl}
+
+The port is open-source at \href{https://github.com/TBD/stopless-java-gc}
+{https://github.com/TBD/stopless-java-gc}. The repository is structured
+to keep our contribution boundary visible:
+
+\begin{itemize}
+\item \texttt{src/cap\_runtime/}: \mbox{$\sim$2.5\,kLOC} of net-new C++
+      providing the side-table, forwarding table, and (Phase 2)
+      revocation glue. Linked into HotSpot via a single hook patch.
+\item \texttt{patches/openjdk-jdk17/}: \mbox{$\sim$2\,kLOC} of in-place
+      patches against OpenJDK 17u's ZGC source, applied
+      idempotently by \texttt{scripts/apply\_patches.sh}.
+\item \texttt{src/cpu/morello/gc/z/}: \mbox{$\sim$2\,kLOC} new HotSpot
+      CPU subdirectory mirroring \texttt{cpu/aarch64/gc/z/} with
+      Morello capability-mode load barrier asm.
+\end{itemize}
+
+Third-party source is never committed; \texttt{scripts/bootstrap.sh}
+clones OpenJDK 17u, MOJO patches, CheriBSD, and the CHERI toolchain
+into a gitignored \texttt{third\_party/} directory pinned by SHA.
+
+% ---------------------------------------------------------------------
+\section{Evaluation}
+\label{sec:eval}
+
+\subsection{Setup}
+
+[Placeholder: Morello FVP cycle-approximate; baseline = MOJO G1 on
+the same FVP; comparison = unported OpenJDK 17u on x86\_64 (anchors
+absolute numbers).]
+
+\subsection{Functional smoke}
+
+[Placeholder: DaCapo \texttt{h2}, \texttt{pmd} run to completion on
+Morello FVP with \texttt{-XX:+UseZGC}, no unexpected capability traps.]
+
+\subsection{Microbenchmarks}
+
+[Placeholder: bare cap-load vs.\ cap-load + side-table consultation,
+isolated by \texttt{tests/bench/microbench\_pointer\_chase}.]
+
+% ---------------------------------------------------------------------
+\section{Discussion and limitations}
+\label{sec:disc}
+
+The side-table approach trades a one-cycle hardware check for two
+loads (cap-load plus side-table consult). Phase 2 of this project
+recovers the hardware check by using Cornucopia Reloaded's per-page
+revocation bit as the side-table; this paper does not address Phase 2.
+
+We have not exercised C2 cap-awareness; current results use C1 + the
+interpreter. Production-grade C2 emission of cap instructions remains
+future work.
+
+% ---------------------------------------------------------------------
+\section{Related work}
+\label{sec:related}
+
+CHERIvoke~\cite{cherivoke}, Cornucopia~\cite{cornucopia}, and
+Cornucopia Reloaded~\cite{cornucopia-reloaded} target C/C++ temporal
+safety via capability revocation. MOJO~\cite{mojo-jvm} ports
+non-moving OpenJDK collectors to CheriBSD/Morello. C4~\cite{c4} and
+Shenandoah~\cite{shenandoah} pioneered concurrent compaction with
+software read barriers. ZGC~\cite{zgc-toplas} is our base GC.
+
+% ---------------------------------------------------------------------
+\section{Conclusion}
+\label{sec:conc}
+
+ZGC's optimisations are the product of an era when unused virtual
+address bits were free. On CHERI they are not. We have ported ZGC by
+moving color into a side-table and per-region capability derivation
+into the forwarding table, preserving ZGC's pause-time properties at
+the cost of one extra load per barrier. This port is the foundation
+for a CHERI-native hardware barrier that we describe in a follow-up.
+
+% ---------------------------------------------------------------------
+\paragraph{Acknowledgements.}
+This work was implemented with substantial assistance from Claude Opus
+4.7 via Claude Code (Anthropic). All design decisions, evaluations,
+and the final manuscript were authored by humans; the LLM acted as a
+literature-review accelerator, design-space enumerator, and code
+generator under human direction. See \texttt{docs/04\_risk\_register.md}
+in the project repository for a detailed account of what the model
+did and did not contribute.
+
+\bibliographystyle{ACM-Reference-Format}
+\bibliography{refs}
+
+\end{document}
