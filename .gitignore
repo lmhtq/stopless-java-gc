@@ -49,6 +49,10 @@ paper/build/
 *.swo
 *~
 
+# clangd local index
+.cache/
+compile_commands.json
+
 # Python
 __pycache__/
 *.pyc
