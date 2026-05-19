@@ -74,7 +74,36 @@ and the versions correspond to project phase milestones (see README).
   `libstopless_measurement.a` cleanly on macOS aarch64 (AppleClang 16).
 - `ctest --test-dir build` → 12/12 tests pass (0.03 s).
 
+### Phase 0 spike — source survey (2026-05-19)
+- Real `scripts/run_in_fvp.sh` body: launches FVP_Morello with the
+  documented `-C` parameter set (memory, cores, firmware, virtio
+  block + net), polls sshd, scp+ssh's the binary into the guest,
+  captures exit code, tears down on exit. The placeholder is gone.
+- `docs/05_zgc_cheri_collision_report.md` — direct read of
+  ZGC's `zAddress.{hpp,inline.hpp}` from OpenJDK 17u tag
+  `jdk-17.0.13-ga` on `bc@hasee`. R1 downgraded from Critical to
+  High: the conflict is mechanical (every `ZAddress::*` call maps
+  to a side-table consult), not structural. ~300 call sites.
+- `docs/06_cornucopia_api_survey.md` — direct read of
+  `sys/cheri/revoke.h` on CheriBSD `main`. R3 downgraded from
+  Medium to Low: `cheri_revoke()` + `cheri_revoke_get_shadow()`
+  are arena-based, no kernel patch needed; the JVM presents its
+  heap as an arena via `CHERI_REVOKE_SHADOW_NOVMEM`.
+- `docs/07_c2_jit_status.md` — literature survey including the
+  Feb 2026 *Pitfalls in VM Implementation on CHERI* CRuby paper
+  (Liu, Yamazaki, Ugawa). R2 confirmed at High: no public C2-class
+  JIT works on CHERI purecap; Phase 1 runs at C1+interpreter
+  (MOJO precedent), Phase 2 evaluation reframed against C1 baseline.
+- `docs/04_risk_register.md` updated with summary table, evidence
+  citations, revised spike day-by-day plan (compressed from 12 to
+  ~5 days of empirical confirmation), and a pre-empirical
+  **GO** recommendation.
+
 ### Pending
-- Phase 0 feasibility spike (2 weeks): retire risks R1 (ZGC×CHERI
-  fundamental incompatibility), R2 (C2 cap-awareness), R3 (Cornucopia
-  revoke API surface) before committing to the 5–7 month Phase 1+2 plan.
+- Phase 0 spike empirical confirmation on `bc@hasee` (~5 days):
+  confirm side-table compiles against ZGC source (R1), confirm C2
+  failure mode (R2), confirm shadow-bitmap representability (R3).
+- `scripts/bootstrap.sh` currently building the Morello SDK on
+  `bc@hasee` (multi-hour). cheribuild + openjdk-jdk17 + cheribsd
+  clones complete; MOJO patches URL is a placeholder (404, warned
+  cleanly).
