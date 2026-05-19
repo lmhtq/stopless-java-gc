@@ -1,0 +1,26 @@
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+   --------------------------------------------------------------------
+
+   This repository's source code, scripts, documentation, and patches are
+   licensed under Apache 2.0. When the patches under `patches/openjdk-jdk17/`
+   are applied to OpenJDK source (which is licensed under GPLv2 with the
+   Classpath Exception), the resulting modified source files inherit the
+   OpenJDK license terms. No OpenJDK source code is redistributed in this
+   repository; OpenJDK is fetched by `scripts/bootstrap.sh` at build time.
+
+   Copyright 2026 Stopless-Java-GC contributors.

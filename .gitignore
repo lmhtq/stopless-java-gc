@@ -1,0 +1,61 @@
+# Third-party source (cloned by scripts/bootstrap.sh; never committed)
+third_party/
+!third_party/.gitkeep
+
+# Build artifacts
+build/
+out/
+dist/
+*.o
+*.obj
+*.so
+*.so.*
+*.dylib
+*.dll
+*.a
+*.lib
+*.dSYM/
+*.exe
+
+# Test / benchmark outputs (regenerable)
+tests/results/
+bench/results/
+*.bench.json
+
+# Drafts not for publication
+docs/_drafts/
+
+# LaTeX intermediate
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.toc
+paper/build/
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Logs
+logs/
+
+# Local-only environment files
+.env
+.envrc
