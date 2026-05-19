@@ -60,11 +60,17 @@ preflight() {
     # Tools cheribuild needs when it builds morello-llvm + cheribsd.
     # cheribuild's own preflight will report these too, but failing early
     # here is faster than waiting an hour into the SDK build.
+    # NB: on Ubuntu, `libtool` is in package libtool-bin while libtoolize
+    # is in libtool. We check either is present.
     local sdk_missing=()
     if [[ "${MODE_BUILD}" -eq 1 ]]; then
-        for cmd in ninja autoconf automake libtool bison flex pkg-config makeinfo nasm; do
+        for cmd in ninja autoconf automake bison flex pkg-config makeinfo nasm; do
             command -v "$cmd" >/dev/null 2>&1 || sdk_missing+=("$cmd")
         done
+        if ! command -v libtool >/dev/null 2>&1 \
+                && ! command -v libtoolize >/dev/null 2>&1; then
+            sdk_missing+=("libtool")
+        fi
     fi
 
     if [[ ${#missing[@]} -gt 0 ]]; then
