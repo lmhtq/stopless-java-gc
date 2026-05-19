@@ -1,6 +1,9 @@
 # Third-party source (cloned by scripts/bootstrap.sh; never committed)
-third_party/
+# Note: pattern is third_party/* (not third_party/) so we can re-include
+# tracked metadata files like README.md and .gitkeep below.
+third_party/*
 !third_party/.gitkeep
+!third_party/README.md
 
 # Build artifacts
 build/
