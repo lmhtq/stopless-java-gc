@@ -29,9 +29,14 @@ On Ubuntu:
 
 ```bash
 sudo apt-get install -y build-essential cmake python3 python3-pip \
-    git mercurial autoconf libtool flex bison libssl-dev libffi-dev \
-    libxml2-dev libtinfo-dev libncurses-dev pkg-config
+    git autoconf libtool automake flex bison libssl-dev libffi-dev \
+    libxml2-dev libtinfo-dev libncurses-dev pkg-config \
+    ninja-build texinfo nasm
 ```
+
+The trailing `ninja-build texinfo nasm` set is required by `cheribuild`
+when it builds Morello LLVM. `scripts/bootstrap.sh` preflight will
+fail fast if these are missing.
 
 For the Morello FVP, download separately from
 [developer.arm.com](https://developer.arm.com/Tools%20and%20Software/Fixed%20Virtual%20Platforms/Morello%20Platform%20FVPs)

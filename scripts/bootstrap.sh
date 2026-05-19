@@ -47,15 +47,35 @@ die()  { printf '\033[1;31m[bootstrap error]\033[0m %s\n' "$*" >&2; exit 1; }
 preflight() {
     log "preflight: checking host dependencies"
     local missing=()
-    for cmd in git python3 cmake bash sha256sum curl unzip tar; do
+
+    # Tools the bootstrap script itself uses.
+    for cmd in git python3 cmake bash curl unzip tar; do
         command -v "$cmd" >/dev/null 2>&1 || missing+=("$cmd")
     done
-    # macOS has shasum, not sha256sum
-    if ! command -v sha256sum >/dev/null 2>&1 && command -v shasum >/dev/null 2>&1; then
-        missing=("${missing[@]/sha256sum/}")
+    # Hash tool: sha256sum on linux, shasum on macOS.
+    if ! command -v sha256sum >/dev/null 2>&1 && ! command -v shasum >/dev/null 2>&1; then
+        missing+=("sha256sum-or-shasum")
     fi
+
+    # Tools cheribuild needs when it builds morello-llvm + cheribsd.
+    # cheribuild's own preflight will report these too, but failing early
+    # here is faster than waiting an hour into the SDK build.
+    local sdk_missing=()
+    if [[ "${MODE_BUILD}" -eq 1 ]]; then
+        for cmd in ninja autoconf automake libtool bison flex pkg-config makeinfo nasm; do
+            command -v "$cmd" >/dev/null 2>&1 || sdk_missing+=("$cmd")
+        done
+    fi
+
     if [[ ${#missing[@]} -gt 0 ]]; then
         die "missing host tools: ${missing[*]}. See docs/03_build_setup.md."
+    fi
+    if [[ ${#sdk_missing[@]} -gt 0 ]]; then
+        warn "missing SDK-build tools: ${sdk_missing[*]}"
+        warn "  Ubuntu: sudo apt-get install ninja-build autoconf libtool automake bison flex pkg-config texinfo nasm"
+        warn "  macOS:  brew install ninja autoconf libtool automake bison flex pkg-config texinfo nasm"
+        warn "  Re-run with --no-build to skip the SDK build for now."
+        die "missing SDK build tools; resolve and re-run"
     fi
 
     local free_gb

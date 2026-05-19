@@ -99,11 +99,28 @@ and the versions correspond to project phase milestones (see README).
   ~5 days of empirical confirmation), and a pre-empirical
   **GO** recommendation.
 
+### scripts/bootstrap.sh hardening (2026-05-19)
+- `--no-build`, `--check`, `--skip-mojo` flags added.
+- Final summary block reports presence/absence of every third-party
+  artifact at the end of each run.
+- Preflight now distinguishes "tools the script itself needs" from
+  "tools cheribuild needs when building the Morello SDK"; the latter
+  set fails fast with apt-get / brew install hints rather than dying
+  an hour into the SDK build.
+- Verified end-to-end on `bc@hasee` against the actual cheribuild
+  failure mode (missing `ninja`); the new preflight catches it
+  before the SDK build starts.
+- `docs/03_build_setup.md` Ubuntu prereq list updated to include
+  `ninja-build texinfo nasm`.
+
 ### Pending
-- Phase 0 spike empirical confirmation on `bc@hasee` (~5 days):
-  confirm side-table compiles against ZGC source (R1), confirm C2
-  failure mode (R2), confirm shadow-bitmap representability (R3).
-- `scripts/bootstrap.sh` currently building the Morello SDK on
-  `bc@hasee` (multi-hour). cheribuild + openjdk-jdk17 + cheribsd
-  clones complete; MOJO patches URL is a placeholder (404, warned
-  cleanly).
+- User to install missing apt packages on `bc@hasee`:
+  `sudo apt-get install -y ninja-build libtool automake texinfo nasm`
+  (no passwordless sudo configured for `bc`).
+- Phase 0 spike empirical confirmation on `bc@hasee` (~5 days
+  remaining):
+  - Re-run `./scripts/bootstrap.sh` after apt-install to complete
+    the Morello SDK build (~2 hours).
+  - Confirm side-table compiles against ZGC source (R1, days 7–9).
+  - Confirm C2 failure mode (R2, day 6).
+  - Confirm shadow-bitmap representability (R3, day 11).
