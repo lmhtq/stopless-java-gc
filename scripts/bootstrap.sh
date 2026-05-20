@@ -180,6 +180,11 @@ build_morello_sdk() {
     python3 cheribuild.py --source-root "${THIRD_PARTY}" \
         cheribsd-morello-purecap \
         --enable-hybrid-targets
+    # cheribsd-morello-purecap produces a rootfs tree only; we wrap it into
+    # a bootable disk image as a separate cheribuild target.
+    python3 cheribuild.py --source-root "${THIRD_PARTY}" \
+        disk-image-morello-purecap \
+        --enable-hybrid-targets
 }
 
 verify_fvp() {
