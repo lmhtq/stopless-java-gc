@@ -7,9 +7,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-QEMU="${REPO_ROOT}/third_party/cheri/output/sdk/bin/qemu-system-morello-purecap"
-KERNEL="${REPO_ROOT}/third_party/cheri/output/cheribsd-morello-purecap/boot/kernel/kernel"
-IMG="${REPO_ROOT}/third_party/cheri/output/cheribsd-morello-purecap.img"
+QEMU="${REPO_ROOT}/third_party/output/morello-sdk/bin/qemu-system-morello-purecap"
+KERNEL="${REPO_ROOT}/third_party/output/cheribsd-morello-purecap/boot/kernel/kernel"
+IMG="${REPO_ROOT}/third_party/output/cheribsd-morello-purecap.img"
 
 die() { printf '\033[1;31m[qemu error]\033[0m %s\n' "$*" >&2; exit 1; }
 

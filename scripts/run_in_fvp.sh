@@ -20,7 +20,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${REPO_ROOT}/scripts/upstream_pins.env"
 
 FVP="${REPO_ROOT}/${MORELLO_FVP_PATH}"
-CHERIBSD_IMG="${REPO_ROOT}/third_party/cheri/output/cheribsd-morello-purecap.img"
+CHERIBSD_IMG="${REPO_ROOT}/third_party/output/cheribsd-morello-purecap.img"
 FW_DIR="${REPO_ROOT}/third_party/morello-fvp/firmware"
 
 # Tunables.

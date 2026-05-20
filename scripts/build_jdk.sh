@@ -6,7 +6,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 JDK="${REPO_ROOT}/third_party/openjdk-jdk17"
-CHERI_SDK="${REPO_ROOT}/third_party/cheri/output/sdk"
+CHERI_SDK="${REPO_ROOT}/third_party/output/morello-sdk"
 BUILD_ROOT="${REPO_ROOT}/build"
 
 TARGET="morello"

@@ -166,7 +166,7 @@ fetch_cheribsd() {
 # ---------------------------------------------------------------------------
 build_morello_sdk() {
     log "step 5/5: building Morello SDK (clang/LLVM + CheriBSD)"
-    if [[ -x "${THIRD_PARTY}/cheri/output/sdk/bin/clang" ]]; then
+    if [[ -x "${THIRD_PARTY}/output/morello-sdk/bin/clang" ]]; then
         log "SDK already built; skipping"
         return
     fi
@@ -199,10 +199,10 @@ final_summary() {
             log "  third_party/${d}                    MISSING"
         fi
     done
-    if [[ -x "${THIRD_PARTY}/cheri/output/sdk/bin/clang" ]]; then
-        log "  third_party/cheri/output/sdk/clang  present"
+    if [[ -x "${THIRD_PARTY}/output/morello-sdk/bin/clang" ]]; then
+        log "  third_party/output/morello-sdk/clang  present"
     else
-        log "  third_party/cheri/output/sdk/clang  not yet built"
+        log "  third_party/output/morello-sdk/clang  not yet built"
     fi
     if [[ -x "${REPO_ROOT}/${MORELLO_FVP_PATH}" ]]; then
         log "  Morello FVP                         present"
