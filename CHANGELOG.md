@@ -135,12 +135,49 @@ and the versions correspond to project phase milestones (see README).
   run-fvp-morello-purecap orchestrator wires the .img, firmware,
   and SSH port-forward (host:12345 → guest:22) together.
 
-### Pending
-- Confirm CheriBSD boots to login prompt in FVP and ssh works.
-- Phase 0 spike empirical confirmation on `bc@hasee` (~3-4 days
-  remaining):
-  - Compile + run a CHERI purecap hello-world via run_in_fvp.sh.
-  - Apply MOJO G1 patch set to OpenJDK, build, run DaCapo h2 (R2
-    C2 confirmation).
-  - Try `-XX:+UseZGC` build, confirm side-table approach against
-    real source (R1 confirmation).
+### Phase 0 spike day 4 — SDK validation + first OpenJDK collision (2026-05-20)
+- FVP boot validation: FVP loaded firmware, ran TF-A BL31, EDK2 UEFI,
+  and FreeBSD EFI loader to the CheriBSD boot menu. Confirmed FVP
+  fully functional. Did NOT proceed past the boot menu — FVP's
+  emulated clock is ~30-60× slower than wall time, full boot to
+  shell would take 15-30 min wall-clock per attempt, which is not
+  the bottleneck on our critical path.
+- Cross-compile validation via `tests/integration/hello-cheri/`:
+  a 30-line C program compiled with the Morello SDK produced a
+  valid CheriBSD purecap ELF. `llvm-readelf -h` confirms
+  `Flags: 0x10000, purecap` plus the `.note.cheri` section with
+  `NT_CHERI_GLOBALS_ABI=PCREL`, `NT_CHERI_TLS_ABI=MORELLO_MIXED`.
+  The SDK is producing fully-conformant Morello binaries.
+- MOJO patch series: confirmed not publicly available. Probes of
+  GitHub (`mojo-jvm`, `UoM-MOJO`, `CTSRD-CHERI/openjdk-*`,
+  `Soteria-Research`) returned 404. The mojo-jvm.org distribution
+  URL is a placeholder. Pivoted to **vanilla OpenJDK 17u + our own
+  minimal patch series** — better paper novelty anyway.
+- `scripts/build_jdk.sh` hardened with: auto-detect Boot JDK 17,
+  `--with-toolchain-type=clang`, explicit `--sysroot=` in
+  `--with-extra-cflags/ldflags` (OpenJDK autoconf uses `-isysroot`
+  for link tests, which Linux clang interprets as headers-only),
+  `BUILD_CC=clang BUILD_CXX=clang++` as positional autoconf args.
+- **First real R1 collision found**: at `make/autoconf/platform.m4:705`
+  OpenJDK refuses cross-compile when `sizeof(int*) != target CPU bits`.
+  On Morello purecap, `sizeof(int*) == 16` (128-bit capabilities)
+  but `OPENJDK_TARGET_CPU_BITS=64`. Documented in
+  `docs/05_zgc_cheri_collision_report.md §5` with a candidate patch.
+  This is the first entry in the real patch series (will be
+  `patches/openjdk-jdk17/0002-platform-accept-cheri-cap-ptr-size.patch`).
+- Apt installs on `bc@hasee` (sudo, password supplied):
+  ninja-build, libtool-bin, libarchive-dev, openjdk-17-jdk-headless,
+  clang (host).
+- Disk: `/` was 100% full at one point (1.7T used by other projects).
+  User cleaned up to 101 GB free; project's build artifacts now
+  go to `/mnt/nas/lxhL3/projs/stopless-build/` via symlink at
+  `~/projs/stopless-java-gc/build/`.
+
+### Pending — Phase 1 patch series (the real work)
+The Phase 0 spike has concluded. R1 is empirically confirmed
+structural-but-mechanical; R2 and R3 stayed at their source-survey
+verdicts (R2 High, R3 Low). Phase 1 begins with:
+- `0001-cap-runtime-hook.patch` (build-system hook for src/cap_runtime/)
+- `0002-platform-accept-cheri-cap-ptr-size.patch` (the new finding)
+- Subsequent patches surface as `configure` and then `make` proceed
+  through each layer of CHERI-cap incompatibility.

@@ -167,3 +167,68 @@ The remaining real risk is:
   inline implementations.
 - `docs/01_phase_i_zgc_port.md §3` — Phase 1 design choices, now
   confirmed against source.
+
+## 5. Empirical confirmation — 2026-05-20
+
+Attempted to run `configure` for OpenJDK 17u (tag `jdk-17.0.13-ga`) on
+`bc@hasee` with `--openjdk-target=aarch64-unknown-freebsd
+--with-toolchain-type=clang --with-toolchain-path=$SDK/bin
+--with-sysroot=$SDK/sysroot-morello-purecap`, plus the discovered fixes:
+
+- Explicit `--sysroot=` in `--with-extra-cflags/ldflags` (OpenJDK
+  autoconf uses `-isysroot` for link tests, not `--sysroot=`).
+- `BUILD_CC=clang BUILD_CXX=clang++` as positional args (env vars
+  are ignored).
+- `--disable-warnings-as-errors`.
+
+After clearing those, autoconf reached pointer-size detection and
+failed with:
+
+```
+checking size of int *... 16
+configure: The tested number of bits in the target (128) differs from
+the number of bits expected to be found in the target (64)
+configure: You are doing a cross-compilation. Check that you have all
+target platform libraries installed.
+configure: error: Cannot continue.
+```
+
+Source: `make/autoconf/platform.m4:705`. The build system assumes the
+target's pointer width matches `OPENJDK_TARGET_CPU_BITS` (64 for
+aarch64). On Morello purecap, `sizeof(int *) == 16` because pointers
+are 128-bit capabilities. **The build system itself, not just ZGC,
+needs cap-aware patches.**
+
+This is the first real engineering hit and exactly the kind of
+collision predicted in §1.1 above. It is **mechanical**: the
+autoconf check needs to be taught that "pointer is 128 bits even
+though the architecture is aarch64-64". Patch shape:
+
+```diff
+--- a/make/autoconf/platform.m4
++++ b/make/autoconf/platform.m4
+@@ -700,7 +700,11 @@
+   AC_CHECK_SIZEOF([int *], [], [#include <stdio.h>])
+   TESTED_TARGET_CPU_BITS=`expr 8 \* $ac_cv_sizeof_int_p`
+
+-  if test "x$TESTED_TARGET_CPU_BITS" != "x$OPENJDK_TARGET_CPU_BITS"; then
++  # On CHERI/Morello purecap, pointers are 128-bit capabilities even
++  # though the target CPU is aarch64-64. Accept that case.
++  AS_IF([test "x$OPENJDK_TARGET_CPU" = xaarch64 && test "x$TESTED_TARGET_CPU_BITS" = "x128"],
++    [AC_MSG_NOTICE([Detected CHERI/Morello purecap (128-bit pointers on 64-bit CPU); accepting])],
++    [test "x$TESTED_TARGET_CPU_BITS" != "x$OPENJDK_TARGET_CPU_BITS"], [
+     AC_MSG_NOTICE([The tested number of bits in the target ($TESTED_TARGET_CPU_BITS) differs from the number of bits expected to be found in the target ($OPENJDK_TARGET_CPU_BITS)])
+     AC_MSG_NOTICE([You are doing a cross-compilation. Check that you have all target platform libraries installed.])
+     AC_MSG_ERROR([Cannot continue.])
++  ])
+```
+
+This is **patch #2** in `patches/openjdk-jdk17/series` (after the
+build-system hook for cap_runtime). Further failures will surface
+incrementally as autoconf moves past this check into actual
+compilation.
+
+**R1 is now empirically confirmed at the level the spike was designed
+to reach: structural-but-mechanical.** Next deeper layer (the ZGC
+source itself) is reached only after the build system patches let
+us start actual compilation.
