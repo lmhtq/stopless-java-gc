@@ -166,13 +166,14 @@ fetch_cheribsd() {
 # ---------------------------------------------------------------------------
 build_morello_sdk() {
     log "step 5/5: building Morello SDK (clang/LLVM + CheriBSD)"
-    if [[ -x "${THIRD_PARTY}/output/morello-sdk/bin/clang" ]]; then
-        log "SDK already built; skipping"
-        return
-    fi
     cd "${THIRD_PARTY}/cheribuild"
-    # Source root is one level up (third_party/); cheribuild lays everything
-    # out under <source-root>/cheri/...
+    # cheribuild is itself idempotent: it stat-caches what's been built and
+    # skips work that's up to date. We invoke both targets unconditionally
+    # and let cheribuild decide; that way we don't have to track the
+    # multi-step state ourselves.
+    if [[ -x "${THIRD_PARTY}/output/morello-sdk/bin/clang" ]]; then
+        log "  morello-llvm-native: SDK clang present, expecting cheribuild to skip"
+    fi
     python3 cheribuild.py --source-root "${THIRD_PARTY}" \
         morello-llvm \
         --enable-hybrid-targets
