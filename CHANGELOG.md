@@ -113,14 +113,34 @@ and the versions correspond to project phase milestones (see README).
 - `docs/03_build_setup.md` Ubuntu prereq list updated to include
   `ninja-build texinfo nasm`.
 
+### Phase 0 spike — environment fully bootstrapped on bc@hasee (2026-05-20)
+- Morello LLVM toolchain built in 3h08m
+  (`third_party/output/morello-sdk/bin/clang`).
+- CheriBSD buildworld + kernel built in 3h45m, then disk image
+  packaged in 61s. Final bootable raw GPT image at
+  `third_party/output/cheribsd-morello-purecap.img` (5.57 GiB
+  virtual, 2.86 GiB sparse on disk).
+- bootstrap.sh extended with `disk-image-morello-purecap` target
+  so the .img is produced by default (previously only a rootfs
+  directory tree).
+- Morello FVP v0.11.34 (Linux64 GCC-6.4) downloaded and
+  installed at `third_party/morello-fvp/install/`. Symlinks at
+  `third_party/morello-fvp/FVP_Morello` and
+  `third_party/output/morello-sdk/FVP_Morello` make both
+  `scripts/run_in_fvp.sh` and cheribuild see the binary.
+- Morello FVP firmware (TF-A BL31 + SCP/MCP roms + UEFI, ~1 MB)
+  fetched via cheribuild's `morello-firmware` target to
+  `third_party/output/morello-sdk/firmware/morello-fvp/`.
+- First FVP boot of CheriBSD initiated; cheribuild's
+  run-fvp-morello-purecap orchestrator wires the .img, firmware,
+  and SSH port-forward (host:12345 → guest:22) together.
+
 ### Pending
-- User to install missing apt packages on `bc@hasee`:
-  `sudo apt-get install -y ninja-build libtool automake texinfo nasm`
-  (no passwordless sudo configured for `bc`).
-- Phase 0 spike empirical confirmation on `bc@hasee` (~5 days
+- Confirm CheriBSD boots to login prompt in FVP and ssh works.
+- Phase 0 spike empirical confirmation on `bc@hasee` (~3-4 days
   remaining):
-  - Re-run `./scripts/bootstrap.sh` after apt-install to complete
-    the Morello SDK build (~2 hours).
-  - Confirm side-table compiles against ZGC source (R1, days 7–9).
-  - Confirm C2 failure mode (R2, day 6).
-  - Confirm shadow-bitmap representability (R3, day 11).
+  - Compile + run a CHERI purecap hello-world via run_in_fvp.sh.
+  - Apply MOJO G1 patch set to OpenJDK, build, run DaCapo h2 (R2
+    C2 confirmation).
+  - Try `-XX:+UseZGC` build, confirm side-table approach against
+    real source (R1 confirmation).
