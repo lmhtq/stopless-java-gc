@@ -1,0 +1,24 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0013/N] buildjdk-spec.gmk.in: also override EXTRA_ASFLAGS for buildjdk
+
+`buildjdk-spec.gmk.in` (the template used by cross-compiles to neuter
+TARGET-specific flags when compiling the BUILD-side JDK) already
+overrides `EXTRA_CFLAGS`, `EXTRA_CXXFLAGS`, and `EXTRA_LDFLAGS` to
+empty. It does NOT override `EXTRA_ASFLAGS`.
+
+For us this matters because `--with-extra-asflags='-mabi=purecap
+-march=morello'` propagates into the buildjdk's libjvm assembler
+invocation (e.g. for `src/hotspot/os_cpu/linux_x86/linux_x86_64.S`),
+and host clang-14 errors out with `unknown target CPU 'morello'`.
+
+Same shape of fix as the existing three overrides; one line addition.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0013)
+
+--- a/make/autoconf/buildjdk-spec.gmk.in
++++ b/make/autoconf/buildjdk-spec.gmk.in
+@@ -103,3 +103,4 @@
+ override EXTRA_CFLAGS :=
+ override EXTRA_CXXFLAGS :=
+ override EXTRA_LDFLAGS :=
++override EXTRA_ASFLAGS :=

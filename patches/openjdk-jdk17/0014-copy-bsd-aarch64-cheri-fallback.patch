@@ -1,0 +1,44 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0014/N] copy_bsd_aarch64: CHERI fallback for COPY_SMALL macro
+
+`COPY_SMALL` is a hand-rolled small-copy inline-asm fast path using
+non-cap A64 `ldr`/`str`/`ldp`/`stp` with `[%[s], #0]` operands. Under
+CHERI/Morello purecap, the assembler rejects capability-typed
+operands for those mnemonics and emits
+`error: invalid operand for instruction`.
+
+For Phase 1 ("make it build") we substitute a `std::memcpy`-based
+fallback when `__CHERI_PURE_CAPABILITY__` is defined. A cap-aware
+fast path using `LDR Cx`/`STP Cx` is Phase 2 work — it requires
+deciding whether the GC's small-copy primitive needs to preserve
+capability tags (yes, for oop arrays).
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0014)
+
+--- a/src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp
++++ b/src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp
+@@ -27,6 +27,16 @@
+ #ifndef OS_CPU_BSD_AARCH64_COPY_BSD_AARCH64_HPP
+ #define OS_CPU_BSD_AARCH64_COPY_BSD_AARCH64_HPP
+
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI/Morello purecap: the inline-asm fast path below uses non-cap
++// ldr/str/ldp/stp operand forms that the purecap assembler rejects as
++// invalid. Fall back to memcpy for the small-copy path; a cap-aware
++// fast path is Phase 2 work.
++#include <cstring>
++#define COPY_SMALL(from, to, count) \
++  std::memcpy(static_cast<void*>(to), static_cast<const void*>(from), \
++              (count) * sizeof(HeapWord))
++#else
+ #define COPY_SMALL(from, to, count)                                     \
+ {                                                                       \
+         long tmp0, tmp1, tmp2, tmp3;                                    \
+@@ -99,6 +109,7 @@
+   :                                                                     \
+   : "memory", "cc");                                                    \
+ }
++#endif // __CHERI_PURE_CAPABILITY__
+
+ static void pd_conjoint_words(const HeapWord* from, HeapWord* to, size_t count) {
+   __asm volatile( "prfm pldl1strm, [%[s], #0];" :: [s]"r"(from) : "memory");
