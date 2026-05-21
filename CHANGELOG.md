@@ -181,3 +181,34 @@ verdicts (R2 High, R3 Low). Phase 1 begins with:
 - `0002-platform-accept-cheri-cap-ptr-size.patch` (the new finding)
 - Subsequent patches surface as `configure` and then `make` proceed
   through each layer of CHERI-cap incompatibility.
+
+### Phase 1 day 1 (2026-05-21): 6 patches land, build into HotSpot
+- 0002 platform.m4 — accept 128-bit ptr on aarch64
+- 0003 JvmMapfile.gmk — share linux's nm branch with bsd
+- 0004 flags-cflags.m4 — set _ALLBSD_SOURCE -D_GNU_SOURCE on JVM
+- 0005 flags-cflags.m4 — extend to also set -DBSD -D_FILE_OFFSET_BITS=64
+  on JVM (without -DBSD, semaphore.hpp falls through to #error)
+- 0006 bytes_bsd_aarch64.hpp — add __FreeBSD__ branch using
+  <sys/endian.h> + __bswap{16,32,64}
+- 0007 bitMap.hpp — bm_word_t = uint64_t (was uintptr_t which on
+  CHERI = __intcap = 128 bits, breaking the static assert + the
+  count_trailing_zeros overload)
+
+All 6 idempotent through `scripts/apply_patches.sh` against a clean
+OpenJDK 17u (jdk-17.0.13-ga) checkout. `configure` completes
+successfully; `make images` reaches HotSpot compilation and surfaces
+the next layer of collisions catalogued at docs/05 §6 patches 0008–0011.
+
+### Phase 1 day 1 — next-layer findings (pending patches)
+- 0008 shenandoahMarkBitMap — Shenandoah's own bm_word_t needs the
+  same uintptr_t → uint64_t change (Shenandoah declares it
+  independently of share/utilities/bitMap.hpp)
+- 0009 semaphore.hpp / build flags — `-DBSD` from patch 0005 is
+  leaking into buildjdk (the HOST x86 linux JDK built during
+  bootstrap), making it try to include semaphore_bsd.hpp. Patch
+  needs to scope the bsd-only JVM defines to TARGET, not bleed to
+  BUILD. Investigation pending.
+- 0010 macroAssembler_aarch64.hpp:523 — `mov(reg, intptr_t)`
+  ambiguous because under CHERI `intptr_t = __intcap` matches
+  multiple existing `mov` overloads. Either add a CHERI-aware
+  overload or rename one.
