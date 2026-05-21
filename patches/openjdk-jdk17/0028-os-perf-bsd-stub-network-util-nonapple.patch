@@ -1,0 +1,43 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0028/N] os_perf_bsd: stub network_utilization on non-Apple BSD
+
+`NetworkPerformance::network_utilization` in `os_perf_bsd.cpp` uses
+`NET_RT_IFLIST2`, `if_msghdr2`, `sockaddr_dl`, and `RTM_IFINFO2` —
+all macOS extensions to BSD sysctl that don't exist on
+FreeBSD/CheriBSD. The file is in `os/bsd/` (shared between Darwin
+and FreeBSD targets) but the implementation is Darwin-only.
+
+This isn't a CHERI-specific issue; vanilla OpenJDK 17 already
+doesn't build for FreeBSD as a target OS without a BSD port. For
+Phase 1 ("make it build on CheriBSD") we stub the function on
+non-Darwin BSD to return `OS_ERR` with a null result. Network
+performance metrics simply won't be available on CheriBSD — fine
+for Phase 1; a real implementation would use FreeBSD's
+`getifaddrs` + `if_data` accounting.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0028)
+
+--- a/src/hotspot/os/bsd/os_perf_bsd.cpp
++++ b/src/hotspot/os/bsd/os_perf_bsd.cpp
+@@ -419,6 +419,13 @@
+ }
+
+ int NetworkPerformanceInterface::NetworkPerformance::network_utilization(NetworkInterface** network_interfaces) const {
++#ifndef __APPLE__
++  // FreeBSD/CheriBSD lack NET_RT_IFLIST2 / if_msghdr2 / sockaddr_dl —
++  // those are macOS extensions. Stub out network utilization on
++  // non-Darwin BSD targets; callers handle OS_ERR as "no data".
++  *network_interfaces = NULL;
++  return OS_ERR;
++#else
+   size_t len;
+   int mib[] = {CTL_NET, PF_ROUTE, /* protocol number */ 0, /* address family */ 0, NET_RT_IFLIST2, /* NET_RT_FLAGS mask*/ 0};
+   if (sysctl(mib, sizeof(mib) / sizeof(mib[0]), NULL, &len, NULL, 0) != 0) {
+@@ -458,6 +465,7 @@
+   *network_interfaces = ret;
+
+   return OS_OK;
++#endif // !__APPLE__
+ }
+
+ NetworkPerformanceInterface::NetworkPerformanceInterface() {
