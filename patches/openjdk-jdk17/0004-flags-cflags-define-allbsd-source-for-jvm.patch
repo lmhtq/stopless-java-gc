@@ -1,0 +1,26 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0004/N] flags-cflags.m4: set _ALLBSD_SOURCE for JVM on bsd target
+
+OpenJDK 17u sets `CFLAGS_OS_DEF_JDK="-D_ALLBSD_SOURCE"` for the
+OPENJDK_TARGET_OS=bsd path but leaves `CFLAGS_OS_DEF_JVM` empty.
+HotSpot's `globalDefinitions_gcc.hpp` guards its primitive-type
+typedefs with `#if !defined(LINUX) && !defined(_ALLBSD_SOURCE)`,
+so without `-D_ALLBSD_SOURCE` on JVM compiles those typedefs
+collide with system headers' definitions (especially on CHERI where
+intptr_t is `__intcap`, not `int`).
+
+Mirror the macosx branch: define `_ALLBSD_SOURCE` for JVM too, and
+add `_GNU_SOURCE` for parity with the Linux JVM path.
+
+Refs: docs/05_zgc_cheri_collision_report.md §5
+
+--- a/make/autoconf/flags-cflags.m4
++++ b/make/autoconf/flags-cflags.m4
+@@ -427,6 +427,7 @@ AC_DEFUN([FLAGS_SETUP_CFLAGS_HELPER],
+   elif test "x$OPENJDK_TARGET_OS" = xaix; then
+     CFLAGS_OS_DEF_JVM="-DAIX"
+   elif test "x$OPENJDK_TARGET_OS" = xbsd; then
++    CFLAGS_OS_DEF_JVM="-D_ALLBSD_SOURCE -D_GNU_SOURCE"
+     CFLAGS_OS_DEF_JDK="-D_ALLBSD_SOURCE"
+   elif test "x$OPENJDK_TARGET_OS" = xwindows; then
+     CFLAGS_OS_DEF_JVM="-D_WINDOWS -DWIN32 -D_JNI_IMPLEMENTATION_"

@@ -232,3 +232,29 @@ compilation.
 to reach: structural-but-mechanical.** Next deeper layer (the ZGC
 source itself) is reached only after the build system patches let
 us start actual compilation.
+
+## 6. Phase 1 patch ledger (live)
+
+Patches found and applied as `make` (or `configure`) surfaces each
+collision. Each is a small mechanical fix; the value is having the
+full set catalogued.
+
+| # | File | Collision | Patch shape |
+|---|---|---|---|
+| 0002 | `make/autoconf/platform.m4:705` | `sizeof(int*)==16` mismatch with `OPENJDK_TARGET_CPU_BITS=64` | Add an aarch64+128bit exemption arm |
+| 0003 | `make/hotspot/lib/JvmMapfile.gmk:55` | `Unknown target OS bsd` in nm/awk dispatch | Share Linux's branch via `isTargetOs, linux bsd` |
+| 0004 | `make/autoconf/flags-cflags.m4:429` | `CFLAGS_OS_DEF_JVM` empty for bsd → HotSpot's `_ALLBSD_SOURCE`-guarded typedefs collide with system headers under CHERI | Set `CFLAGS_OS_DEF_JVM="-D_ALLBSD_SOURCE -D_GNU_SOURCE"` |
+| 0005 | `src/hotspot/share/runtime/semaphore.hpp:38` *(pending)* | "No semaphore implementation provided for this OS" — HotSpot has `linux/macosx/windows` impls, not bsd | Add a `#ifdef _ALLBSD_SOURCE` arm or share posix-sem with linux |
+| 0006 | `src/hotspot/os_cpu/bsd_aarch64/bytes_bsd_aarch64.hpp:39,45,49,53` *(pending)* | Uses GNU `bswap_16/32/64`, not present on CheriBSD | Use `__bswap16/32/64` from `<sys/endian.h>` |
+| 0007 | `patches/openjdk-jdk17/0001-cap-runtime-hook.patch` *(pending)* | Build hook to link `src/cap_runtime/` into libjvm | See `docs/01_phase_i_zgc_port.md §4` |
+| 0008+ | ZGC source proper | See `docs/01_phase_i_zgc_port.md §3-4` | The actual side-table redesign |
+
+After applying 0002–0004 cleanly via `scripts/apply_patches.sh`,
+`configure` completes successfully and `make images` reaches HotSpot
+compilation, surfacing 0005 / 0006 as the next layer. Each subsequent
+patch is captured here as it lands.
+
+The pattern of "structural conflict, but small mechanical patch per
+site, total ~10-50 patches" is exactly what `docs/01_phase_i_zgc_port.md`
+predicted. ZGC source itself is the third layer down; we are
+currently in layer 2 (HotSpot OS portability shims).

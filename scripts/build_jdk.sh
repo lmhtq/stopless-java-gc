@@ -75,6 +75,16 @@ case "${TARGET}" in
             --with-boot-jdk="${BOOT_JDK}"
             --with-debug-level="${DEBUG_LEVEL}"
             --disable-warnings-as-errors
+            --enable-headless-only
+            # Cross-compile fallback: point at host's CUPS / ALSA / fontconfig
+            # headers since CheriBSD sysroot doesn't ship them. The Java code
+            # paths that use these aren't on our hot path; we mostly need the
+            # checks to pass so jdk.print etc. can build as no-op stubs.
+            --with-cups-include=/usr/include
+            --with-alsa-include=/usr/include
+            --with-fontconfig-include=/usr/include
+            --with-freetype-include=/usr/include/freetype2
+            --with-freetype-lib=/usr/lib/x86_64-linux-gnu
         )
         ;;
     x86)

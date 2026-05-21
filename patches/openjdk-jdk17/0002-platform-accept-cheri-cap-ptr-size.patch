@@ -1,0 +1,40 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0002/N] platform.m4: accept CHERI/Morello purecap pointer size
+
+On Morello purecap, sizeof(int*)==16 (128-bit capability) while the
+target CPU is aarch64 (OPENJDK_TARGET_CPU_BITS=64). OpenJDK's autoconf
+treats this as a fatal mismatch. Add a single-arm exemption for the
+aarch64+128bit case; every other mismatch still errors.
+
+Refs: docs/05_zgc_cheri_collision_report.md §5
+
+--- a/make/autoconf/platform.m4
++++ b/make/autoconf/platform.m4
+@@ -704,12 +704,19 @@ AC_DEFUN_ONCE([PLATFORM_SETUP_TARGET_CPU_BITS],
+     TESTED_TARGET_CPU_BITS=`expr 8 \* $ac_cv_sizeof_int_p`
+
+     if test "x$TESTED_TARGET_CPU_BITS" != "x$OPENJDK_TARGET_CPU_BITS"; then
+-      AC_MSG_NOTICE([The tested number of bits in the target ($TESTED_TARGET_CPU_BITS) differs from the number of bits expected to be found in the target ($OPENJDK_TARGET_CPU_BITS)])
+-      if test "x$COMPILE_TYPE" = xreduced; then
+-        HELP_MSG_MISSING_DEPENDENCY([reduced])
+-        AC_MSG_NOTICE([You are doing a reduced build. Check that you have 32-bit libraries installed. $HELP_MSG])
+-      elif test "x$COMPILE_TYPE" = xcross; then
+-        AC_MSG_NOTICE([You are doing a cross-compilation. Check that you have all target platform libraries installed.])
++      # stopless-java-gc: on CHERI/Morello purecap, pointers are 128-bit
++      # capabilities even though the target CPU is aarch64-64. Accept that
++      # case; everything else is still an error.
++      if test "x$OPENJDK_TARGET_CPU" = xaarch64 -a "x$TESTED_TARGET_CPU_BITS" = x128; then
++        AC_MSG_NOTICE([Detected CHERI/Morello purecap (128-bit pointers on 64-bit CPU); accepting.])
++      else
++        AC_MSG_NOTICE([The tested number of bits in the target ($TESTED_TARGET_CPU_BITS) differs from the number of bits expected to be found in the target ($OPENJDK_TARGET_CPU_BITS)])
++        if test "x$COMPILE_TYPE" = xreduced; then
++          HELP_MSG_MISSING_DEPENDENCY([reduced])
++          AC_MSG_NOTICE([You are doing a reduced build. Check that you have 32-bit libraries installed. $HELP_MSG])
++        elif test "x$COMPILE_TYPE" = xcross; then
++          AC_MSG_NOTICE([You are doing a cross-compilation. Check that you have all target platform libraries installed.])
++        fi
++        AC_MSG_ERROR([Cannot continue.])
+       fi
+-      AC_MSG_ERROR([Cannot continue.])
+     fi
+   fi

@@ -2,29 +2,20 @@
 # Applied in the order listed by scripts/apply_patches.sh.
 # Lines starting with '#' are ignored; blank lines too.
 
-# --- Phase 0 (this commit set) ---
-# 0001-cap-runtime-hook.patch
-#     Adds the build-system link between src/cap_runtime/ and HotSpot.
-#     Single small patch; everything else is generated against the
-#     hook point.
-#
-# The hook patch itself is materialised by scripts/regen-patches.sh
-# (Phase 0 spike S2 — pending) so it stays in sync with the pinned
-# OpenJDK SHA. Until then, this series file is intentionally empty;
-# scripts/apply_patches.sh will run as a no-op.
+# --- Phase 1: build-system collisions (CHERI cap ptr + bsd target) ---
+0002-platform-accept-cheri-cap-ptr-size.patch
+0003-jvmmapfile-accept-bsd-target.patch
+0004-flags-cflags-define-allbsd-source-for-jvm.patch
 
-# --- Phase 1 (planned, populated during 3–5 month port) ---
-# 0002-zgc-buildable-on-cheribsd.patch
-# 0003-zgc-color-via-side-table.patch
-# 0004-zgc-collapse-multimapping.patch
-# 0005-zgc-cap-aware-forwarding-table.patch
-# 0006-zgc-allocator-cap-bounds.patch
-# 0007-zgc-roots-cap-aware.patch
-# 0008-cpu-morello-gc-z-barrier-asm.patch
-# 0009-zgc-c2-cap-aware-barrier.patch
-# 0010-zgc-cap-aware-tests.patch
+# --- Phase 1 pending: HotSpot portability layer ---
+# 0005-semaphore-add-bsd-aarch64-impl.patch         (semaphore.hpp for bsd_aarch64)
+# 0006-bytes-bsd-aarch64-define-bswap-macros.patch  (use __bswap*, not bswap_*)
+# 0007-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
+# 0009-zgc-color-via-side-table.patch
+# ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
 
-# --- Phase 2 (planned) ---
+# --- Phase 2 (deferred) ---
 # 0020-zgc-cap-load-barrier-swap.patch
 # 0021-cornucopia-revoke-driver.patch
 # 0022-sigcaprevoke-handler-install.patch

@@ -1,0 +1,21 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0003/N] JvmMapfile.gmk: accept bsd target alongside linux
+
+CheriBSD (OPENJDK_TARGET_OS=bsd) uses the same nm/awk symbol-export
+discipline as Linux: GNU binutils nm, ELF .symtab. The macosx, aix,
+and windows branches differ; bsd doesn't need its own branch — it
+can share Linux's.
+
+Refs: docs/05_zgc_cheri_collision_report.md §5
+
+--- a/make/hotspot/lib/JvmMapfile.gmk
++++ b/make/hotspot/lib/JvmMapfile.gmk
+@@ -52,7 +52,7 @@ endif
+ # Create a dynamic list of symbols from the built object files. This is highly
+ # platform dependent.
+
+-ifeq ($(call isTargetOs, linux), true)
++ifeq ($(call isTargetOs, linux bsd), true)
+   DUMP_SYMBOLS_CMD := $(NM) --defined-only *.o
+   ifneq ($(FILTER_SYMBOLS_PATTERN), )
+     FILTER_SYMBOLS_PATTERN := $(FILTER_SYMBOLS_PATTERN)|
