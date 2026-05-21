@@ -1,0 +1,40 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0017/N] copy_bsd_aarch64.S: stub the whole file out under CHERI
+
+The 240-line aarch64 assembly file uses non-cap `ldr/str/ldp/stp` with
+`[xN]`-style operands; the purecap assembler rejects every one of
+them as "invalid operand for instruction". A full cap-aware rewrite
+of the copy routines is Phase 2 work (it requires deciding tag-
+preservation policy for oop arrays).
+
+For Phase 1 ("make it build") the simplest path is to make the
+entire file empty under `__CHERI_PURE_CAPABILITY__`. The .hpp's
+`pd_*` callers are patched in 0018 to short-circuit to `memcpy`/
+`memmove` under CHERI, so the `_Copy_*` extern symbols this file
+would normally provide are never referenced — the linker doesn't
+complain about missing definitions.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0017)
+
+--- a/src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.S
++++ b/src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.S
+@@ -23,6 +23,13 @@
+  *
+  */
+
++#ifndef __CHERI_PURE_CAPABILITY__
++// stopless-java-gc: the asm below uses non-cap aarch64 ldr/str/ldp/stp
++// with [%[s]] operands that the purecap assembler rejects. Stub the
++// whole file out for CHERI; the .hpp's pd_* functions short-circuit to
++// memcpy under __CHERI_PURE_CAPABILITY__ so no _Copy_* symbol is
++// referenced and the linker stays happy.
++
+ #define CFUNC(x) _##x
+
+         .global CFUNC(_Copy_conjoint_words)
+@@ -238,3 +245,5 @@ bwd_copy_drain:
+         .align  5
+ 0:
+         ret
++
++#endif // !__CHERI_PURE_CAPABILITY__
