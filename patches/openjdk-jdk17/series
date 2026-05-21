@@ -21,9 +21,10 @@
 0017-copy-bsd-aarch64-S-cheri-stub.patch
 0018-copy-bsd-aarch64-hpp-cheri-shortcircuit.patch
 0019-defnewgen-max2-explicit-uintx.patch
+0020-prefetch-bsd-aarch64-cheri-stub.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0020-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0021-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)

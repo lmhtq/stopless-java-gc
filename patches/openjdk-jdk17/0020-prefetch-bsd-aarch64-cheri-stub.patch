@@ -1,0 +1,35 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0020/N] prefetch_bsd_aarch64: stub Prefetch::read/write under CHERI
+
+The aarch64 `prfm` instruction with `[reg, reg]` (register+register
+offset) form is not supported in Morello capability mode — the
+purecap assembler rejects it with `index must be a multiple of 8 in
+range [0, 32760]`, demanding the immediate form `[reg, #imm]`.
+
+`Prefetch::read` and `Prefetch::write` are pure performance hints;
+omitting them is harmless. Skip the inline asm entirely under
+`__CHERI_PURE_CAPABILITY__`. Phase 2 may reintroduce a cap-aware
+`prfm` (use `prfum` or rewrite with `__builtin_prefetch`).
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0020)
+
+--- a/src/hotspot/os_cpu/bsd_aarch64/prefetch_bsd_aarch64.inline.hpp
++++ b/src/hotspot/os_cpu/bsd_aarch64/prefetch_bsd_aarch64.inline.hpp
+@@ -31,13 +31,17 @@
+
+
+ inline void Prefetch::read (void *loc, intx interval) {
++#ifndef __CHERI_PURE_CAPABILITY__
+   if (interval >= 0)
+     asm("prfm PLDL1KEEP, [%0, %1]" : : "r"(loc), "r"(interval));
++#endif
+ }
+
+ inline void Prefetch::write(void *loc, intx interval) {
++#ifndef __CHERI_PURE_CAPABILITY__
+   if (interval >= 0)
+     asm("prfm PSTL1KEEP, [%0, %1]" : : "r"(loc), "r"(interval));
++#endif
+ }
+
+ #endif // OS_CPU_BSD_AARCH64_PREFETCH_BSD_AARCH64_INLINE_HPP
