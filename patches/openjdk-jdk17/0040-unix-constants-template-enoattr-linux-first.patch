@@ -1,0 +1,42 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0040/N] UnixConstants.java.template: prefer __linux__ over _ALLBSD_SOURCE for ENOATTR
+
+The template gates `XATTR_NOT_FOUND` selection on
+`_ALLBSD_SOURCE` first, falling through to `__linux__`:
+
+  #ifdef _ALLBSD_SOURCE
+      static final int PREFIX_XATTR_NOT_FOUND = ENOATTR;
+  #elif __linux__
+      static final int PREFIX_XATTR_NOT_FOUND = ENODATA;
+  #else
+      static final int PREFIX_XATTR_NOT_FOUND = 00;
+  #endif
+
+For our cross-build, the BUILDJDK gensrc pass runs the HOST CPP
+(x86 Linux glibc) with `-D_ALLBSD_SOURCE` (set by our patch 0037).
+Both `_ALLBSD_SOURCE` and `__linux__` are defined; the BSD branch
+wins, but glibc doesn't define `ENOATTR` — the generated Java
+becomes `static final int XATTR_NOT_FOUND = ENOATTR;` (cannot
+find symbol).
+
+Swap to check `__linux__` first (with `_ALLBSD_SOURCE`
+exclusion). This makes the BUILDJDK pass on Linux pick ENODATA
+(the right Linux value), while a true BSD/CheriBSD target build
+still hits the BSD branch.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0040)
+
+--- a/src/java.base/unix/classes/sun/nio/fs/UnixConstants.java.template
++++ b/src/java.base/unix/classes/sun/nio/fs/UnixConstants.java.template
+@@ -118,9 +118,9 @@
+ #endif
+
+ // fgetxattr error codes for absent attributes depend on the OS:
+-#ifdef _ALLBSD_SOURCE
++#if defined(_ALLBSD_SOURCE) && !defined(__linux__)
+     static final int PREFIX_XATTR_NOT_FOUND = ENOATTR;
+-#elif __linux__
++#elif defined(__linux__)
+     static final int PREFIX_XATTR_NOT_FOUND = ENODATA;
+ #else
+     // not supported (dummy values will not be used at runtime).

@@ -1,0 +1,30 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0039/N] java.desktop Gensrc.gmk: include X11 wrapper gen on bsd target
+
+`make/modules/java.desktop/Gensrc.gmk` only includes
+`GensrcX11Wrappers.gmk` when `OPENJDK_TARGET_OS` is `linux` or
+`aix`. The wrapper generator runs `TOOL_WRAPPERGENERATOR` on the
+pre-baked size tables `make/data/x11wrappergen/sizes-{32,64}.txt`
+— no actual X11 headers required, so this works on any target
+that has X11 layout matching the pre-baked sizes.
+
+For `bsd` target, X11 follows the same layout as Linux (FreeBSD's
+xorg-server uses the same Xlib ABI), so we can reuse `sizes-64.txt`.
+Adding `bsd` to the gating predicate makes
+`XEvent.java`, `XClientMessageEvent.java`, etc. get generated,
+which unblocks 481 `cannot find symbol XEvent` errors in
+`src/java.desktop/unix/classes/sun/awt/X11/*.java`.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0039)
+
+--- a/make/modules/java.desktop/Gensrc.gmk
++++ b/make/modules/java.desktop/Gensrc.gmk
+@@ -34,7 +34,7 @@ ifeq ($(call isTargetOs, windows), false)
+   include gensrc/GensrcIcons.gmk
+ endif
+
+-ifeq ($(call isTargetOs, linux aix), true)
++ifeq ($(call isTargetOs, linux aix bsd), true)
+   include gensrc/GensrcX11Wrappers.gmk
+ endif
+

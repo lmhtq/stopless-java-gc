@@ -1,5 +1,5 @@
 From: stopless-java-gc <noreply@anthropic.com>
-Subject: [PATCH 0038/N] flags-cflags.m4: add --undefined-version for bsd target linker
+Subject: [PATCH 0038/N] flags-cflags.m4 + buildjdk-spec: --undefined-version for TARGET only
 
 The HotSpot mapfile (`make/hotspot/lib/JvmMapfile.gmk` →
 `mapfile-vers`) lists vtables for many function-local closure
@@ -11,16 +11,22 @@ classes — e.g.,
 LLD on FreeBSD/CheriBSD rejects the link with `error: version
 script assignment of 'SUNWprivate_1.1' to symbol ... failed:
 symbol not defined` when the corresponding object files don't
-actually emit those vtables. Whether a local-class vtable is
-emitted depends on whether the optimizer keeps the closure's
-virtual dispatch — clang's DCE elides the vtable for closures
-that are construct-then-discard.
+actually emit those vtables. clang's DCE elides those vtables
+for closures whose virtual dispatch isn't kept.
 
-Linux/GNU-ld and macOS/lld accept the version script when listed
+GNU ld and macOS lld accept the version script when listed
 symbols are missing; FreeBSD/LLD does not by default. Add
-`-Wl,--undefined-version` for `OPENJDK_TARGET_OS=bsd` to match the
-permissive behavior. The flag is supported on LLD ≥ 14; CheriBSD
-25.03 ships LLD 19.x.
+`-Wl,--undefined-version` for `OPENJDK_TARGET_OS=bsd` in
+`flags-cflags.m4`.
+
+`SET_SHARED_LIBRARY_MAPFILE` is shared between BUILD and TARGET
+passes — but the BUILD pass uses host GNU ld 2.38, which only
+supports the negative `--no-undefined-version` (not the new
+positive `--undefined-version` form added in 2.40+). Override
+`SET_SHARED_LIBRARY_MAPFILE` in `buildjdk-spec.gmk.in` so the
+BUILD pass uses just `-Wl,-version-script=` without the bsd flag.
+
+Same shape as 0013 (override EXTRA_*FLAGS for buildjdk).
 
 Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0038)
 
@@ -38,3 +44,13 @@ Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0038)
        # arm specific settings
        if test "x$OPENJDK_TARGET_CPU" = "xarm"; then
          # '-Wl,-z,origin' isn't used on arm.
+--- a/make/autoconf/buildjdk-spec.gmk.in
++++ b/make/autoconf/buildjdk-spec.gmk.in
+@@ -104,3 +104,7 @@
+ override EXTRA_CXXFLAGS :=
+ override EXTRA_LDFLAGS :=
+ override EXTRA_ASFLAGS :=
++
++# Strip the bsd-target --undefined-version LLD flag for the BUILD pass:
++# host GNU ld 2.38 doesn't recognize it (added in binutils 2.40).
++override SET_SHARED_LIBRARY_MAPFILE = -Wl,-version-script=$$1
