@@ -1,0 +1,41 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0032/N] os_bsd_aarch64: csp/c29 for SPELL_REG_SP/FP under purecap
+
+`os::current_stack_pointer()` does:
+
+  void *sp;
+  __asm__("mov %0, " SPELL_REG_SP : "=r"(sp));
+
+With `SPELL_REG_SP "sp"` the generated assembly is `mov c?, sp`
+on Morello purecap (where `%0` is constrained to a capability
+register, since `sp` is `void *` = `__intcap`). The Morello
+assembler rejects this — the legacy `sp` name refers to the
+integer view of the stack pointer and is not a valid source for
+a capability-typed destination. The capability stack pointer is
+spelled `csp`.
+
+Define `SPELL_REG_SP` to `csp` and `SPELL_REG_FP` to `c29` under
+`__CHERI_PURE_CAPABILITY__`. The latter follows Morello calling
+convention (c29 is the capability frame pointer; there is no
+formal `cfp` alias).
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0032)
+
+--- a/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
++++ b/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
+@@ -81,8 +81,15 @@
+ # include <pthread_np.h>
+ #endif
+
++#ifdef __CHERI_PURE_CAPABILITY__
++// Morello purecap: stack pointer is the capability register csp; legacy 'sp'
++// names the integer view and is not a valid mov source for a cap-typed dest.
++#define SPELL_REG_SP "csp"
++#define SPELL_REG_FP "c29"
++#else
+ #define SPELL_REG_SP "sp"
+ #define SPELL_REG_FP "fp"
++#endif
+
+ #ifdef __APPLE__
+ // see darwin-xnu/osfmk/mach/arm/_structs.h
