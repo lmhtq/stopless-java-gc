@@ -1,0 +1,29 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0005/N] flags-cflags.m4: also define BSD and _FILE_OFFSET_BITS for JVM on bsd target
+
+Companion to patch 0004. The bsd JVM CFLAGS need three macros to
+mirror the linux JVM CFLAGS:
+  -DBSD              — HotSpot uses `#elif defined(BSD)` to dispatch
+                       to os/bsd/* code paths (semaphore_bsd.hpp,
+                       bytes_bsd_aarch64.hpp, …).
+  -D_ALLBSD_SOURCE   — already added in patch 0004.
+  -D_GNU_SOURCE      — already added in patch 0004.
+  -D_FILE_OFFSET_BITS=64 — required for 64-bit off_t / lseek on bsd.
+
+Without `-DBSD`, `share/runtime/semaphore.hpp` falls through to its
+`#error "No semaphore implementation provided for this OS"` despite
+`semaphore_bsd.hpp` being present in tree.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0005)
+
+--- a/make/autoconf/flags-cflags.m4
++++ b/make/autoconf/flags-cflags.m4
+@@ -427,7 +427,7 @@ AC_DEFUN([FLAGS_SETUP_CFLAGS_HELPER],
+   elif test "x$OPENJDK_TARGET_OS" = xaix; then
+     CFLAGS_OS_DEF_JVM="-DAIX"
+   elif test "x$OPENJDK_TARGET_OS" = xbsd; then
+-    CFLAGS_OS_DEF_JVM="-D_ALLBSD_SOURCE -D_GNU_SOURCE"
++    CFLAGS_OS_DEF_JVM="-DBSD -D_ALLBSD_SOURCE -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64"
+     CFLAGS_OS_DEF_JDK="-D_ALLBSD_SOURCE"
+   elif test "x$OPENJDK_TARGET_OS" = xwindows; then
+     CFLAGS_OS_DEF_JVM="-D_WINDOWS -DWIN32 -D_JNI_IMPLEMENTATION_"

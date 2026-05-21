@@ -6,10 +6,10 @@
 0002-platform-accept-cheri-cap-ptr-size.patch
 0003-jvmmapfile-accept-bsd-target.patch
 0004-flags-cflags-define-allbsd-source-for-jvm.patch
+0005-flags-cflags-define-BSD-macro-for-jvm.patch
+0006-bytes-bsd-aarch64-use-freebsd-endian.patch
 
-# --- Phase 1 pending: HotSpot portability layer ---
-# 0005-semaphore-add-bsd-aarch64-impl.patch         (semaphore.hpp for bsd_aarch64)
-# 0006-bytes-bsd-aarch64-define-bswap-macros.patch  (use __bswap*, not bswap_*)
+# --- Phase 1 pending: HotSpot portability layer (next layer) ---
 # 0007-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
