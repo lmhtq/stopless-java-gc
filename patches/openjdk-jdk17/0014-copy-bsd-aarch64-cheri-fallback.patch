@@ -7,17 +7,25 @@ CHERI/Morello purecap, the assembler rejects capability-typed
 operands for those mnemonics and emits
 `error: invalid operand for instruction`.
 
-For Phase 1 ("make it build") we substitute a `std::memcpy`-based
-fallback when `__CHERI_PURE_CAPABILITY__` is defined. A cap-aware
-fast path using `LDR Cx`/`STP Cx` is Phase 2 work — it requires
-deciding whether the GC's small-copy primitive needs to preserve
-capability tags (yes, for oop arrays).
+For Phase 1 ("make it build") we substitute a `memcpy`-based fallback
+when `__CHERI_PURE_CAPABILITY__` is defined. A cap-aware fast path
+using `LDR Cx`/`STP Cx` is Phase 2 work — it requires deciding
+whether the GC's small-copy primitive needs to preserve capability
+tags (yes, for oop arrays).
+
+NB: copy_bsd_aarch64.hpp is `#include CPU_HEADER(copy)`-d *inside*
+the body of `class Copy`. We must not introduce top-level
+`#include`s here — they would land inside the class scope and break
+the parse with "missing '}' at end of definition of 'Copy'". The
+existing `memcpy` calls in `pd_disjoint_words` etc. show that
+`memcpy` is already in scope via the parent translation unit, so the
+fallback can use unqualified `memcpy`.
 
 Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0014)
 
 --- a/src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp
 +++ b/src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp
-@@ -27,6 +27,16 @@
+@@ -27,6 +27,15 @@
  #ifndef OS_CPU_BSD_AARCH64_COPY_BSD_AARCH64_HPP
  #define OS_CPU_BSD_AARCH64_COPY_BSD_AARCH64_HPP
 
@@ -26,15 +34,14 @@ Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0014)
 +// ldr/str/ldp/stp operand forms that the purecap assembler rejects as
 +// invalid. Fall back to memcpy for the small-copy path; a cap-aware
 +// fast path is Phase 2 work.
-+#include <cstring>
 +#define COPY_SMALL(from, to, count) \
-+  std::memcpy(static_cast<void*>(to), static_cast<const void*>(from), \
-+              (count) * sizeof(HeapWord))
++  memcpy(static_cast<void*>(to), static_cast<const void*>(from), \
++         (count) * sizeof(HeapWord))
 +#else
  #define COPY_SMALL(from, to, count)                                     \
  {                                                                       \
          long tmp0, tmp1, tmp2, tmp3;                                    \
-@@ -99,6 +109,7 @@
+@@ -99,6 +108,7 @@
    :                                                                     \
    : "memory", "cc");                                                    \
  }
