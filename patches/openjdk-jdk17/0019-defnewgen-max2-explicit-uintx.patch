@@ -15,12 +15,12 @@ Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0019)
 
 --- a/src/hotspot/share/gc/serial/defNewGeneration.cpp
 +++ b/src/hotspot/share/gc/serial/defNewGeneration.cpp
-@@ -212,7 +212,7 @@
-   if (survivor_size != _from_counters->max_size()) {
-     _from_counters->set_max_size(survivor_size);
-   }
+@@ -212,7 +212,7 @@ void DefNewGeneration::compute_space_boundaries(uintx minimum_eden_size,
+     uintx maximum_survivor_size = (size - minimum_eden_size) / 2;
+     uintx unaligned_survivor_size =
+       align_down(maximum_survivor_size, SpaceAlignment);
 -    survivor_size = MAX2(unaligned_survivor_size, SpaceAlignment);
 +    survivor_size = MAX2<uintx>(unaligned_survivor_size, SpaceAlignment);
- }
-
- size_t DefNewGeneration::compute_new_size() {
+     eden_size = size - (2*survivor_size);
+     assert(eden_size > 0 && survivor_size <= eden_size, "just checking");
+     assert(eden_size >= minimum_eden_size, "just checking");
