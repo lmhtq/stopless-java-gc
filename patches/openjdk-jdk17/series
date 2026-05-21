@@ -16,9 +16,10 @@
 0012-count-leading-zeros-cheri-specialization.patch
 0013-buildjdk-spec-override-extra-asflags.patch
 0014-copy-bsd-aarch64-cheri-fallback.patch
+0015-assembler-aarch64-address-cheri-overload.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0015-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0016-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)

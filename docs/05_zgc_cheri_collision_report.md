@@ -252,10 +252,12 @@ full set catalogued.
 | 0010 | `src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp:523` | `mov(Register, intptr_t)` ambiguous — `as_constant()` returns `intptr_t == __intcap` on CHERI | Add `mov(Register, intptr_t)` overload under `__CHERI_PURE_CAPABILITY__` |
 | 0011 | `src/hotspot/share/utilities/count_trailing_zeros.hpp` | Template `count_trailing_zeros<T>` constrained to `sizeof(T) <= 8` excludes 16-byte CHERI cap | Add CHERI-only overload that takes cap-sized integral and casts to uint64_t |
 | 0012 | `src/hotspot/share/utilities/count_leading_zeros.hpp` | `CountLeadingZerosImpl<T, 16>` undefined — only sizeof 1/2/4/8 specialised | Add `<T, 16>` specialisation that delegates to `<uint64_t, 8>` |
-| 0013 *(pending)* | OpenJDK build-system `EXTRA_CFLAGS` propagation | `--with-extra-cflags="-march=morello -mabi=purecap"` leaks into BUILD pass (host x86 buildjdk libjvm compile), producing `error: unknown target CPU 'morello'`. Same shape as 0009 but for `EXTRA_CXXFLAGS` instead of `CFLAGS_OS_DEF_JVM` | Strip `-march=morello -mabi=purecap` from `BUILD_EXTRA_C*FLAGS` in flags-cflags.m4 |
-| 0014 *(pending)* | `src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp:119,128` | `prfm pldl1strm, [%[s], #0]` inline asm — operand `from` is now a cap, assembler can't take cap operand directly | Cast `from` to its address representation in the inline asm |
-| 0015 | `patches/openjdk-jdk17/cap-runtime-hook.patch` *(pending)* | Build hook to link `src/cap_runtime/` into libjvm | See `docs/01_phase_i_zgc_port.md §4` |
-| 0016+ | ZGC source proper | See `docs/01_phase_i_zgc_port.md §3-4` | The actual side-table redesign |
+| 0013 | `make/autoconf/buildjdk-spec.gmk.in:103` | `buildjdk-spec.gmk.in` overrides EXTRA_C/CXX/LDFLAGS but not EXTRA_ASFLAGS — `--with-extra-asflags` leaks into host buildjdk libjvm `.S` compile, producing `unknown target CPU 'morello'` from host clang | Add `override EXTRA_ASFLAGS :=` alongside the existing three |
+| 0014 | `src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp:30-101` | `COPY_SMALL` macro's inline asm uses non-cap `ldr/str` operands; assembler rejects cap-typed operands | Wrap in `#ifdef __CHERI_PURE_CAPABILITY__` and substitute `memcpy`-based fallback. NB: avoid top-level `#include` — copy_bsd_aarch64.hpp is included *inside* `class Copy { ... }` |
+| 0015 | `src/hotspot/cpu/aarch64/assembler_aarch64.hpp:414` | `Address(Register, intptr_t)` ctor ambiguous in `aarch64.ad:3888` — `intptr_t == __intcap` doesn't match any of the seven existing integer-disp overloads | Add CHERI-only `Address(Register, intptr_t)` overload, same shape as patch 0010 for `mov` |
+| 0016 *(pending)* | UnixConstants.java self-reference cascade | Generated Java file is broken; root cause likely native-header parsing tool stumbles on CHERI cap types in unistd.h / sys/socket.h | Investigation pending |
+| 0017 | `patches/openjdk-jdk17/cap-runtime-hook.patch` *(pending)* | Build hook to link `src/cap_runtime/` into libjvm | See `docs/01_phase_i_zgc_port.md §4` |
+| 0018+ | ZGC source proper | See `docs/01_phase_i_zgc_port.md §3-4` | The actual side-table redesign |
 
 After applying 0002–0004 cleanly via `scripts/apply_patches.sh`,
 `configure` completes successfully and `make images` reaches HotSpot
