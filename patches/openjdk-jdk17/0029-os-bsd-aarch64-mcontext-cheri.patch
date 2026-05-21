@@ -1,0 +1,68 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0029/N] os_bsd_aarch64: mcontext accessors for CheriBSD purecap
+
+`os_bsd_aarch64.cpp` is shared between Darwin and FreeBSD aarch64
+targets, but every register accessor macro assumes Apple's mcontext
+layout: `uc_mcontext` is a pointer, and registers live at
+`__ss.__pc`, `__ss.__sp`, `__ss.__x[i]`, etc. (via the `DU3_PREFIX`
+macro). On FreeBSD/CheriBSD aarch64, `uc_mcontext` is an inline
+`__mcontext` struct (accessed with `.`), and under purecap the
+registers live in `mc_capregs.cap_*` with `__uintcap_t` element
+types (see `sys/arm64/include/ucontext.h`).
+
+This patch rewires the `context_{x,fp,lr,sp,pc,cpsr,esr}` macros
+to dispatch on `__APPLE__` vs `__CHERI_PURE_CAPABILITY__`. Under
+purecap:
+
+  context_x    → uc_mcontext.mc_capregs.cap_x       (array)
+  context_fp   → uc_mcontext.mc_capregs.cap_x[29]   (x29 is FP)
+  context_lr   → uc_mcontext.mc_capregs.cap_lr
+  context_sp   → uc_mcontext.mc_capregs.cap_sp
+  context_pc   → uc_mcontext.mc_capregs.cap_elr     (exception-link)
+  context_cpsr → uc_mcontext.mc_spsr                (lifted from cpsr)
+  context_esr  → 0                                  (not exposed)
+
+Notes:
+- The macros are intentionally not parenthesized — call sites use
+  `uc->context_x[i]`, which expands to
+  `uc->uc_mcontext.mc_capregs.cap_x[i]`.
+- `ESR` (exception syndrome register) is not exposed by FreeBSD
+  mcontext; the only HotSpot caller is signal-handler diagnostic
+  printing, so stubbing to 0 is acceptable for Phase 1.
+- A non-CHERI FreeBSD branch (using `mc_gpregs.gp_*`) is omitted
+  since we only target CheriBSD/purecap for Phase 1.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0029)
+
+--- a/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
++++ b/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
+@@ -87,15 +87,26 @@
+ #ifdef __APPLE__
+ // see darwin-xnu/osfmk/mach/arm/_structs.h
+
+ // 10.5 UNIX03 member name prefixes
+ #define DU3_PREFIX(s, m) __ ## s.__ ## m
+-#endif
+
+ #define context_x    uc_mcontext->DU3_PREFIX(ss,x)
+ #define context_fp   uc_mcontext->DU3_PREFIX(ss,fp)
+ #define context_lr   uc_mcontext->DU3_PREFIX(ss,lr)
+ #define context_sp   uc_mcontext->DU3_PREFIX(ss,sp)
+ #define context_pc   uc_mcontext->DU3_PREFIX(ss,pc)
+ #define context_cpsr uc_mcontext->DU3_PREFIX(ss,cpsr)
+ #define context_esr  uc_mcontext->DU3_PREFIX(es,esr)
++#elif defined(__CHERI_PURE_CAPABILITY__)
++// CheriBSD purecap: uc_mcontext is an inline __mcontext struct (accessed via .),
++// and register state lives in mc_capregs.cap_* — see sys/arm64/include/ucontext.h.
++#define context_x    uc_mcontext.mc_capregs.cap_x
++#define context_fp   uc_mcontext.mc_capregs.cap_x[29]
++#define context_lr   uc_mcontext.mc_capregs.cap_lr
++#define context_sp   uc_mcontext.mc_capregs.cap_sp
++#define context_pc   uc_mcontext.mc_capregs.cap_elr
++#define context_cpsr uc_mcontext.mc_spsr
++#define context_esr  0  /* ESR not exposed by FreeBSD mcontext */
++#else
++#error "os_bsd_aarch64.cpp: only __APPLE__ and __CHERI_PURE_CAPABILITY__ supported"
++#endif
+
+ address os::current_stack_pointer() {

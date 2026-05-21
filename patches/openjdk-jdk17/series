@@ -29,9 +29,11 @@
 0025-macroassembler-aarch64-mov-uintptr-overload.patch
 0026-metaspace-shared-bm-word-t-buffer.patch
 0027-oopstorage-active-index-safefetch64-cheri.patch
+0028-os-perf-bsd-stub-network-util-nonapple.patch
+0029-os-bsd-aarch64-mcontext-cheri.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0028-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0030-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
