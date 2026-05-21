@@ -8,23 +8,26 @@ providers (`BsdFileSystemProvider`, `KQueueSelectorProvider`,
 `DefaultFileSystemProvider`, etc.) live under
 `src/java.base/macosx/classes/`.
 
-A first cut (adding `macosx/classes` to `SRC_SUBDIRS` globally)
-turned out to be too broad: `src/java.desktop/macosx/classes/`
-contains Cocoa code (`LWCToolkit`, `PlatformGraphicsInfo`) that
-depends on Apple-only Objective-C bridges and breaks java.desktop
-compile.
+Two-part fix:
 
-This patch overrides `FindModuleSrcDirs` so the macosx/classes
-suffix is only added when the module is `java.base`. Other modules
-behave exactly as upstream.
+1. Override `FindModuleSrcDirs` to include `macosx/classes` only
+   when the module is `java.base`. java.desktop's macosx/classes
+   is Cocoa-only and must not be pulled in.
+
+2. Override `GetModuleSrcPath` to add `*/macosx/classes` to javac's
+   `--module-source-path`. javac uses this wildcard pattern to
+   resolve which module a file belongs to. Without it, files under
+   `macosx/classes/` produce "not in a module on the module source
+   path" errors -- even when javac is given them via SRC, it can't
+   match the module name from the path components.
 
 A real `bsd/classes` directory split is a Phase 2 cleanup.
 
-Refs: docs/05_zgc_cheri_collision_report.md Â§6 (patch 0034)
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0034)
 
 --- a/make/common/Modules.gmk
 +++ b/make/common/Modules.gmk
-@@ -315,3 +315,18 @@ endef
+@@ -315,3 +315,27 @@ endef
  ################################################################################
  
  endif # _MODULES_GMK
@@ -34,7 +37,10 @@ Refs: docs/05_zgc_cheri_collision_report.md Â§6 (patch 0034)
 +# directory. java.base needs macosx/classes for BSD-derived NIO providers
 +# (BsdFileSystemProvider, KQueueSelectorProvider). java.desktop's macosx/classes
 +# is Cocoa-only and must NOT be pulled in. Override FindModuleSrcDirs to add
-+# macosx/classes only when $1 is java.base.
++# macosx/classes only when $1 is java.base, and extend GetModuleSrcPath so
++# javac's --module-source-path includes macosx/classes (needed for javac to
++# resolve module of files under that root -- even if only java.base actually
++# compiles files from it).
 +ifeq ($(OPENJDK_TARGET_OS), bsd)
 +FindModuleSrcDirs = \
 +    $(strip $(wildcard \
@@ -42,4 +48,10 @@ Refs: docs/05_zgc_cheri_collision_report.md Â§6 (patch 0034)
 +        $(foreach sub, $(SRC_SUBDIRS), $(addsuffix /$(strip $1)/$(sub), $(TOP_SRC_DIRS))) \
 +        $(if $(filter java.base,$(strip $1)), \
 +            $(foreach top, $(TOP_SRC_DIRS), $(top)/$(strip $1)/macosx/classes))))
++
++GetModuleSrcPath = \
++    $(call PathList, \
++        $(addsuffix /*, $(GENERATED_SRC_DIRS) $(IMPORT_MODULES_SRC)) \
++        $(foreach sub, $(SRC_SUBDIRS) macosx/classes, \
++            $(addsuffix /*/$(sub), $(TOP_SRC_DIRS))))
 +endif
