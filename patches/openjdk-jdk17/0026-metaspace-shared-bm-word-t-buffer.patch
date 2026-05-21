@@ -1,0 +1,27 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0026/N] metaspaceShared.cpp: declare oopmap buffer as bm_word_t*
+
+Downstream fixup of patch 0007 (`BitMap::bm_word_t` changed from
+`uintptr_t` to `uint64_t`). One call site declared its own buffer
+as `uintptr_t* buffer` and passed it to `BitMap::write_to(bm_word_t*,
+size_t)`. On a non-CHERI build `uintptr_t == unsigned long ==
+uint64_t` so the type-check passed silently; on CHERI
+`uintptr_t == unsigned __intcap` ≠ `bm_word_t`, and the compiler
+correctly refuses the conversion.
+
+Use `BitMap::bm_word_t*` for the buffer type so it tracks the
+storage type regardless of platform.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0026)
+
+--- a/src/hotspot/share/cds/metaspaceShared.cpp
++++ b/src/hotspot/share/cds/metaspaceShared.cpp
+@@ -832,7 +832,7 @@ MetaspaceShared::dump_archive_heap_oopmaps(GrowableArray<MemRegion>* regions,
+     ResourceBitMap oopmap = HeapShared::calculate_oopmap(regions->at(i));
+     size_t size_in_bits = oopmap.size();
+     size_t size_in_bytes = oopmap.size_in_bytes();
+-    uintptr_t* buffer = (uintptr_t*)NEW_C_HEAP_ARRAY(char, size_in_bytes, mtInternal);
++    BitMap::bm_word_t* buffer = (BitMap::bm_word_t*)NEW_C_HEAP_ARRAY(char, size_in_bytes, mtInternal);
+     oopmap.write_to(buffer, size_in_bytes);
+     log_info(cds, heap)("Oopmap = " INTPTR_FORMAT " (" SIZE_FORMAT_W(6) " bytes) for heap region "
+                         INTPTR_FORMAT " (" SIZE_FORMAT_W(8) " bytes)",

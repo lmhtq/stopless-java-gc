@@ -27,9 +27,10 @@
 0023-pauth-bsd-aarch64-cheri-passthrough.patch
 0024-globaldef-intx-bounds-constexpr-cheri.patch
 0025-macroassembler-aarch64-mov-uintptr-overload.patch
+0026-metaspace-shared-bm-word-t-buffer.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0026-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0027-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
