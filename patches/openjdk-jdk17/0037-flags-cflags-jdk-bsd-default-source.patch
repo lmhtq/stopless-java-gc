@@ -1,0 +1,34 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0037/N] flags-cflags.m4: define _DEFAULT_SOURCE for JDK on bsd target
+
+The `generate-preproc-src` rule in
+`make/modules/java.base/gensrc/GensrcMisc.gmk` runs the host CPP
+on `UnixConstants.java.template` with `$(CFLAGS_JDKLIB)`. Under
+`-std=c99` (added by the JDK CFLAGS), glibc hides BSD-extension
+macros — so `S_IFMT`, `S_IFREG`, `S_IFLNK`, etc. expand to
+themselves and the generated `UnixConstants.java` has
+`static final int S_IFMT = S_IFMT;` (self-reference error).
+
+Linux JDK builds avoid this because they pass `_GNU_SOURCE` (which
+implies `_DEFAULT_SOURCE`). The bsd JDK branch in 0004 only sets
+`_ALLBSD_SOURCE` (a HotSpot-internal marker, not understood by
+glibc). Add `_DEFAULT_SOURCE` so glibc exposes the BSD-extension
+macros to the host CPP during gensrc preprocessing.
+
+Note: this only affects the buildjdk pass (host x86 Linux) where
+glibc is in play. The target side uses CheriBSD sysroot where
+these macros are always visible.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0037)
+
+--- a/make/autoconf/flags-cflags.m4
++++ b/make/autoconf/flags-cflags.m4
+@@ -446,7 +446,7 @@ AC_DEFUN([FLAGS_SETUP_CFLAGS_HELPER],
+     CFLAGS_OS_DEF_JVM="-DAIX"
+   elif test "x$OPENJDK_TARGET_OS" = xbsd; then
+     CFLAGS_OS_DEF_JVM="-DBSD -D_ALLBSD_SOURCE -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64"
+-    CFLAGS_OS_DEF_JDK="-D_ALLBSD_SOURCE"
++    CFLAGS_OS_DEF_JDK="-D_ALLBSD_SOURCE -D_DEFAULT_SOURCE"
+   elif test "x$OPENJDK_TARGET_OS" = xwindows; then
+     CFLAGS_OS_DEF_JVM="-D_WINDOWS -DWIN32 -D_JNI_IMPLEMENTATION_"
+   fi

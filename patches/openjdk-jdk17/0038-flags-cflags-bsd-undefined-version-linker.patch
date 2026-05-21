@@ -1,0 +1,40 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0038/N] flags-cflags.m4: add --undefined-version for bsd target linker
+
+The HotSpot mapfile (`make/hotspot/lib/JvmMapfile.gmk` →
+`mapfile-vers`) lists vtables for many function-local closure
+classes — e.g.,
+  _ZTVZN15G1RemSetSummary6updateEvE11CollectData
+  _ZTVZN18G1ConcurrentRefine30get_and_reset_refinement_statsEvE12CollectStats
+  _ZTVZ21WB_HandshakeWalkStackE16TraceSelfClosure
+
+LLD on FreeBSD/CheriBSD rejects the link with `error: version
+script assignment of 'SUNWprivate_1.1' to symbol ... failed:
+symbol not defined` when the corresponding object files don't
+actually emit those vtables. Whether a local-class vtable is
+emitted depends on whether the optimizer keeps the closure's
+virtual dispatch — clang's DCE elides the vtable for closures
+that are construct-then-discard.
+
+Linux/GNU-ld and macOS/lld accept the version script when listed
+symbols are missing; FreeBSD/LLD does not by default. Add
+`-Wl,--undefined-version` for `OPENJDK_TARGET_OS=bsd` to match the
+permissive behavior. The flag is supported on LLD ≥ 14; CheriBSD
+25.03 ships LLD 19.x.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0038)
+
+--- a/make/autoconf/flags-cflags.m4
++++ b/make/autoconf/flags-cflags.m4
+@@ -64,6 +64,11 @@ AC_DEFUN([FLAGS_SETUP_SHARED_LIBS],
+       SET_SHARED_LIBRARY_NAME='-Wl,-soname=[$]1'
+       SET_SHARED_LIBRARY_MAPFILE='-Wl,-version-script=[$]1'
+
++      if test "x$OPENJDK_TARGET_OS" = xbsd; then
++        # LLD on FreeBSD/CheriBSD errors out when version-script lists symbols
++        # the object files don't define; downgrade to a warning.
++        SET_SHARED_LIBRARY_MAPFILE="$SET_SHARED_LIBRARY_MAPFILE -Wl,--undefined-version"
++      fi
+       # arm specific settings
+       if test "x$OPENJDK_TARGET_CPU" = "xarm"; then
+         # '-Wl,-z,origin' isn't used on arm.

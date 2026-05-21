@@ -38,9 +38,11 @@
 0034-modules-gmk-bsd-target-uses-macosx-classes.patch
 0035-shenandoah-passive-heuristics-max2-size-t.patch
 0036-vm-version-bsd-aarch64-cheribsd-stub.patch
+0037-flags-cflags-jdk-bsd-default-source.patch
+0038-flags-cflags-bsd-undefined-version-linker.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0037-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0039-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
