@@ -5,6 +5,9 @@ third_party/*
 !third_party/.gitkeep
 !third_party/README.md
 
+# Harness state (Claude Code session lock, etc.)
+.claude/
+
 # Build artifacts
 build/
 out/
