@@ -1,35 +1,39 @@
 From: stopless-java-gc <noreply@anthropic.com>
-Subject: [PATCH 0015/N] assembler_aarch64.hpp: add Address(Register, intptr_t) for CHERI
+Subject: [PATCH 0015/N] assembler_aarch64.hpp: add Address(Register, intptr_t/uintptr_t) for CHERI
 
-Same shape as patch 0010 (macroAssembler mov overload). `Address`
-has seven `Address(Register, T)` integer-disp ctors covering int /
-long / long long / unsigned variants. Call sites like
-`Address(disp_hdr, ObjectMonitor::recursions_offset_in_bytes() -
-markWord::monitor_value)` in `aarch64.ad:3888` pass an `intptr_t`-
-typed offset. On non-CHERI builds `intptr_t == long`, so the right
-overload picks up. On CHERI/Morello purecap `intptr_t == __intcap`,
-which doesn't match any of the integer overloads, giving:
+Same shape as patch 0010 (macroAssembler mov overload) but for the
+`Address` ctor family. The existing seven `Address(Register, T)`
+integer-disp ctors cover `int`/`long`/`long long` and unsigned
+variants. Under CHERI/Morello purecap `intptr_t == __intcap` and
+`uintptr_t == unsigned __intcap` — neither implicitly converts to
+any of the existing overloads, giving `error: call to constructor
+of 'Address' is ambiguous` at aarch64.ad:3888 and similar sites
+that arithmetic-mix signed/unsigned cap values (e.g.
+`offset - markWord::monitor_value`).
 
-  error: call to constructor of 'Address' is ambiguous
-
-Add a CHERI-only ctor that strips capability metadata to int64_t and
-forwards.
+A single `intptr_t` overload is not enough: a `uintptr_t`-typed
+argument still ties between `intptr_t` and `unsigned long long` (no
+exact match). Add BOTH `intptr_t` and `uintptr_t` overloads so the
+arg type matches one of them exactly.
 
 Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0015)
 
 --- a/src/hotspot/cpu/aarch64/assembler_aarch64.hpp
 +++ b/src/hotspot/cpu/aarch64/assembler_aarch64.hpp
-@@ -414,6 +414,14 @@
+@@ -414,6 +414,16 @@
      : _base(r), _index(noreg), _offset(o), _mode(base_plus_offset), _target(0) { }
    Address(Register r, unsigned long long o)
      : _base(r), _index(noreg), _offset(o), _mode(base_plus_offset), _target(0) { }
 +#ifdef __CHERI_PURE_CAPABILITY__
-+  // On CHERI/Morello purecap, intptr_t is __intcap (a capability). The
-+  // integer ctors above don't accept it, so call sites like
-+  // Address(reg, offset - markWord::monitor_value) hit an ambiguous-ctor
-+  // error. Add a dedicated overload that strips cap metadata to an integer.
++  // On CHERI/Morello purecap, intptr_t / uintptr_t are __intcap / unsigned
++  // __intcap. The integer ctors above don't accept either, and a single
++  // intptr_t overload still leaves uintptr_t-typed args (e.g. arithmetic
++  // involving markWord::monitor_value) ambiguous. Provide both signedness
++  // variants explicitly; both strip cap metadata to an int64_t offset.
 +  Address(Register r, intptr_t o)
 +    : _base(r), _index(noreg), _offset(static_cast<int64_t>(static_cast<uintptr_t>(o))), _mode(base_plus_offset), _target(0) { }
++  Address(Register r, uintptr_t o)
++    : _base(r), _index(noreg), _offset(static_cast<int64_t>(o)), _mode(base_plus_offset), _target(0) { }
 +#endif
    Address(Register r, ByteSize disp)
      : Address(r, in_bytes(disp)) { }
