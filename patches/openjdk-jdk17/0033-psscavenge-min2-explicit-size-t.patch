@@ -1,0 +1,33 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0033/N] psScavenge: cast NewRatio division result to size_t for MIN2
+
+Same template-deduction collision pattern as patches 0016/0019.
+
+`psScavenge.cpp:571` calls `MIN2(a, b)` where:
+  a = old_gen->capacity_in_bytes() / NewRatio   // size_t / uintx
+  b = young_gen->max_gen_size()                 // size_t
+
+Under purecap, `uintx` is `unsigned __intcap` (16 bytes), so the
+result of `size_t / uintx` is `__intcap`-typed, which conflicts
+with `b`'s `size_t` (`unsigned long`). MIN2's `T` cannot be
+deduced.
+
+Cast the first argument back to `size_t` explicitly — the
+division by `NewRatio` (a configuration ratio, never larger than
+a few thousand) cannot overflow `size_t`, so the cast is value-
+preserving.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0033)
+
+--- a/src/hotspot/share/gc/parallel/psScavenge.cpp
++++ b/src/hotspot/share/gc/parallel/psScavenge.cpp
+@@ -568,7 +568,9 @@
+         // should then limit our young generation size using NewRatio to have it
+         // follow the old generation size.
+         if (MinHeapFreeRatio != 0 || MaxHeapFreeRatio != 100) {
+-          max_young_size = MIN2(old_gen->capacity_in_bytes() / NewRatio,
++          // CHERI: NewRatio is uintx (unsigned __intcap); cast result to size_t
++          // so MIN2's template deduction picks a single concrete type.
++          max_young_size = MIN2((size_t)(old_gen->capacity_in_bytes() / NewRatio),
+                                 young_gen->max_gen_size());
+         }

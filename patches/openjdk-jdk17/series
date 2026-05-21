@@ -34,9 +34,10 @@
 0030-os-bsd-freebsd-fixups.patch
 0031-posix-bsd-non-apple-aarch64-fixups.patch
 0032-os-bsd-aarch64-spell-reg-cheri.patch
+0033-psscavenge-min2-explicit-size-t.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0033-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0034-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
