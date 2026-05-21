@@ -1,0 +1,53 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0024/N] globalDefinitions: constexpr min/max_intx + max_uintx under CHERI
+
+`jvmFlagLimit.cpp` constructs `constexpr JVMTypedFlagLimit<intx>` /
+`<uintx>` initializers using `min_intx`/`max_intx`/`max_uintx` from
+globalDefinitions.hpp. Those are declared `const` (not `constexpr`)
+with expressions like
+
+  const intx  min_intx  = (intx)1 << (sizeof(intx)*BitsPerByte-1);
+  const intx  max_intx  = (uintx)min_intx - 1;
+  const uintx max_uintx = (uintx)-1;
+
+On a normal LP64 platform clang folds those at compile time anyway,
+so the `const` quietly behaves as `constexpr`. Under CHERI/Morello
+purecap `intx`/`uintx` are `__intcap`/`unsigned __intcap`, and
+neither the 127-bit shift nor the cap-cast subtraction is
+constexpr-eligible per the Morello clang frontend — every flag-limit
+initializer in jvmFlagLimit.cpp then errors with
+"constexpr variable must be initialized by a constant expression"
+(observed: ~50+ flag limits all failing at one line in
+jvmFlagLimit.cpp:108).
+
+Under CHERI, provide explicit `constexpr` definitions anchored on
+`int64_t`/`uint64_t` constants. On a 64-bit-address CHERI build the
+numeric range is identical to plain LP64.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0024)
+
+--- a/src/hotspot/share/utilities/globalDefinitions.hpp
++++ b/src/hotspot/share/utilities/globalDefinitions.hpp
+@@ -377,9 +377,22 @@
+ typedef intptr_t  intx;
+ typedef uintptr_t uintx;
+
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI/Morello purecap: intx/uintx are __intcap/unsigned __intcap.
++// The shift `(intx)1 << 127` and the cap cast `(uintx)min_intx - 1`
++// are not constexpr-eligible on Morello clang, which cascades into
++// every `constexpr JVMTypedFlagLimit<intx>` initializer failing in
++// jvmFlagLimit.cpp. Anchor on int64_t/uint64_t values that ARE
++// constexpr; on a 64-bit-address CHERI build the numeric range is
++// the same as a plain LP64 platform.
++constexpr intx  min_intx  = (intx)(int64_t)INT64_MIN;
++constexpr intx  max_intx  = (intx)(int64_t)INT64_MAX;
++constexpr uintx max_uintx = (uintx)(uint64_t)UINT64_MAX;
++#else
+ const intx  min_intx  = (intx)1 << (sizeof(intx)*BitsPerByte-1);
+ const intx  max_intx  = (uintx)min_intx - 1;
+ const uintx max_uintx = (uintx)-1;
++#endif
+
+ // Table of values:
+ //      sizeof intx         4               8
