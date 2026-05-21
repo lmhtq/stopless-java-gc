@@ -1,0 +1,35 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0022/N] JvmOverrideFiles.gmk: drop -O on frame_aarch64.cpp to avoid Morello clang 17 ICE
+
+Build 27 stopped with a clang internal compiler error (exit 134) in
+the AArch64 Instruction Selection pass while compiling
+`frame::sender_raw` in `src/hotspot/cpu/aarch64/frame_aarch64.cpp`.
+The crash is in Morello clang's own backend, not in our source —
+the optimizer path triggers an ISel-time assertion under purecap.
+
+Lowering the optimization level to NONE for this one file
+sidesteps the buggy pass. The function is short (~17 lines) and
+called from `frame::sender(map)` only — losing -O3 here costs
+negligible runtime. Re-evaluate when the Cambridge CTSRD team ships
+a newer Morello LLVM.
+
+Guard the override by toolchain=clang + target_cpu=aarch64 so
+non-CHERI aarch64 + x86 builds are unaffected.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0022)
+
+--- a/make/hotspot/lib/JvmOverrideFiles.gmk
++++ b/make/hotspot/lib/JvmOverrideFiles.gmk
+@@ -151,3 +151,12 @@ else ifeq ($(call isTargetOs, windows), true)
+   BUILD_LIBJVM_jvmciCompilerToVMInit.cpp_OPTIMIZATION := NONE
+
+ endif
++
++# stopless-java-gc: workaround Morello clang 17 ICE in AArch64 Instruction
++# Selection pass on frame::sender_raw. Bug surface is the optimizer; -O0
++# avoids the crash. Re-evaluate when Cambridge ships a newer Morello LLVM.
++ifeq ($(TOOLCHAIN_TYPE), clang)
++  ifeq ($(OPENJDK_TARGET_CPU), aarch64)
++    BUILD_LIBJVM_frame_aarch64.cpp_OPTIMIZATION := NONE
++  endif
++endif
