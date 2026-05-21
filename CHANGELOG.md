@@ -199,16 +199,29 @@ OpenJDK 17u (jdk-17.0.13-ga) checkout. `configure` completes
 successfully; `make images` reaches HotSpot compilation and surfaces
 the next layer of collisions catalogued at docs/05 §6 patches 0008–0011.
 
-### Phase 1 day 1 — next-layer findings (pending patches)
-- 0008 shenandoahMarkBitMap — Shenandoah's own bm_word_t needs the
-  same uintptr_t → uint64_t change (Shenandoah declares it
-  independently of share/utilities/bitMap.hpp)
-- 0009 semaphore.hpp / build flags — `-DBSD` from patch 0005 is
-  leaking into buildjdk (the HOST x86 linux JDK built during
-  bootstrap), making it try to include semaphore_bsd.hpp. Patch
-  needs to scope the bsd-only JVM defines to TARGET, not bleed to
-  BUILD. Investigation pending.
-- 0010 macroAssembler_aarch64.hpp:523 — `mov(reg, intptr_t)`
-  ambiguous because under CHERI `intptr_t = __intcap` matches
-  multiple existing `mov` overloads. Either add a CHERI-aware
-  overload or rename one.
+### Phase 1 day 1 — next-layer findings (now landed)
+- 0008 shenandoahMarkBitMap — done.
+- 0009 semaphore.hpp / build flags — done. Re-derived
+  `CFLAGS_OS_DEF_JVM` for the BUILD pass; verified buildjdk no
+  longer pulls semaphore_bsd.hpp.
+- 0010 macroAssembler_aarch64 mov(Register, intptr_t) — done.
+- 0011 count_trailing_zeros — done. CHERI cap-sized overload added.
+- 0012 count_leading_zeros — done. `<T, 16>` specialisation added.
+
+All 11 patches (0002-0012) apply cleanly through
+`scripts/apply_patches.sh` against a clean OpenJDK 17u checkout.
+Build runs `configure` -> HotSpot compile -> linker stage -> hits
+two new collisions at the buildjdk / aarch64-asm boundary,
+catalogued at docs/05 §6 patches 0013 and 0014.
+
+### Phase 1 day 2 — pending patches (next-next layer)
+- 0013 flags-cflags `EXTRA_CXXFLAGS` strip — `--with-extra-cflags`
+  containing `-march=morello -mabi=purecap` leaks into the BUILD
+  pass's host x86 libjvm compile, producing
+  `error: unknown target CPU 'morello'`. Same root pattern as
+  0009 but for `EXTRA_CXXFLAGS` propagation; needs another
+  re-derive block in the BUILD CFLAGS path.
+- 0014 copy_bsd_aarch64.hpp inline asm — `prfm pldl1strm,
+  [%[s], #0]` no longer accepts a capability-typed operand under
+  purecap; need to cast through address representation in the asm
+  constraint.

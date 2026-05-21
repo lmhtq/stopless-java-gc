@@ -249,9 +249,13 @@ full set catalogued.
 | 0007 | `src/hotspot/share/utilities/bitMap.hpp:51` | `bm_word_t = uintptr_t` makes `sizeof(bm_word_t)*8 != BitsPerWord` on CHERI (128 vs 64); also kills count_trailing_zeros overload lookup | `typedef uint64_t bm_word_t` |
 | 0008 | `src/hotspot/share/gc/shenandoah/shenandoahMarkBitMap.{hpp,inline.hpp}` *(pending)* | Shenandoah has its own bitmap with the same `uintptr_t` storage assumption | Mirror the 0007 fix |
 | 0009 | `src/hotspot/share/runtime/semaphore.hpp` *(pending)* | buildjdk (HOST x86 linux) is including `semaphore_bsd.hpp` because `-DBSD` leaked from CFLAGS_OS_DEF_JVM into BUILD CFLAGS | Scope our patch 0005 / 0004 changes to TARGET only (patch the autoconf macro, not the shared variable) |
-| 0010 | `src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp:523` *(pending)* | `mov(reg, intptr_t)` ambiguous because under CHERI `intptr_t` is a capability type that overload-matches multiple existing `mov` variants | Add a CHERI-aware overload OR rename one of the conflicting ones |
-| 0011 | `patches/openjdk-jdk17/0001-cap-runtime-hook.patch` *(pending)* | Build hook to link `src/cap_runtime/` into libjvm | See `docs/01_phase_i_zgc_port.md §4` |
-| 0012+ | ZGC source proper | See `docs/01_phase_i_zgc_port.md §3-4` | The actual side-table redesign |
+| 0010 | `src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp:523` | `mov(Register, intptr_t)` ambiguous — `as_constant()` returns `intptr_t == __intcap` on CHERI | Add `mov(Register, intptr_t)` overload under `__CHERI_PURE_CAPABILITY__` |
+| 0011 | `src/hotspot/share/utilities/count_trailing_zeros.hpp` | Template `count_trailing_zeros<T>` constrained to `sizeof(T) <= 8` excludes 16-byte CHERI cap | Add CHERI-only overload that takes cap-sized integral and casts to uint64_t |
+| 0012 | `src/hotspot/share/utilities/count_leading_zeros.hpp` | `CountLeadingZerosImpl<T, 16>` undefined — only sizeof 1/2/4/8 specialised | Add `<T, 16>` specialisation that delegates to `<uint64_t, 8>` |
+| 0013 *(pending)* | OpenJDK build-system `EXTRA_CFLAGS` propagation | `--with-extra-cflags="-march=morello -mabi=purecap"` leaks into BUILD pass (host x86 buildjdk libjvm compile), producing `error: unknown target CPU 'morello'`. Same shape as 0009 but for `EXTRA_CXXFLAGS` instead of `CFLAGS_OS_DEF_JVM` | Strip `-march=morello -mabi=purecap` from `BUILD_EXTRA_C*FLAGS` in flags-cflags.m4 |
+| 0014 *(pending)* | `src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp:119,128` | `prfm pldl1strm, [%[s], #0]` inline asm — operand `from` is now a cap, assembler can't take cap operand directly | Cast `from` to its address representation in the inline asm |
+| 0015 | `patches/openjdk-jdk17/cap-runtime-hook.patch` *(pending)* | Build hook to link `src/cap_runtime/` into libjvm | See `docs/01_phase_i_zgc_port.md §4` |
+| 0016+ | ZGC source proper | See `docs/01_phase_i_zgc_port.md §3-4` | The actual side-table redesign |
 
 After applying 0002–0004 cleanly via `scripts/apply_patches.sh`,
 `configure` completes successfully and `make images` reaches HotSpot
