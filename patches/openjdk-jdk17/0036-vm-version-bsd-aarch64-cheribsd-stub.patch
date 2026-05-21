@@ -1,0 +1,78 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0036/N] vm_version_bsd_aarch64: CheriBSD stub for get_os_cpu_info
+
+`VM_Version::get_os_cpu_info` is entirely Apple-specific:
+
+  - `hw.optional.floatingpoint`, `hw.optional.neon`,
+    `hw.optional.armv8_crc32`, `hw.optional.armv8_1_atomics` are
+    macOS-only sysctls.
+  - `HW_CACHELINE` (used with `CTL_HW`) is a macOS sysctl
+    identifier.
+  - `hw.cpufamily` is the macOS CPU-family probe.
+  - The final `_cpu = CPU_APPLE;` assignment makes no sense on
+    CheriBSD.
+
+Wrap the Apple body in `#ifdef __APPLE__` and add a CheriBSD branch
+that sets conservative defaults:
+
+  - `_features = CPU_FP | CPU_ASIMD | CPU_CRC32 | CPU_LSE`
+    (Morello is ARMv8.6+, so all four are mandated).
+  - 64-byte i-cache / d-cache lines (Morello R1/N1-class).
+  - `_zva_length = 64`, then refined by reading `DCZID_EL0` (the
+    inline-asm in the Apple branch is portable, kept verbatim).
+  - `_model = 0; _cpu = CPU_ARM;` (generic ARM tag).
+
+Phase 2 can replace the conservative defaults with real probing
+via `ID_AA64ISAR0_EL1` / `ID_AA64PFR0_EL1` reads.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0036)
+
+--- a/src/hotspot/os_cpu/bsd_aarch64/vm_version_bsd_aarch64.cpp
++++ b/src/hotspot/os_cpu/bsd_aarch64/vm_version_bsd_aarch64.cpp
+@@ -41,6 +41,7 @@
+   return -1;
+ }
+
++#ifdef __APPLE__
+ static bool cpu_has(const char* optional) {
+   uint32_t val;
+   size_t len = sizeof(val);
+@@ -49,8 +50,10 @@
+   }
+   return val;
+ }
++#endif
+
+ void VM_Version::get_os_cpu_info() {
++#ifdef __APPLE__
+   size_t sysctllen;
+
+   // hw.optional.floatingpoint always returns 1, see
+@@ -90,6 +93,27 @@
+   }
+   _model = family;
+   _cpu = CPU_APPLE;
++#else
++  // FreeBSD/CheriBSD: hw.optional.* and HW_CACHELINE are Apple-specific.
++  // Set conservative defaults; Phase 2 can probe ID_AA64ISAR0_EL1 etc.
++  // for real feature detection. Morello aarch64 always has FP + ASIMD;
++  // CRC32 + LSE are required by ARMv8.1 baseline (Morello is v8.6+).
++  _features = CPU_FP | CPU_ASIMD | CPU_CRC32 | CPU_LSE;
++  _icache_line_size = 64;
++  _dcache_line_size = 64;
++  _zva_length = 64;  // typical for ARMv8 cores
++
++  uint64_t dczid_el0;
++  __asm__ (
++    "mrs %0, DCZID_EL0\n"
++    : "=r"(dczid_el0)
++  );
++  if (!(dczid_el0 & 0x10)) {
++    _zva_length = 4 << (dczid_el0 & 0xf);
++  }
++  _model = 0;
++  _cpu = CPU_ARM;  // generic ARM; not CPU_APPLE
++#endif
+ }
+
+ void VM_Version::get_compatible_board(char *buf, int buflen) {
