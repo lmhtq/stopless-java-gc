@@ -1,0 +1,127 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0030/N] os_bsd.cpp: FreeBSD/CheriBSD fixups (dll_load arch, sysctls)
+
+`os_bsd.cpp` is the shared BSD os layer but the non-Apple side has
+several latent issues that only surface when actually building for
+a non-Apple target:
+
+(1) `dll_load` declares `const char* const error_report = ::dlerror();`
+    then reassigns it on the next line. clang accepts this on macOS
+    as an extension; everywhere else it is ill-formed. Drop the
+    outer `const`.
+
+(2) The arch_array + `running_arch_code` `#if`-chain enumerates a
+    dozen architectures but not AArch64, so HotSpot fails its own
+    `#error` guard on aarch64 BSD targets. Add EM_AARCH64 to the
+    table and an `#elif (defined AARCH64)` branch.
+
+(3) `get_loaded_modules_info` uses Solaris-style typedef `Link_map`,
+    which is undefined on FreeBSD/CheriBSD. The portable spelling
+    is `struct link_map`. The second local `Link_map *p;` was unused;
+    drop it.
+
+(4) `get_summary_cpu_info` reads CPU MHz via `HW_CPU_FREQ` — a macOS
+    sysctl identifier. Wrap the macOS code in `#ifdef __APPLE__` and
+    stub `mhz = 0` for FreeBSD/CheriBSD (the existing fallback path
+    `snprintf("\"%s\" %s %d MHz", ...)` will print "0 MHz" — fine
+    for Phase 1; a future patch can query `dev.cpu.0.freq` via
+    `sysctlbyname`).
+
+(5) `print_memory_info` uses `xsw_usage` (macOS-only swap struct).
+    Wrap the swap-info block in `#ifdef __APPLE__`; the rest of the
+    function (page size + physical/free memory) stays cross-BSD.
+
+None of these are CHERI-specific — they would equally affect a hypo-
+thetical FreeBSD/aarch64 OpenJDK port. They surface here because
+we're the first to actually build OpenJDK 17u for non-Darwin BSD.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0030)
+
+--- a/src/hotspot/os/bsd/os_bsd.cpp
++++ b/src/hotspot/os/bsd/os_bsd.cpp
+@@ -1085,7 +1085,7 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen) {
+
+   Elf32_Ehdr elf_head;
+
+-  const char* const error_report = ::dlerror();
++  const char* error_report = ::dlerror();
+   if (error_report == NULL) {
+     error_report = "dlerror returned no error description";
+   }
+@@ -1168,7 +1168,8 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen) {
+     {EM_MIPS_RS3_LE, EM_MIPS_RS3_LE, ELFCLASS32, ELFDATA2LSB, (char*)"MIPSel"},
+     {EM_MIPS,        EM_MIPS,    ELFCLASS32, ELFDATA2MSB, (char*)"MIPS"},
+     {EM_PARISC,      EM_PARISC,  ELFCLASS32, ELFDATA2MSB, (char*)"PARISC"},
+-    {EM_68K,         EM_68K,     ELFCLASS32, ELFDATA2MSB, (char*)"M68k"}
++    {EM_68K,         EM_68K,     ELFCLASS32, ELFDATA2MSB, (char*)"M68k"},
++    {EM_AARCH64,     EM_AARCH64, ELFCLASS64, ELFDATA2LSB, (char*)"AArch64"}
+   };
+
+   #if  (defined IA32)
+@@ -1195,6 +1196,8 @@ void * os::dll_load(const char *filename, char *ebuf, int ebuflen) {
+   static  Elf32_Half running_arch_code=EM_MIPS;
+   #elif  (defined M68K)
+   static  Elf32_Half running_arch_code=EM_68K;
++  #elif  (defined AARCH64)
++  static  Elf32_Half running_arch_code=EM_AARCH64;
+   #else
+     #error Method os::dll_load requires that one of following is defined:\
+          IA32, AMD64, IA64, __powerpc__, ARM, S390, ALPHA, MIPS, MIPSEL, PARISC, M68K
+@@ -1271,8 +1274,8 @@ int os::get_loaded_modules_info(os::LoadedModulesCallbackFunc callback, void *pa
+ #ifdef RTLD_DI_LINKMAP
+   Dl_info dli;
+   void *handle;
+-  Link_map *map;
+-  Link_map *p;
++  struct link_map *map;
++  // 'p' was unused; struct link_map is the FreeBSD spelling (Solaris uses typedef Link_map).
+
+   if (dladdr(CAST_FROM_FN_PTR(void *, os::print_dll_info), &dli) == 0 ||
+       dli.dli_fname == NULL) {
+@@ -1405,6 +1408,7 @@ void os::pd_print_cpu_info(outputStream* st, char* buf, size_t buflen) {
+ }
+
+ void os::get_summary_cpu_info(char* buf, size_t buflen) {
++#ifdef __APPLE__
+   unsigned int mhz;
+   size_t size = sizeof(mhz);
+   int mib[] = { CTL_HW, HW_CPU_FREQ };
+@@ -1413,6 +1417,10 @@ void os::get_summary_cpu_info(char* buf, size_t buflen) {
+   } else {
+     mhz /= 1000000;  // reported in millions
+   }
++#else
++  // FreeBSD/CheriBSD: HW_CPU_FREQ is macOS-specific; stub for Phase 1.
++  unsigned int mhz = 0;
++#endif
+
+   char model[100];
+   size = sizeof(model);
+@@ -1442,9 +1450,6 @@ void os::get_summary_cpu_info(char* buf, size_t buflen) {
+ }
+
+ void os::print_memory_info(outputStream* st) {
+-  xsw_usage swap_usage;
+-  size_t size = sizeof(swap_usage);
+-
+   st->print("Memory:");
+   st->print(" %dk page", os::vm_page_size()>>10);
+
+@@ -1453,6 +1458,9 @@ void os::print_memory_info(outputStream* st) {
+   st->print("(" UINT64_FORMAT "k free)",
+             os::available_memory() >> 10);
+
++#ifdef __APPLE__
++  xsw_usage swap_usage;
++  size_t size = sizeof(swap_usage);
+   if((sysctlbyname("vm.swapusage", &swap_usage, &size, NULL, 0) == 0) || (errno == ENOMEM)) {
+     if (size >= offset_of(xsw_usage, xsu_used)) {
+       st->print(", swap " UINT64_FORMAT "k",
+@@ -1461,6 +1469,7 @@ void os::print_memory_info(outputStream* st) {
+                 ((julong) swap_usage.xsu_avail) >> 10);
+     }
+   }
++#endif
+
+   st->cr();
+ }
