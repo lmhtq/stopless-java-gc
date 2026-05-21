@@ -1,0 +1,40 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0010/N] macroAssembler_aarch64: add mov(Register, intptr_t) overload for CHERI
+
+`MacroAssembler::mov(Register, RegisterOrConstant)` (line 519) calls
+`mov(dst, src.as_constant())`. `RegisterOrConstant::as_constant()`
+returns `intptr_t` (see share/asm/assembler.hpp:197).
+
+The existing `mov(Register, T)` overloads cover `int`, `long`,
+`long long` and their unsigned variants. On a normal platform
+`intptr_t == long`, so the right overload picks up naturally. On
+CHERI/Morello purecap `intptr_t == __intcap` (a 128-bit capability),
+which is not implicitly convertible to any of the integer overloads,
+giving:
+
+  error: call to member function 'mov' is ambiguous
+
+Add a CHERI-only overload that strips capability metadata down to a
+64-bit address and forwards to `mov_immediate64`. Guarded by
+`__CHERI_PURE_CAPABILITY__` so non-CHERI builds are unaffected (and
+don't accidentally collide with the existing `mov(Register, long)`
+overload).
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0010)
+
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+@@ -510,6 +510,13 @@
+   inline void mov(Register dst, unsigned int imm64)       { mov_immediate64(dst, (uint64_t)imm64); }
+   inline void mov(Register dst, unsigned long imm64)      { mov_immediate64(dst, (uint64_t)imm64); }
+   inline void mov(Register dst, unsigned long long imm64) { mov_immediate64(dst, (uint64_t)imm64); }
++#ifdef __CHERI_PURE_CAPABILITY__
++  // On CHERI/Morello purecap, intptr_t is __intcap (a capability), which
++  // does not match any of the integer overloads above. Provide a dedicated
++  // overload so call sites like mov(dst, src.as_constant()) where
++  // as_constant() returns intptr_t do not suffer ambiguous-overload errors.
++  inline void mov(Register dst, intptr_t imm64)            { mov_immediate64(dst, (uint64_t)(uintptr_t)imm64); }
++#endif
+
+   inline void movw(Register dst, uint32_t imm32)
+   {

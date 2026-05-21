@@ -1,0 +1,50 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0009/N] flags-cflags.m4: re-derive CFLAGS_OS_DEF_JVM for BUILD pass
+
+OpenJDK's `FLAGS_SETUP_CFLAGS_HELPER` sets `CFLAGS_OS_DEF_JVM` exactly
+once, based on `OPENJDK_TARGET_OS`. That same global is then consumed
+by `FLAGS_SETUP_CFLAGS_CPU_DEP` twice — once for the TARGET CPU pass,
+once for the BUILD CPU pass.
+
+When TARGET=bsd and BUILD=linux (our cross-compile), the BUILD JVM
+gets `-DBSD` instead of `-DLINUX`. `share/runtime/semaphore.hpp` then
+selects the BSD branch and tries to include `semaphore_bsd.hpp` for
+the host-x86 buildjdk, which doesn't have `os/bsd/` on its include
+path:
+
+  fatal error: 'semaphore_bsd.hpp' file not found
+
+The TARGET dispatch values have already been consumed by the time the
+BUILD pass starts, so we can safely overwrite `CFLAGS_OS_DEF_JVM`
+here from `OPENJDK_BUILD_OS`. The branches mirror those in
+`FLAGS_SETUP_CFLAGS_HELPER`.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0009)
+
+--- a/make/autoconf/flags-cflags.m4
++++ b/make/autoconf/flags-cflags.m4
+@@ -405,6 +405,24 @@ AC_DEFUN([FLAGS_SETUP_CFLAGS],
+   FLAGS_CPU_LEGACY=$OPENJDK_BUILD_CPU_LEGACY
+   FLAGS_CPU_LEGACY_LIB=$OPENJDK_BUILD_CPU_LEGACY_LIB
+
++  # stopless-java-gc: CFLAGS_OS_DEF_JVM was set once in FLAGS_SETUP_CFLAGS_HELPER
++  # based on OPENJDK_TARGET_OS, but BUILD compiles need defines matching
++  # OPENJDK_BUILD_OS (otherwise e.g. cross-compiling linux-host -> bsd-target
++  # bleeds -DBSD into the buildjdk JVM, breaking semaphore.hpp dispatch).
++  # Re-derive here for the BUILD pass; the TARGET value has already been
++  # consumed at this point.
++  if test "x$OPENJDK_BUILD_OS" = xlinux; then
++    CFLAGS_OS_DEF_JVM="-DLINUX -D_FILE_OFFSET_BITS=64"
++  elif test "x$OPENJDK_BUILD_OS" = xmacosx; then
++    CFLAGS_OS_DEF_JVM="-D_ALLBSD_SOURCE -D_DARWIN_C_SOURCE -D_XOPEN_SOURCE"
++  elif test "x$OPENJDK_BUILD_OS" = xaix; then
++    CFLAGS_OS_DEF_JVM="-DAIX"
++  elif test "x$OPENJDK_BUILD_OS" = xbsd; then
++    CFLAGS_OS_DEF_JVM="-DBSD -D_ALLBSD_SOURCE -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64"
++  elif test "x$OPENJDK_BUILD_OS" = xwindows; then
++    CFLAGS_OS_DEF_JVM="-D_WINDOWS -DWIN32 -D_JNI_IMPLEMENTATION_"
++  fi
++
+   FLAGS_SETUP_CFLAGS_CPU_DEP([BUILD], [OPENJDK_BUILD_], [BUILD_])
+
+   CC="$CC_OLD"

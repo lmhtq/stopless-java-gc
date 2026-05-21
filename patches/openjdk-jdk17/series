@@ -9,9 +9,14 @@
 0005-flags-cflags-define-BSD-macro-for-jvm.patch
 0006-bytes-bsd-aarch64-use-freebsd-endian.patch
 0007-bitmap-bm-word-t-uint64.patch
+0008-shenandoah-bitmap-bm-word-t-uint64.patch
+0009-flags-cflags-rederive-jvm-defs-for-build.patch
+0010-macroassembler-aarch64-mov-cheri-overload.patch
+0011-count-trailing-zeros-cheri-overload.patch
+0012-count-leading-zeros-cheri-specialization.patch
 
-# --- Phase 1 pending: HotSpot portability layer (next layer) ---
-# 0008-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# --- Phase 1 pending: cap_runtime hook + ZGC source ---
+# 0013-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)

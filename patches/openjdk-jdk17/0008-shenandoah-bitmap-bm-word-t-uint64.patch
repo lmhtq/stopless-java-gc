@@ -1,0 +1,25 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0008/N] shenandoahMarkBitMap: bm_word_t = uint64_t (mirror 0007)
+
+ShenandoahMarkBitMap declares its own `bm_word_t = uintptr_t` and is
+not affected by patch 0007 (which only touches share/utilities/
+bitMap.hpp). Same root cause: on CHERI/Morello purecap, uintptr_t is
+128 bits, breaking the count_trailing_zeros overload lookup and any
+sizeof-based assumptions.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0008)
+
+--- a/src/hotspot/share/gc/shenandoah/shenandoahMarkBitMap.hpp
++++ b/src/hotspot/share/gc/shenandoah/shenandoahMarkBitMap.hpp
+@@ -33,7 +33,10 @@
+ class ShenandoahMarkBitMap {
+ public:
+   typedef size_t idx_t;         // Type used for bit and word indices.
+-  typedef uintptr_t bm_word_t;  // Element type of array that represents the
++  // CHERI/Morello purecap: uintptr_t is __intcap (128 bits), but the bitmap
++  // wants a BitsPerWord-wide storage word. Mirror the share/utilities/bitMap.hpp
++  // fix here (Shenandoah declares its own bm_word_t independently).
++  typedef uint64_t bm_word_t;   // Element type of array that represents the
+                                 // bitmap, with BitsPerWord bits per element.
+
+ private:
