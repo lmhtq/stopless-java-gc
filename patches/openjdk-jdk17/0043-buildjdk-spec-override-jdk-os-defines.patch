@@ -1,0 +1,36 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0043/N] buildjdk-spec: override OS defines to host-Linux for BUILD pass
+
+Patches 0004/0037 force `-D_ALLBSD_SOURCE -DBSD -D_GNU_SOURCE
+-D_DEFAULT_SOURCE` into both `CFLAGS_OS_DEF_JVM` and
+`CFLAGS_OS_DEF_JDK` for `OPENJDK_TARGET_OS=bsd`. The BUILDJDK pass
+inherits the target's spec.gmk and these defines leak into the
+host (x86 Linux) compile, which causes BSD-only includes like
+`<net/if_dl.h>` (NetworkInterface.c), `<machine/endian.h>`
+(fdlibm.h, fixed by 0042 via `__linux__` priority) and host glibc
+identifier hiding to surface.
+
+Patches 0040, 0042 fix several files by re-ordering `#ifdef`s to
+prefer `__linux__` when both `_ALLBSD_SOURCE` and `__linux__` are
+defined. But that approach scales linearly with each new file we
+hit. Cleaner: override OS defines in `buildjdk-spec.gmk.in` so the
+BUILD pass uses Linux-appropriate flags. The target spec on
+CheriBSD is untouched.
+
+Same shape as the existing `EXTRA_*FLAGS` overrides (patch 0013)
+and the `SET_SHARED_LIBRARY_MAPFILE` override (patch 0038).
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0043)
+
+--- a/make/autoconf/buildjdk-spec.gmk.in
++++ b/make/autoconf/buildjdk-spec.gmk.in
+@@ -108,3 +108,9 @@
+ # Strip the bsd-target --undefined-version LLD flag for the BUILD pass:
+ # host GNU ld 2.38 doesn't recognize it (added in binutils 2.40).
+ override SET_SHARED_LIBRARY_MAPFILE = -Wl,-version-script=$1
++
++# The BUILD pass runs on the host (Linux x86); the target's bsd OS-defines
++# (_ALLBSD_SOURCE, BSD) make host glibc hide identifiers and trigger BSD-only
++# #include paths. Override to Linux-appropriate defines for BUILD only.
++override CFLAGS_OS_DEF_JDK := -D_GNU_SOURCE -D_REENTRANT -D_LARGEFILE64_SOURCE -DLINUX
++override CFLAGS_OS_DEF_JVM := -DLINUX -D_FILE_OFFSET_BITS=64
