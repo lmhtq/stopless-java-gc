@@ -1,0 +1,32 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0035/N] shenandoahPassiveHeuristics: MAX2 size_t cast under CHERI
+
+Same template-deduction collision as patches 0016/0019/0033.
+
+`shenandoahPassiveHeuristics.cpp:57`:
+  MAX2(max_capacity / 100 * ShenandoahEvacReserve, actual_free)
+
+`max_capacity` is `size_t`; `ShenandoahEvacReserve` is `uintx`
+(unsigned `__intcap` on purecap). The product is `__intcap`. The
+second argument `actual_free` is `size_t`. MAX2's `T` cannot
+deduce a single type.
+
+Cast the first arg to `size_t`. The arithmetic
+`max_capacity / 100 * ShenandoahEvacReserve` is bounded by
+`max_capacity` (since ShenandoahEvacReserve is a percentage, ≤100)
+so cannot overflow size_t.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0035)
+
+--- a/src/hotspot/share/gc/shenandoah/heuristics/shenandoahPassiveHeuristics.cpp
++++ b/src/hotspot/share/gc/shenandoah/heuristics/shenandoahPassiveHeuristics.cpp
+@@ -54,7 +54,8 @@
+   // Do not select too large CSet that would overflow the available free space.
+   // Take at least the entire evacuation reserve, and be free to overflow to free space.
+   size_t max_capacity = ShenandoahHeap::heap()->max_capacity();
+-  size_t available = MAX2(max_capacity / 100 * ShenandoahEvacReserve, actual_free);
++  // CHERI: ShenandoahEvacReserve is uintx (__intcap); cast back to size_t for MAX2
++  size_t available = MAX2((size_t)(max_capacity / 100 * ShenandoahEvacReserve), actual_free);
+   size_t max_cset  = (size_t)(available / ShenandoahEvacWaste);
+
+   log_info(gc, ergo)("CSet Selection. Actual Free: " SIZE_FORMAT "%s, Max CSet: " SIZE_FORMAT "%s",
