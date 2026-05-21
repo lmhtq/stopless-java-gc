@@ -1,0 +1,48 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0041/N] charsets: stdcs-bsd aliases to stdcs-linux
+
+The charset mapping build selects per-OS charset lists via
+`stdcs-$(OPENJDK_TARGET_OS)`. Upstream ships `stdcs-linux`,
+`stdcs-aix`, `stdcs-windows` — but no `stdcs-bsd`. Without it, the
+EUC_CN, GBK, EUC_JP, etc. charsets aren't generated, and
+`X11GB2312.java` (and a dozen other unix/classes files) fail with
+"cannot find symbol Encoder/Decoder" — they reference DoubleByte
+encoders from `EUC_CN`, `GBK`, etc.
+
+CheriBSD's locale + charset support follows the Linux baseline
+(same set of charsets). Patch both
+`make/modules/jdk.charsets/Gensrc.gmk` and
+`make/modules/java.base/gensrc/GensrcCharsetMapping.gmk` to alias
+`bsd → linux` for `CHARSET_STANDARD_OS`. No data files added —
+the patch is purely make-side.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0041)
+
+--- a/make/modules/java.base/gensrc/GensrcCharsetMapping.gmk
++++ b/make/modules/java.base/gensrc/GensrcCharsetMapping.gmk
+@@ -38,7 +38,11 @@ CHARSET_TEMPLATES := \
+     $(CHARSET_DATA_DIR)/DoubleByte-X.java.template
+ CHARSET_STANDARD_JAVA_TEMPLATES := \
+     $(TOPDIR)/src/java.base/share/classes/sun/nio/cs/StandardCharsets.java.template
++ifeq ($(OPENJDK_TARGET_OS), bsd)
++CHARSET_STANDARD_OS := stdcs-linux
++else
+ CHARSET_STANDARD_OS := stdcs-$(OPENJDK_TARGET_OS)
++endif
+
+ $(CHARSET_DONE_BASE)-stdcs: $(CHARSET_DATA_DIR)/charsets \
+     $(wildcard $(CHARSET_DATA_DIR)/$(CHARSET_STANDARD_OS)) \
+--- a/make/modules/jdk.charsets/Gensrc.gmk
++++ b/make/modules/jdk.charsets/Gensrc.gmk
+@@ -40,7 +40,11 @@ CHARSET_TEMPLATES := \
+ CHARSET_EXTENDED_JAVA_TEMPLATES := \
+     $(TOPDIR)/src/jdk.charsets/share/classes/sun/nio/cs/ext/ExtendedCharsets.java.template
+ CHARSET_EXTENDED_JAVA_DIR := $(TOPDIR)/src/jdk.charsets/share/classes/sun/nio/cs/ext
++ifeq ($(OPENJDK_TARGET_OS), bsd)
++CHARSET_STANDARD_OS := stdcs-linux
++else
+ CHARSET_STANDARD_OS := stdcs-$(OPENJDK_TARGET_OS)
++endif
+
+ $(CHARSET_DONE_CS)-extcs: $(CHARSET_DATA_DIR)/charsets \
+     $(wildcard $(CHARSET_DATA_DIR)/$(CHARSET_STANDARD_OS)) \
