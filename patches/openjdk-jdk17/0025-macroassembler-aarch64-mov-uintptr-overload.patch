@@ -1,0 +1,29 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0025/N] macroAssembler_aarch64: add mov(Register, uintptr_t) for CHERI
+
+Companion to patch 0010. The single CHERI-only
+`mov(Register, intptr_t)` overload added there resolves call sites
+that pass `intptr_t` (signed __intcap). But call sites passing
+`uintptr_t` (unsigned __intcap) values — e.g. `mov(rscratch1,
+markWord::biased_lock_mask_in_place | markWord::age_mask_in_place |
+markWord::epoch_mask_in_place)` at macroAssembler_aarch64.cpp:546 —
+still tie ambiguously between `intptr_t` (needs signed conversion)
+and the existing `unsigned long long` (needs cap-to-integral
+conversion). Same fix pattern as patch 0015 for Address.
+
+Add an explicit `mov(Register, uintptr_t)` overload under
+`__CHERI_PURE_CAPABILITY__` so a uintptr_t argument matches
+exactly.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0025)
+
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+@@ -516,6 +516,7 @@
+   // overload so call sites like mov(dst, src.as_constant()) where
+   // as_constant() returns intptr_t do not suffer ambiguous-overload errors.
+   inline void mov(Register dst, intptr_t imm64)            { mov_immediate64(dst, (uint64_t)(uintptr_t)imm64); }
++  inline void mov(Register dst, uintptr_t imm64)           { mov_immediate64(dst, (uint64_t)imm64); }
+ #endif
+
+   inline void movw(Register dst, uint32_t imm32)
