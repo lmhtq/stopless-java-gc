@@ -255,9 +255,17 @@ full set catalogued.
 | 0013 | `make/autoconf/buildjdk-spec.gmk.in:103` | `buildjdk-spec.gmk.in` overrides EXTRA_C/CXX/LDFLAGS but not EXTRA_ASFLAGS — `--with-extra-asflags` leaks into host buildjdk libjvm `.S` compile, producing `unknown target CPU 'morello'` from host clang | Add `override EXTRA_ASFLAGS :=` alongside the existing three |
 | 0014 | `src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp:30-101` | `COPY_SMALL` macro's inline asm uses non-cap `ldr/str` operands; assembler rejects cap-typed operands | Wrap in `#ifdef __CHERI_PURE_CAPABILITY__` and substitute `memcpy`-based fallback. NB: avoid top-level `#include` — copy_bsd_aarch64.hpp is included *inside* `class Copy { ... }` |
 | 0015 | `src/hotspot/cpu/aarch64/assembler_aarch64.hpp:414` | `Address(Register, intptr_t)` ctor ambiguous in `aarch64.ad:3888` — `intptr_t == __intcap` doesn't match any of the seven existing integer-disp overloads | Add CHERI-only `Address(Register, intptr_t)` overload, same shape as patch 0010 for `mov` |
-| 0016 *(pending)* | UnixConstants.java self-reference cascade | Generated Java file is broken; root cause likely native-header parsing tool stumbles on CHERI cap types in unistd.h / sys/socket.h | Investigation pending |
-| 0017 | `patches/openjdk-jdk17/cap-runtime-hook.patch` *(pending)* | Build hook to link `src/cap_runtime/` into libjvm | See `docs/01_phase_i_zgc_port.md §4` |
-| 0018+ | ZGC source proper | See `docs/01_phase_i_zgc_port.md §3-4` | The actual side-table redesign |
+| 0016 | `src/hotspot/share/compiler/compilerDefinitions.cpp:434,437,440` | `MAX2(size_t, uintx)` template type deduction fails when those are distinct types on CHERI | Explicit `MAX2<uintx>(...)` at each call site |
+| 0017 | `src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.S` | 240-line aarch64 asm uses non-cap `ldr/str/ldp/stp` operands; purecap assembler rejects every one | Wrap entire file body in `#ifndef __CHERI_PURE_CAPABILITY__` |
+| 0018 | `src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp` (12 `pd_*` fns) | The .hpp's pd_* call into `_Copy_*` externs that 0017 stubbed out under CHERI | Insert 4-line CHERI early-return at top of each pd_* using `memmove` |
+| 0019 | `src/hotspot/share/gc/serial/defNewGeneration.cpp:215` | Same MAX2 pattern as 0016 | `MAX2<uintx>` |
+| 0020 | `src/hotspot/os_cpu/bsd_aarch64/prefetch_bsd_aarch64.inline.hpp:34-42` | `prfm <prfop>, [reg, reg]` (reg+reg form) rejected by purecap assembler | Stub `Prefetch::read`/`write` under CHERI; perf-hint loss only |
+| 0021 | `src/hotspot/share/utilities/globalDefinitions_gcc.hpp:68-79` | `NULL_WORD = 0L` causes `intptrConst(NULL_WORD)` ambiguous between `(void*)` and `(intptr_t)` overloads — under CHERI `long != intptr_t` | Force `NULL_WORD = ((intptr_t)0)` in CHERI branch |
+| C2 dropped at configure time | (not a patch — `--with-jvm-features=-compiler2`) | Build 26 hit a clang ICE in `g1BarrierSetC2.cpp`. R2 (docs/07) predicted C2 cap-awareness is not feasible at Phase 1; this matches MOJO's C1+interp path. Build_jdk.sh updated. | — |
+| 0022 *(pending)* | clang ICE in AArch64 Instruction Selection on `frame_aarch64.cpp::sender_raw` | Morello clang 17 backend bug — not source-level fixable. Workaround candidates: lower `-O3` to `-O1` for that one file, `#pragma clang optimize off` around the function, or rewrite to avoid the optimization pattern. | Workaround pending; track as compiler bug |
+| 0023 *(pending)* | UnixConstants.java self-reference cascade | Generated Java file is broken; root cause likely native-header parsing tool stumbles on CHERI cap types in unistd.h / sys/socket.h | Investigation pending |
+| 0024 | `patches/openjdk-jdk17/cap-runtime-hook.patch` *(pending)* | Build hook to link `src/cap_runtime/` into libjvm | See `docs/01_phase_i_zgc_port.md §4` |
+| 0025+ | ZGC source proper | See `docs/01_phase_i_zgc_port.md §3-4` | The actual side-table redesign |
 
 After applying 0002–0004 cleanly via `scripts/apply_patches.sh`,
 `configure` completes successfully and `make images` reaches HotSpot
