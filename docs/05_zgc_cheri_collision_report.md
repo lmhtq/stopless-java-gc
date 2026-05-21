@@ -262,10 +262,12 @@ full set catalogued.
 | 0020 | `src/hotspot/os_cpu/bsd_aarch64/prefetch_bsd_aarch64.inline.hpp:34-42` | `prfm <prfop>, [reg, reg]` (reg+reg form) rejected by purecap assembler | Stub `Prefetch::read`/`write` under CHERI; perf-hint loss only |
 | 0021 | `src/hotspot/share/utilities/globalDefinitions_gcc.hpp:68-79` | `NULL_WORD = 0L` causes `intptrConst(NULL_WORD)` ambiguous between `(void*)` and `(intptr_t)` overloads — under CHERI `long != intptr_t` | Force `NULL_WORD = ((intptr_t)0)` in CHERI branch |
 | C2 dropped at configure time | (not a patch — `--with-jvm-features=-compiler2`) | Build 26 hit a clang ICE in `g1BarrierSetC2.cpp`. R2 (docs/07) predicted C2 cap-awareness is not feasible at Phase 1; this matches MOJO's C1+interp path. Build_jdk.sh updated. | — |
-| 0022 *(pending)* | clang ICE in AArch64 Instruction Selection on `frame_aarch64.cpp::sender_raw` | Morello clang 17 backend bug — not source-level fixable. Workaround candidates: lower `-O3` to `-O1` for that one file, `#pragma clang optimize off` around the function, or rewrite to avoid the optimization pattern. | Workaround pending; track as compiler bug |
-| 0023 *(pending)* | UnixConstants.java self-reference cascade | Generated Java file is broken; root cause likely native-header parsing tool stumbles on CHERI cap types in unistd.h / sys/socket.h | Investigation pending |
-| 0024 | `patches/openjdk-jdk17/cap-runtime-hook.patch` *(pending)* | Build hook to link `src/cap_runtime/` into libjvm | See `docs/01_phase_i_zgc_port.md §4` |
-| 0025+ | ZGC source proper | See `docs/01_phase_i_zgc_port.md §3-4` | The actual side-table redesign |
+| 0022 | `make/hotspot/lib/JvmOverrideFiles.gmk` | Defensively drop `-O` on `frame_aarch64.cpp` (clang/aarch64) — defensive against ISel bugs | `BUILD_LIBJVM_frame_aarch64.cpp_OPTIMIZATION := NONE` |
+| 0023 | `src/hotspot/os_cpu/bsd_aarch64/pauth_bsd_aarch64.inline.hpp` | **Real root cause of the ICE.** `pauth_strip_pointer` pins a cap-typed `address` to register `x30` via `register __asm__("x30")`. Under purecap caps live in `c30`, not `x30`; clang ISel ICEs trying to reconcile. PAuth is meaningless on capabilities anyway (cap bounds + tag already enforce integrity). | Return ptr unchanged under `__CHERI_PURE_CAPABILITY__` |
+| 0024 *(pending)* | `src/hotspot/share/runtime/flags/jvmFlagLimit.cpp:108` cascade | `max_intx = (uintx)min_intx - 1` in globalDefinitions.hpp:381 is `const`, not `constexpr`. Cascades into every flag-limit constexpr initializer failing. On CHERI the `(intx)1 << 127` shift on a cap-typed `intx` isn't deemed constexpr by clang either. | Replace with explicit `int64_t`-backed `constexpr` definitions under `__CHERI_PURE_CAPABILITY__` |
+| 0025 *(pending)* | UnixConstants.java self-reference cascade | Generated Java file is broken; root cause likely native-header parsing tool stumbles on CHERI cap types in unistd.h / sys/socket.h | Investigation pending |
+| 0026 | `patches/openjdk-jdk17/cap-runtime-hook.patch` *(pending)* | Build hook to link `src/cap_runtime/` into libjvm | See `docs/01_phase_i_zgc_port.md §4` |
+| 0027+ | ZGC source proper | See `docs/01_phase_i_zgc_port.md §3-4` | The actual side-table redesign |
 
 After applying 0002–0004 cleanly via `scripts/apply_patches.sh`,
 `configure` completes successfully and `make images` reaches HotSpot
