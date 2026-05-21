@@ -1,0 +1,40 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0042/N] fdlibm.h: prefer __linux__ over _ALLBSD_SOURCE for endian.h
+
+Same pattern as patch 0040 for UnixConstants.java.template.
+
+`fdlibm.h` picks the endian header on `_ALLBSD_SOURCE` first:
+
+  #ifdef _ALLBSD_SOURCE
+  #include <machine/endian.h>
+  #elif defined(__linux__)
+  #define __USE_BSD 1
+  #include <endian.h>
+  #endif
+
+For our cross-build, the BUILDJDK pass compiles
+`libfdlibm/StrictMath.o` on the HOST (x86 Linux) where
+`_ALLBSD_SOURCE` is set (by patches 0004 / 0037) and `__linux__`
+is also set (by the host compiler). The BSD branch wins, but
+glibc has no `<machine/endian.h>` — fatal error.
+
+Reorder: prefer `__linux__` when both are defined, so the
+BUILDJDK pass on Linux uses `<endian.h>`. The native target build
+on CheriBSD will still hit the BSD branch.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0042)
+
+--- a/src/java.base/share/native/libfdlibm/fdlibm.h
++++ b/src/java.base/share/native/libfdlibm/fdlibm.h
+@@ -24,9 +24,9 @@
+  * questions.
+  */
+
+-#ifdef _ALLBSD_SOURCE
++#if defined(_ALLBSD_SOURCE) && !defined(__linux__)
+ #include <machine/endian.h>
+-#elif defined(__linux__)
++#elif defined(__linux__) || defined(__GLIBC__)
+ #define __USE_BSD 1
+ #include <endian.h>
+ #endif

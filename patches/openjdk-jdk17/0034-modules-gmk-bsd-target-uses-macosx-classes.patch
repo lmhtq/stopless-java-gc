@@ -1,45 +1,45 @@
 From: stopless-java-gc <noreply@anthropic.com>
-Subject: [PATCH 0034/N] Modules.gmk: bsd target borrows macosx/classes
+Subject: [PATCH 0034/N] Modules.gmk: java.base borrows macosx/classes on bsd target
 
 Java class compilation for `bsd` target fails with hundreds of
 "cannot find symbol" errors because OpenJDK's tree has no
-`src/java.base/bsd/classes/` directory — the BSD-derived NIO
+`src/java.base/bsd/classes/` directory -- the BSD-derived NIO
 providers (`BsdFileSystemProvider`, `KQueueSelectorProvider`,
-`DefaultFileSystemProvider`, etc.) live under `macosx/classes/`.
+`DefaultFileSystemProvider`, etc.) live under
+`src/java.base/macosx/classes/`.
 
-`make/common/Modules.gmk` selects per-module source dirs as:
-  $(OPENJDK_TARGET_OS)/classes        — e.g., bsd/classes (missing)
-  $(OPENJDK_TARGET_OS_TYPE)/classes   — unix/classes (lacks providers)
-  share/classes
+A first cut (adding `macosx/classes` to `SRC_SUBDIRS` globally)
+turned out to be too broad: `src/java.desktop/macosx/classes/`
+contains Cocoa code (`LWCToolkit`, `PlatformGraphicsInfo`) that
+depends on Apple-only Objective-C bridges and breaks java.desktop
+compile.
 
-Add a `bsd → macosx/classes` rule. The macosx tree is largely
-BSD-portable (the surface API is `BsdNativeDispatcher`,
-`KQueueSelectorImpl`, etc.) with a thin MacOSX subclass layer
-on top. For Phase 1 the MacOSX-specific classes (UTIFileTypeDetector
-etc.) compile cleanly even on CheriBSD since they don't depend on
-Apple-only native symbols at compile time.
+This patch overrides `FindModuleSrcDirs` so the macosx/classes
+suffix is only added when the module is `java.base`. Other modules
+behave exactly as upstream.
 
-A cleaner long-term fix is to create a real `src/java.base/bsd/`
-directory and split the macosx/classes into bsd-shared + macosx-only.
-That's out of scope for Phase 1 (build-only); revisit when the JDK
-actually runs on the FVP.
+A real `bsd/classes` directory split is a Phase 2 cleanup.
 
-Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0034)
+Refs: docs/05_zgc_cheri_collision_report.md Â§6 (patch 0034)
 
 --- a/make/common/Modules.gmk
 +++ b/make/common/Modules.gmk
-@@ -88,6 +88,14 @@
- ifneq ($(OPENJDK_TARGET_OS), $(OPENJDK_TARGET_OS_TYPE))
-   SRC_SUBDIRS += $(OPENJDK_TARGET_OS_TYPE)/classes
- endif
+@@ -315,3 +315,18 @@ endef
+ ################################################################################
+ 
+ endif # _MODULES_GMK
++
++
 +# Phase 1: when targeting bsd (CheriBSD), the upstream tree has no bsd/classes
-+# directory but macosx/classes contains the BSD-derived NIO providers
-+# (BsdFileSystemProvider, KQueueSelectorProvider, etc.) that we need. Pull
-+# them in for bsd target so that classes like sun.nio.fs.DefaultFileSystemProvider
-+# resolve.
++# directory. java.base needs macosx/classes for BSD-derived NIO providers
++# (BsdFileSystemProvider, KQueueSelectorProvider). java.desktop's macosx/classes
++# is Cocoa-only and must NOT be pulled in. Override FindModuleSrcDirs to add
++# macosx/classes only when $1 is java.base.
 +ifeq ($(OPENJDK_TARGET_OS), bsd)
-+  SRC_SUBDIRS += macosx/classes
++FindModuleSrcDirs = \
++    $(strip $(wildcard \
++        $(addsuffix /$(strip $1), $(GENERATED_SRC_DIRS) $(IMPORT_MODULES_SRC)) \
++        $(foreach sub, $(SRC_SUBDIRS), $(addsuffix /$(strip $1)/$(sub), $(TOP_SRC_DIRS))) \
++        $(if $(filter java.base,$(strip $1)), \
++            $(foreach top, $(TOP_SRC_DIRS), $(top)/$(strip $1)/macosx/classes))))
 +endif
- SRC_SUBDIRS += share/classes
-
- SPEC_SUBDIRS += share/specs

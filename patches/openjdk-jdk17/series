@@ -43,9 +43,10 @@
 0039-java-desktop-gensrc-x11-wrappers-on-bsd.patch
 0040-unix-constants-template-enoattr-linux-first.patch
 0041-charsets-stdcs-bsd-alias-linux.patch
+0042-fdlibm-endian-linux-first.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0042-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0043-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
