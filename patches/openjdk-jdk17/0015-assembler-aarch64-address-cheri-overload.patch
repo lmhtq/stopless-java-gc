@@ -26,10 +26,9 @@ Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0015)
      : _base(r), _index(noreg), _offset(o), _mode(base_plus_offset), _target(0) { }
 +#ifdef __CHERI_PURE_CAPABILITY__
 +  // On CHERI/Morello purecap, intptr_t / uintptr_t are __intcap / unsigned
-+  // __intcap. The integer ctors above don't accept either, and a single
-+  // intptr_t overload still leaves uintptr_t-typed args (e.g. arithmetic
-+  // involving markWord::monitor_value) ambiguous. Provide both signedness
-+  // variants explicitly; both strip cap metadata to an int64_t offset.
++  // __intcap. None of the integer ctors above accept those, and a single
++  // overload still leaves the other signedness ambiguous. Provide both
++  // variants explicitly; each strips cap metadata to an int64_t offset.
 +  Address(Register r, intptr_t o)
 +    : _base(r), _index(noreg), _offset(static_cast<int64_t>(static_cast<uintptr_t>(o))), _mode(base_plus_offset), _target(0) { }
 +  Address(Register r, uintptr_t o)

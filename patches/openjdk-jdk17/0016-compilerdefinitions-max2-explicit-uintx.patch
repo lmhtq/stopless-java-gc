@@ -1,0 +1,40 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0016/N] compilerDefinitions.cpp: explicit MAX2<uintx> for cap-typed flags
+
+`MAX2<T>(a, b)` deduces T from both args and fails when they
+disagree. Calls like `MAX2(64*M, ReservedCodeCacheSize)` have:
+
+  - 64*M                  : size_t (`unsigned long`)
+  - ReservedCodeCacheSize : uintx  (`unsigned __intcap` under CHERI)
+
+On non-CHERI builds both happen to be `unsigned long`. On CHERI
+they're distinct types, so template type deduction fails:
+
+  note: candidate template ignored: deduced conflicting types for
+        parameter 'T' ('size_t' vs. 'uintx')
+
+The other MAX2 sites in this same file already pass an explicit
+template arg (`MAX2<intx>(0, threshold_log)` at line 259). Apply
+the same idiom to the three sites in the JVMCI block.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0016)
+
+--- a/src/hotspot/share/compiler/compilerDefinitions.cpp
++++ b/src/hotspot/share/compiler/compilerDefinitions.cpp
+@@ -431,13 +431,13 @@
+     } else {
+       // JVMCI needs values not less than defaults
+       if (FLAG_IS_DEFAULT(ReservedCodeCacheSize)) {
+-        FLAG_SET_DEFAULT(ReservedCodeCacheSize, MAX2(64*M, ReservedCodeCacheSize));
++        FLAG_SET_DEFAULT(ReservedCodeCacheSize, MAX2<uintx>(64*M, ReservedCodeCacheSize));
+       }
+       if (FLAG_IS_DEFAULT(InitialCodeCacheSize)) {
+-        FLAG_SET_DEFAULT(InitialCodeCacheSize, MAX2(16*M, InitialCodeCacheSize));
++        FLAG_SET_DEFAULT(InitialCodeCacheSize, MAX2<uintx>(16*M, InitialCodeCacheSize));
+       }
+       if (FLAG_IS_DEFAULT(NewSizeThreadIncrease)) {
+-        FLAG_SET_DEFAULT(NewSizeThreadIncrease, MAX2(4*K, NewSizeThreadIncrease));
++        FLAG_SET_DEFAULT(NewSizeThreadIncrease, MAX2<uintx>(4*K, NewSizeThreadIncrease));
+       }
+       if (FLAG_IS_DEFAULT(Tier3DelayOn)) {
+         // This effectively prevents the compile broker scheduling tier 2
