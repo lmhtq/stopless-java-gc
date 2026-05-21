@@ -76,6 +76,14 @@ case "${TARGET}" in
             --with-debug-level="${DEBUG_LEVEL}"
             --disable-warnings-as-errors
             --enable-headless-only
+            # Phase 1 design: ship C1+interpreter only on CHERI. The C2 JIT
+            # crashes clang with an internal compiler error on
+            # g1BarrierSetC2.cpp (it generates aarch64 asm that interacts
+            # with capability mode in ways the compiler can't currently
+            # reconcile). docs/07_c2_jit_status.md catalogues this; MOJO
+            # follows the same C1-only path. C2 cap-awareness is a separate
+            # Phase 1.5 sub-project.
+            --with-jvm-features=-compiler2
             # Cross-compile fallback: point at host's CUPS / ALSA / fontconfig
             # headers since CheriBSD sysroot doesn't ship them. The Java code
             # paths that use these aren't on our hot path; we mostly need the

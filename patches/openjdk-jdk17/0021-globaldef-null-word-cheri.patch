@@ -1,0 +1,35 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0021/N] globalDefinitions_gcc: NULL_WORD = (intptr_t)0 on CHERI
+
+`NULL_WORD` on `_LP64 && __GNUC__` was defined as `0L`. Under CHERI/
+Morello purecap, `long` and `intptr_t` are distinct types
+(`long` = 8 bytes, `intptr_t` = `__intcap` = 16 bytes), so a call
+like `LIR_OprFact::intptrConst(NULL_WORD)` becomes ambiguous between
+
+  LIR_Opr intptrConst(void* p)    // 0L is a null-pointer constant
+  LIR_Opr intptrConst(intptr_t v) // 0L promotes to intptr_t
+
+forcing g1BarrierSetC1.cpp and similar call sites to fail compile.
+
+Special-case CHERI to use `((intptr_t)0)` directly so calls like
+`intptrConst(NULL_WORD)` resolve to the `intptr_t` overload
+unambiguously.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0021)
+
+--- a/src/hotspot/share/utilities/globalDefinitions_gcc.hpp
++++ b/src/hotspot/share/utilities/globalDefinitions_gcc.hpp
+@@ -68,7 +68,12 @@
+ // sizeof(void*), so here we want something which is integer type, but has the
+ // same size as a pointer.
+ #ifdef __GNUC__
+-  #ifdef _LP64
++  #if defined(__CHERI_PURE_CAPABILITY__)
++    // CHERI/Morello purecap: intptr_t is __intcap, distinct from long.
++    // Using `0L` here makes calls like intptrConst(NULL_WORD) ambiguous
++    // between overloads taking void* vs intptr_t. Force the intptr_t form.
++    #define NULL_WORD  ((intptr_t)0)
++  #elif defined(_LP64)
+     #define NULL_WORD  0L
+   #else
+     // Cast 0 to intptr_t rather than int32_t since they are not the same type
