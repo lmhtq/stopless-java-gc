@@ -1,0 +1,40 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0023/N] pauth_bsd_aarch64: pass-through under CHERI to dodge clang ICE
+
+`pauth_strip_pointer` on FreeBSD/aarch64 uses an inline-asm form
+that pins its `address` argument to register `x30`:
+
+  register address result __asm__("x30") = ptr;
+  asm (XPACLRI : "+r"(result));
+
+Under CHERI/Morello purecap, `address` is a 128-bit `__intcap`
+which lives in capability register `c30`, not the 64-bit X register
+`x30`. Asking the clang ISel pass to lower a cap-typed value onto
+an X register reliably ICEs the backend.
+
+Logical view: PAuth is a software-mitigations feature that hashes
+upper address bits with a key; CHERI capabilities already carry
+integrity (tag, bounds, otype) via hardware, so stripping the PAuth
+signature is meaningless. Return the pointer unchanged under
+__CHERI_PURE_CAPABILITY__.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0023)
+
+--- a/src/hotspot/os_cpu/bsd_aarch64/pauth_bsd_aarch64.inline.hpp
++++ b/src/hotspot/os_cpu/bsd_aarch64/pauth_bsd_aarch64.inline.hpp
+@@ -38,7 +38,14 @@
+ #define XPACLRI "hint #0x7;"
+
+ inline address pauth_strip_pointer(address ptr) {
+-#ifdef __APPLE__
++#if defined(__CHERI_PURE_CAPABILITY__)
++  // CHERI/Morello purecap: capabilities are not PAuth-signed; the
++  // capability bounds + tag already serve the integrity role. The
++  // pinned-x30 inline-asm form below ICEs Morello clang during ISel
++  // because the cap-typed `address` cannot be lowered onto an X
++  // register. Just return the pointer unchanged.
++  return ptr;
++#elif defined(__APPLE__)
+   return ptrauth_strip(ptr, ptrauth_key_asib);
+ #else
+   register address result __asm__("x30") = ptr;

@@ -24,9 +24,10 @@
 0020-prefetch-bsd-aarch64-cheri-stub.patch
 0021-globaldef-null-word-cheri.patch
 0022-frame-aarch64-disable-opt-morello-clang-ice.patch
+0023-pauth-bsd-aarch64-cheri-passthrough.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0023-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0024-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
