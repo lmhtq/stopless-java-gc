@@ -1,0 +1,26 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0019/N] defNewGeneration.cpp: explicit MAX2<uintx> at line 215
+
+Same root cause as patch 0016. `MAX2(unaligned_survivor_size,
+SpaceAlignment)` deduces T from two mismatched types under CHERI:
+
+  - unaligned_survivor_size : uintx     (`unsigned __intcap`)
+  - SpaceAlignment          : size_t    (`unsigned long`)
+
+Both are `unsigned long` on a non-CHERI build, so deduction works.
+On CHERI the types differ and the template is ignored. Pass an
+explicit template arg.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0019)
+
+--- a/src/hotspot/share/gc/serial/defNewGeneration.cpp
++++ b/src/hotspot/share/gc/serial/defNewGeneration.cpp
+@@ -212,7 +212,7 @@
+   if (survivor_size != _from_counters->max_size()) {
+     _from_counters->set_max_size(survivor_size);
+   }
+-    survivor_size = MAX2(unaligned_survivor_size, SpaceAlignment);
++    survivor_size = MAX2<uintx>(unaligned_survivor_size, SpaceAlignment);
+ }
+
+ size_t DefNewGeneration::compute_new_size() {
