@@ -1,0 +1,127 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0031/N] posix/bsd: non-Apple BSD aarch64 fixups (W^X, MAP_NORESERVE, link_map)
+
+Further FreeBSD/CheriBSD shared-source surprises that surfaced after
+patch 0030. None are CHERI-specific; they reflect the fact that
+OpenJDK 17u has only ever been built on Darwin in the BSD family.
+
+src/hotspot/os/bsd/os_bsd.cpp
+  - get_summary_cpu_info: my patch 0030 moved `size_t size` into the
+    `#ifdef __APPLE__` branch, leaving it undeclared on the FreeBSD
+    side. Declare `size_t size;` in the non-Apple branch as well.
+  - get_loaded_modules_info: `struct link_map` requires `<link.h>`
+    (which HotSpot does not include here) and the field layout
+    differs from Solaris. Easier to gate the body off on FreeBSD
+    entirely — the function returns 1 (callers treat as "no data"),
+    matching the existing fallthrough behavior on other BSD.
+  - MAP_NORESERVE is a Linux-ism the upstream code uses
+    unconditionally on the BSD side. FreeBSD doesn't define it (its
+    semantics are the default). Add `#define MAP_NORESERVE 0` as a
+    pure no-op for the `|` chain.
+
+src/hotspot/os/posix/os_posix.cpp
+  - Same MAP_NORESERVE define for the posix-side mmap call sites.
+  - Stack expansion code calls `os::Linux::manually_expand_stack`
+    even from the shared posix file. Wrap in `#ifdef LINUX`; on
+    BSD the stack auto-grows and the recursive-segv fatal branch
+    is correct.
+
+src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
+  - `ThreadWXEnable` and `os::current_thread_enable_wx`
+    (`pthread_jit_write_protect_np`) are Apple aarch64 JIT W^X
+    helpers. Wrap their definitions and the signal-handler call
+    site in `#ifdef __APPLE__`. Phase 1 (interpreter-only) doesn't
+    need JIT W^X on CheriBSD; the cap_runtime barrier patches in
+    Phase 2 will revisit if needed.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0031)
+
+--- a/src/hotspot/os/bsd/os_bsd.cpp
++++ b/src/hotspot/os/bsd/os_bsd.cpp
+@@ -69,6 +69,13 @@
+ #include "utilities/growableArray.hpp"
+ #include "utilities/vmError.hpp"
+
++#ifndef MAP_NORESERVE
++// FreeBSD/CheriBSD does not have MAP_NORESERVE; the equivalent semantics
++// (do not reserve swap up-front) are the FreeBSD default. Define as 0 so
++// it ORs into mmap flags as a no-op.
++#define MAP_NORESERVE 0
++#endif
++
+ // put OS-includes here
+ # include <dlfcn.h>
+ # include <errno.h>
+@@ -1271,7 +1278,7 @@
+ }
+
+ int os::get_loaded_modules_info(os::LoadedModulesCallbackFunc callback, void *param) {
+-#ifdef RTLD_DI_LINKMAP
++#if defined(RTLD_DI_LINKMAP) && !defined(__FreeBSD__)
+   Dl_info dli;
+   void *handle;
+   struct link_map *map;
+@@ -1420,6 +1427,7 @@
+ #else
+   // FreeBSD/CheriBSD: HW_CPU_FREQ is macOS-specific; stub for Phase 1.
+   unsigned int mhz = 0;
++  size_t size;
+ #endif
+
+   char model[100];
+--- a/src/hotspot/os/posix/os_posix.cpp
++++ b/src/hotspot/os/posix/os_posix.cpp
+@@ -69,6 +69,13 @@
+ #include <unistd.h>
+ #include <utmpx.h>
+
++#ifndef MAP_NORESERVE
++// FreeBSD/CheriBSD does not have MAP_NORESERVE; the equivalent semantics
++// (do not reserve swap up-front) are the FreeBSD default. Define as 0 so
++// it ORs into mmap flags as a no-op.
++#define MAP_NORESERVE 0
++#endif
++
+ #ifdef __APPLE__
+   #include <crt_externs.h>
+ #endif
+@@ -1190,10 +1197,12 @@
+     // and then attached to VM. See notes in os_linux.cpp.
+     if (thread->osthread()->expanding_stack() == 0) {
+        thread->osthread()->set_expanding_stack();
++#ifdef LINUX
+        if (os::Linux::manually_expand_stack(thread, addr)) {
+          thread->osthread()->clear_expanding_stack();
+          return true; // just continue
+        }
++#endif
+        thread->osthread()->clear_expanding_stack();
+     } else {
+        fatal("recursive segv. expanding stack.");
+--- a/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
++++ b/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
+@@ -215,9 +215,11 @@
+
+ bool PosixSignals::pd_hotspot_signal_handler(int sig, siginfo_t* info,
+                                              ucontext_t* uc, JavaThread* thread) {
++#ifdef __APPLE__
+   // Enable WXWrite: this function is called by the signal handler at arbitrary
+-  // point of execution.
++  // point of execution. Apple aarch64 only — JIT W^X is Apple-specific.
+   ThreadWXEnable wx(WXWrite, thread);
++#endif
+
+   // decide if this trap can be handled by a stub
+   address stub = NULL;
+@@ -557,9 +559,11 @@
+   return 0;
+ }
+
++#ifdef __APPLE__
+ void os::current_thread_enable_wx(WXMode mode) {
+   pthread_jit_write_protect_np(mode == WXExec);
+ }
++#endif
+
+ extern "C" {
+   int SpinPause() {
