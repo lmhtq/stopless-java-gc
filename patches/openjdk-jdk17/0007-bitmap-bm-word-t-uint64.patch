@@ -1,0 +1,33 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0007/N] bitMap: bm_word_t = uint64_t (not uintptr_t)
+
+HotSpot's BitMap defines `bm_word_t = uintptr_t` and asserts
+`sizeof(bm_word_t) * BitsPerByte == BitsPerWord`. On most platforms
+`sizeof(uintptr_t) == 8`, satisfying the assert. On CHERI/Morello
+purecap `uintptr_t == __intcap` (128 bits / 16 bytes), so the
+assert fails with the cryptic STATIC_ASSERT_FAILURE<false>.
+
+The intent is "storage word, BitsPerWord wide" — i.e., always 64
+bits on a 64-bit-word HotSpot build. Use `uint64_t` directly so the
+type is decoupled from the platform's pointer representation. As a
+bonus this also fixes the wave of `no matching function for call to
+'count_trailing_zeros'` errors in bitMap.inline.hpp and
+powerOfTwo.hpp — count_trailing_zeros has overloads for u4/u8/size_t
+but not for the 128-bit __intcap that uintptr_t becomes on CHERI.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0007)
+
+--- a/src/hotspot/share/utilities/bitMap.hpp
++++ b/src/hotspot/share/utilities/bitMap.hpp
+@@ -50,7 +50,10 @@ class BitMap {
+
+  public:
+   typedef size_t idx_t;         // Type used for bit and word indices.
+-  typedef uintptr_t bm_word_t;  // Element type of array that represents the
++  // On most platforms uintptr_t is BitsPerWord-wide, but on CHERI/Morello
++  // purecap uintptr_t is 128 bits (__intcap). The bitmap explicitly wants a
++  // BitsPerWord-wide storage word, so use uint64_t directly.
++  typedef uint64_t bm_word_t;   // Element type of array that represents the
+                                 // bitmap, with BitsPerWord bits per element.
+   // If this were to fail, there are lots of places that would need repair.
+   STATIC_ASSERT((sizeof(bm_word_t) * BitsPerByte) == BitsPerWord);
