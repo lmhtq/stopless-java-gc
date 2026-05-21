@@ -1,0 +1,35 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0027/N] oopStorage: use SafeFetch64 for active_index_safe under CHERI
+
+`OopStorage::Block::active_index_safe` reads an 8-byte `size_t`
+field atomically via `SafeFetchN((intptr_t*)&_active_index, 0)`.
+It static-asserts `sizeof(intptr_t) == sizeof(_active_index)`, which
+holds on every 64-bit platform — until CHERI/Morello purecap, where
+`intptr_t` is `__intcap` (16 bytes) but `size_t` is `unsigned long`
+(8 bytes). The assert fires, and even if relaxed `SafeFetchN`'s
+16-byte read would walk past the end of `_active_index`.
+
+Use `SafeFetch64`/`int64_t*` under CHERI to read exactly 8 bytes.
+Keep the original `SafeFetchN`/`intptr_t*` path for non-CHERI
+where the type sizes still match by construction.
+
+Refs: docs/05_zgc_cheri_collision_report.md §6 (patch 0027)
+
+--- a/src/hotspot/share/gc/shared/oopStorage.cpp
++++ b/src/hotspot/share/gc/shared/oopStorage.cpp
+@@ -299,8 +299,15 @@ void OopStorage::Block::set_active_index(size_t index) {
+ }
+
+ size_t OopStorage::Block::active_index_safe(const Block* block) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // CHERI: sizeof(intptr_t) is 16 (capability), but _active_index is a
++  // size_t (8 bytes). SafeFetchN would over-read; use SafeFetch64 directly.
++  STATIC_ASSERT(sizeof(int64_t) == sizeof(block->_active_index));
++  return (size_t)SafeFetch64((int64_t*)&block->_active_index, 0);
++#else
+   STATIC_ASSERT(sizeof(intptr_t) == sizeof(block->_active_index));
+   return SafeFetchN((intptr_t*)&block->_active_index, 0);
++#endif
+ }
+
+ unsigned OopStorage::Block::get_index(const oop* ptr) const {
