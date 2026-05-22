@@ -31,6 +31,11 @@ Refs: docs/05_zgc_cheri_collision_report.md (patch 0043)
 +
 +# The BUILD pass runs on the host (Linux x86); the target's bsd OS-defines
 +# (_ALLBSD_SOURCE, BSD) make host glibc hide identifiers and trigger BSD-only
-+# #include paths. Override to Linux-appropriate defines for BUILD only.
-+override CFLAGS_OS_DEF_JDK := -D_GNU_SOURCE -D_REENTRANT -D_LARGEFILE64_SOURCE -DLINUX
-+override CFLAGS_OS_DEF_JVM := -DLINUX -D_FILE_OFFSET_BITS=64
++# #include paths. CFLAGS_JDKLIB etc. are baked at configure time as a single
++# string with the target's OS defines embedded; we can't fix this by overriding
++# CFLAGS_OS_DEF_JDK alone (CFLAGS_JDKLIB has the value already substituted).
++# Filter out the bsd defines from the BUILD-pass JDK CFLAGS post-include.
++override CFLAGS_JDKLIB   := $(filter-out -D_ALLBSD_SOURCE -DBSD,$(CFLAGS_JDKLIB)) -DLINUX
++override CFLAGS_JDKEXE   := $(filter-out -D_ALLBSD_SOURCE -DBSD,$(CFLAGS_JDKEXE)) -DLINUX
++override CXXFLAGS_JDKLIB := $(filter-out -D_ALLBSD_SOURCE -DBSD,$(CXXFLAGS_JDKLIB)) -DLINUX
++override CXXFLAGS_JDKEXE := $(filter-out -D_ALLBSD_SOURCE -DBSD,$(CXXFLAGS_JDKEXE)) -DLINUX
