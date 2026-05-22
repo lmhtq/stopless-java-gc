@@ -1,0 +1,36 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0044/N] LauncherCommon.gmk: link libjli + LDFLAGS for bsd target
+
+`make/common/modules/LauncherCommon.gmk` defines per-OS link
+recipes for the JDK launcher executables (java, jlink, jmod,
+javap, ...). The OS list covers linux, macosx, aix, windows.
+With no `bsd` case, the launchers link without `-ljli`, and the
+linker dies on undefined references:
+
+  undefined reference to `JLI_Launch'
+  undefined reference to `JLI_List_add'
+  undefined reference to `JLI_MemFree'
+
+libjli.so itself builds fine and exports those symbols; the
+launchers just aren't told to link it. Add `_bsd` variants of
+`LDFLAGS` and `LIBS` mirroring the linux recipe.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0044)
+
+--- a/make/common/modules/LauncherCommon.gmk
++++ b/make/common/modules/LauncherCommon.gmk
+@@ -157,11 +157,14 @@ define SetupBuildLauncherBody
+           $$($1_LDFLAGS), \
+       LDFLAGS_linux := $$(call SET_EXECUTABLE_ORIGIN,/../lib) \
+           -L$(call FindLibDirForModule, java.base), \
++      LDFLAGS_bsd := $$(call SET_EXECUTABLE_ORIGIN,/../lib) \
++          -L$(call FindLibDirForModule, java.base), \
+       LDFLAGS_macosx := $$(call SET_EXECUTABLE_ORIGIN,/../lib) \
+           -L$(call FindLibDirForModule, java.base), \
+       LDFLAGS_aix := -L$(SUPPORT_OUTPUTDIR)/native/java.base, \
+       LIBS := $(JDKEXE_LIBS) $$($1_LIBS), \
+       LIBS_linux := -ljli -lpthread $(LIBDL), \
++      LIBS_bsd := -ljli -lpthread $(LIBDL), \
+       LIBS_macosx := -ljli -framework Cocoa -framework Security \
+           -framework ApplicationServices, \
+       LIBS_aix := -ljli_static, \
