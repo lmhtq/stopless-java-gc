@@ -1,0 +1,65 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0051/N] skip libawt and libattach native builds on bsd target
+
+Build70 cleared mlib_image (0050 reserved[1] fix) and reached libawt
+(java.desktop AWT native lib) and libattach (jdk.attach native lib).
+
+libawt: shared `Blit.c` -> `unix/native/common/awt/utility/rect.h`
+includes `<X11/Xlib.h>`. CheriBSD sysroot has no X11 headers. Even
+with `--enable-headless-only`, the base LIBAWT compiles non-X11
+files that drag in X11 headers transitively. The AWT graphics code
+has multiple platform-specific paths (Linux X11, macOS Quartz,
+Windows GDI) -- a real bsd port is a future project.
+
+libattach: SetupJdkLibrary scans per-OS source dirs and finds none
+for bsd ("No sources found for BUILD_LIBATTACH"). The attach API
+needs platform-specific process attach (Linux /proc, Solaris doors,
+etc.); we don't need it for `java -version`.
+
+Phase 1 goal is bring-up: get the JVM running on FVP, validate the
+CHERI port. Both libawt and libattach are non-essential for that.
+Skip their native builds on bsd. java.desktop and jdk.attach Java
+sources still compile (they're OS-agnostic); the LoadLibrary calls
+fail lazily at first use, which is fine -- `java -version` doesn't
+hit either path.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0051)
+
+--- a/make/modules/java.desktop/Lib.gmk
++++ b/make/modules/java.desktop/Lib.gmk
+@@ -35,7 +35,13 @@ $(call FillFindCache, $(wildcard $(TOPDIR)/src/java.desktop/*/native))
+ ################################################################################
+ # Create the AWT/2D libraries
+ 
++# Phase 1: skip libawt et al on bsd target. The graphics native code has
++# unconditional X11/Quartz dependencies and Phase 1 only needs core JDK
++# (java -version etc.). java.desktop Java sources still compile; native
++# loadLibrary will fail at first AWT use, fine for Phase 1.
++ifneq ($(call isTargetOs, bsd), true)
+ include lib/Awt2dLibraries.gmk
++endif
+ 
+ ################################################################################
+ # Create the libjsound library
+diff --git a/make/modules/jdk.attach/Lib.gmk b/make/modules/jdk.attach/Lib.gmk
+index 6c61926b804..4d060b5c94e 100644
+--- a/make/modules/jdk.attach/Lib.gmk
++++ b/make/modules/jdk.attach/Lib.gmk
+@@ -34,6 +34,10 @@ ifeq ($(call isTargetOs, windows), true)
+   LIBATTACH_CFLAGS := -DPSAPI_VERSION=1
+ endif
+ 
++# Phase 1: no bsd source dir for libattach; skip the native build on bsd.
++# Java attach API requires the native lib for cross-process attach, which is
++# not needed for headless boot.
++ifneq ($(call isTargetOs, bsd), true)
+ $(eval $(call SetupJdkLibrary, BUILD_LIBATTACH, \
+     NAME := attach, \
+     OPTIMIZATION := LOW, \
+@@ -48,5 +52,6 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBATTACH, \
+ $(BUILD_LIBATTACH): $(call FindLib, java.base, java)
+ 
+ TARGETS += $(BUILD_LIBATTACH)
++endif
+ 
+ ################################################################################
