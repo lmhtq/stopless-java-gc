@@ -24,7 +24,7 @@ Refs: docs/05_zgc_cheri_collision_report.md (patch 0043)
 
 --- a/make/autoconf/buildjdk-spec.gmk.in
 +++ b/make/autoconf/buildjdk-spec.gmk.in
-@@ -108,3 +108,9 @@
+@@ -108,3 +108,14 @@
  # Strip the bsd-target --undefined-version LLD flag for the BUILD pass:
  # host GNU ld 2.38 doesn't recognize it (added in binutils 2.40).
  override SET_SHARED_LIBRARY_MAPFILE = -Wl,-version-script=$1
