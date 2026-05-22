@@ -1,0 +1,31 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0046/N] jli_util.h: define JLI_Lseek for bsd target
+
+`src/java.base/share/native/libjli/jli_util.h` defines `JLI_Lseek`
+per-OS:
+
+  #ifdef __linux__   -> lseek64
+  #ifdef MACOSX      -> lseek
+  #ifdef _AIX        -> lseek
+
+No bsd case. parse_manifest.c calls `JLI_Lseek` and the cross-compile
+errors out:
+  error: call to undeclared function 'JLI_Lseek'
+
+FreeBSD/CheriBSD `lseek(2)` is already 64-bit-clean (off_t is 64-bit
+on LP64 BSD). Add `#ifdef _ALLBSD_SOURCE` -> `lseek`.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0046)
+
+--- a/src/java.base/share/native/libjli/jli_util.h
++++ b/src/java.base/share/native/libjli/jli_util.h
+@@ -107,6 +107,9 @@
+ #ifdef MACOSX
+ #define JLI_Lseek                       lseek
+ #endif
++#ifdef _ALLBSD_SOURCE
++#define JLI_Lseek                       lseek
++#endif
+ #ifdef _AIX
+ #define JLI_Lseek                       lseek
+ #endif
