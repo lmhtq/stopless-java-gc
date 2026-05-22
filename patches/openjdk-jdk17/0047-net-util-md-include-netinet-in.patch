@@ -1,0 +1,25 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0047/N] net_util_md.h: explicit #include <netinet/in.h>
+
+`net_util_md.h` defines a `SOCKETADDRESS` union containing
+`struct sockaddr_in` and `struct sockaddr_in6` fields, but only
+includes `<netdb.h>`, `<poll.h>`, and `<sys/socket.h>`. On Linux
+and macOS those headers transitively pull in `<netinet/in.h>`; on
+FreeBSD/CheriBSD they don't, so the cross-compile fails with
+"field has incomplete type 'struct sockaddr_in'".
+
+`<netinet/in.h>` is the canonical home for these structs and is
+safe to include unconditionally on all unix targets.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0047)
+
+--- a/src/java.base/unix/native/libnet/net_util_md.h
++++ b/src/java.base/unix/native/libnet/net_util_md.h
+@@ -29,6 +29,7 @@
+ #include <netdb.h>
+ #include <poll.h>
+ #include <sys/socket.h>
++#include <netinet/in.h>
+ 
+ /************************************************************************
+  * Macros and constants

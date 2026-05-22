@@ -48,9 +48,10 @@
 0044-launcher-common-bsd-link-libjli.patch
 0045-timezone-md-bsd-uses-linux-macosx-code-path.patch
 0046-jli-util-define-lseek-for-bsd.patch
+0047-net-util-md-include-netinet-in.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0047-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0048-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
