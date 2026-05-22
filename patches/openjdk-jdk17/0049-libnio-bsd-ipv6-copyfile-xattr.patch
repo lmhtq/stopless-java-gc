@@ -1,0 +1,128 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0049/N] libnio: bsd IPv6 + UnixCopyFile/UnixNativeDispatcher macosx-only blocks
+
+Three CheriBSD libnio TARGET-side compile fixes:
+
+1. Net.c uses IPV6_ADD_MEMBERSHIP / IPV6_DROP_MEMBERSHIP (Linux
+   legacy names). FreeBSD only defines the POSIX names
+   IPV6_JOIN_GROUP / IPV6_LEAVE_GROUP. Add ifndef ... define
+   aliases.
+
+2. UnixCopyFile.c has three _ALLBSD_SOURCE guards around code
+   that uses <copyfile.h> and copyfile_state_t / copyfile() /
+   COPYFILE_* constants. All macOS-only (Darwin's higher-level
+   file copy API); FreeBSD doesn't ship them. Change all three
+   guards to __APPLE__. The bsd target falls through to the
+   generic non-linux non-apple read/write loop below.
+
+3. UnixNativeDispatcher.c: <sys/xattr.h> include is a Linux-glibc
+   header (limit to __linux__), and four xattr JNI methods have
+   #elif _ALLBSD_SOURCE branches that call macOS-specific 6-arg
+   fgetxattr/fsetxattr/etc. Change those to #elif defined(__APPLE__).
+   CheriBSD falls through to throwUnixException(ENOTSUP) -- fine
+   for Phase 1 boot validation.
+
+Other _ALLBSD_SOURCE usages in UnixNativeDispatcher.c (stat64 =
+stat alias, openat/fstatat without 64, futimes/lutimes) ARE valid
+on FreeBSD/CheriBSD -- those are POSIX/BSD function names. Don't
+touch them.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0049)
+
+--- a/src/java.base/unix/native/libnio/ch/Net.c
++++ b/src/java.base/unix/native/libnio/ch/Net.c
+@@ -36,6 +36,14 @@
+ #include "jvm.h"
+ #include "jlong.h"
+ #include "sun_nio_ch_Net.h"
++
++/* FreeBSD/CheriBSD only define the POSIX names; Linux defines both. Alias. */
++#ifndef IPV6_ADD_MEMBERSHIP
++#define IPV6_ADD_MEMBERSHIP IPV6_JOIN_GROUP
++#endif
++#ifndef IPV6_DROP_MEMBERSHIP
++#define IPV6_DROP_MEMBERSHIP IPV6_LEAVE_GROUP
++#endif
+ #include "net_util.h"
+ #include "net_util_md.h"
+ #include "nio_util.h"
+diff --git a/src/java.base/unix/native/libnio/fs/UnixCopyFile.c b/src/java.base/unix/native/libnio/fs/UnixCopyFile.c
+index f2e4fc9cc71..bac2e9aaa7b 100644
+--- a/src/java.base/unix/native/libnio/fs/UnixCopyFile.c
++++ b/src/java.base/unix/native/libnio/fs/UnixCopyFile.c
+@@ -32,7 +32,7 @@
+ 
+ #if defined(__linux__)
+ #include <sys/sendfile.h>
+-#elif defined(_ALLBSD_SOURCE)
++#elif defined(__APPLE__)
+ #include <copyfile.h>
+ #endif
+ #include "sun_nio_fs_UnixCopyFile.h"
+@@ -51,7 +51,7 @@ static void throwUnixException(JNIEnv* env, int errnum) {
+     }
+ }
+ 
+-#if defined(_ALLBSD_SOURCE)
++#if defined(__APPLE__)
+ int fcopyfile_callback(int what, int stage, copyfile_state_t state,
+     const char* src, const char* dst, void* cancel)
+ {
+@@ -133,7 +133,7 @@ Java_sun_nio_fs_UnixCopyFile_transfer
+             return;
+         }
+     } while (bytes_sent > 0);
+-#elif defined(_ALLBSD_SOURCE)
++#elif defined(__APPLE__)
+     copyfile_state_t state;
+     if (cancel != NULL) {
+         state = copyfile_state_alloc();
+diff --git a/src/java.base/unix/native/libnio/fs/UnixNativeDispatcher.c b/src/java.base/unix/native/libnio/fs/UnixNativeDispatcher.c
+index ea9eac66963..3717bba435d 100644
+--- a/src/java.base/unix/native/libnio/fs/UnixNativeDispatcher.c
++++ b/src/java.base/unix/native/libnio/fs/UnixNativeDispatcher.c
+@@ -41,7 +41,7 @@
+ #endif
+ #include <sys/time.h>
+ 
+-#if defined(__linux__) || defined(_ALLBSD_SOURCE)
++#if defined(__linux__)
+ #include <sys/xattr.h>
+ #endif
+ 
+@@ -1514,7 +1514,7 @@ Java_sun_nio_fs_UnixNativeDispatcher_fgetxattr0(JNIEnv* env, jclass clazz,
+ 
+ #ifdef __linux__
+     res = fgetxattr(fd, name, value, valueLen);
+-#elif _ALLBSD_SOURCE
++#elif defined(__APPLE__)
+     res = fgetxattr(fd, name, value, valueLen, 0, 0);
+ #else
+     throwUnixException(env, ENOTSUP);
+@@ -1535,7 +1535,7 @@ Java_sun_nio_fs_UnixNativeDispatcher_fsetxattr0(JNIEnv* env, jclass clazz,
+ 
+ #ifdef __linux__
+     res = fsetxattr(fd, name, value, valueLen, 0);
+-#elif _ALLBSD_SOURCE
++#elif defined(__APPLE__)
+     res = fsetxattr(fd, name, value, valueLen, 0, 0);
+ #else
+     throwUnixException(env, ENOTSUP);
+@@ -1554,7 +1554,7 @@ Java_sun_nio_fs_UnixNativeDispatcher_fremovexattr0(JNIEnv* env, jclass clazz,
+ 
+ #ifdef __linux__
+     res = fremovexattr(fd, name);
+-#elif _ALLBSD_SOURCE
++#elif defined(__APPLE__)
+     res = fremovexattr(fd, name, 0);
+ #else
+     throwUnixException(env, ENOTSUP);
+@@ -1573,7 +1573,7 @@ Java_sun_nio_fs_UnixNativeDispatcher_flistxattr(JNIEnv* env, jclass clazz,
+ 
+ #ifdef __linux__
+     res = flistxattr(fd, list, (size_t)size);
+-#elif _ALLBSD_SOURCE
++#elif defined(__APPLE__)
+     res = flistxattr(fd, list, (size_t)size, 0);
+ #else
+     throwUnixException(env, ENOTSUP);
