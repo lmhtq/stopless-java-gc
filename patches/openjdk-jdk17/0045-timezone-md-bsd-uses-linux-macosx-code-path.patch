@@ -1,0 +1,37 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0045/N] TimeZone_md.c: bsd target uses linux/macosx code path
+
+`src/java.base/unix/native/libjava/TimeZone_md.c` provides two
+implementations of `getPlatformTimeZoneID()`:
+
+  #if defined(__linux__) || defined(MACOSX)
+    static char *getPlatformTimeZoneID() { ... readlink-based ... }
+  #elif defined(_AIX)
+    static char *getPlatformTimeZoneID() { ... }
+  #endif
+
+On bsd target, neither branch matches, so `getPlatformTimeZoneID`
+is never defined — yet `findJavaTZ_md()` at line 484 still calls
+it (causing implicit-function-declaration errors).
+
+FreeBSD/CheriBSD uses `/etc/localtime` as a symlink into
+`/usr/share/zoneinfo`, exactly matching the macOS layout. The
+existing linux/macosx code path (which reads the symlink target
+to derive the Olson tzid) works for BSD without modification.
+
+Add `_ALLBSD_SOURCE` to the outer guard so bsd gets the same
+implementation.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0045)
+
+--- a/src/java.base/unix/native/libjava/TimeZone_md.c
++++ b/src/java.base/unix/native/libjava/TimeZone_md.c
+@@ -75,7 +75,7 @@
+ static const char *ETC_ENVIRONMENT_FILE = "/etc/environment";
+ #endif
+
+-#if defined(__linux__) || defined(MACOSX)
++#if defined(__linux__) || defined(MACOSX) || defined(_ALLBSD_SOURCE)
+
+ /*
+  * Returns a pointer to the zone ID portion of the given zoneinfo file
