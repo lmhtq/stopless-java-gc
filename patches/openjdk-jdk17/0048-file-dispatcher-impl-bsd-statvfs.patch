@@ -1,0 +1,34 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0048/N] FileDispatcherImpl.c: statvfs(64) bsd treated as macosx
+
+`FileDispatcherImpl_setDirect0()` switches on `MACOSX` to pick
+`struct statvfs` + `fstatvfs()` vs `struct statvfs64` +
+`fstatvfs64()`. The 64-suffixed variants are Linux LFS64 extensions
+that don't exist on FreeBSD/CheriBSD (where `statvfs`/`fstatvfs`
+are already 64-bit on LP64).
+
+Treat bsd like macosx: change `#ifdef MACOSX` to
+`#if defined(MACOSX) || defined(_ALLBSD_SOURCE)` at both call sites.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0048)
+
+--- a/src/java.base/unix/native/libnio/ch/FileDispatcherImpl.c
++++ b/src/java.base/unix/native/libnio/ch/FileDispatcherImpl.c
+@@ -354,7 +354,7 @@ Java_sun_nio_ch_FileDispatcherImpl_setDirect0(JNIEnv *env, jclass clazz,
+ {
+     jint fd = fdval(env, fdo);
+     jint result;
+-#ifdef MACOSX
++#if defined(MACOSX) || defined(_ALLBSD_SOURCE)
+     struct statvfs file_stat;
+ #else
+     struct statvfs64 file_stat;
+@@ -386,7 +386,7 @@ Java_sun_nio_ch_FileDispatcherImpl_setDirect0(JNIEnv *env, jclass clazz,
+         return result;
+     }
+ #endif
+-#ifdef MACOSX
++#if defined(MACOSX) || defined(_ALLBSD_SOURCE)
+     result = fstatvfs(fd, &file_stat);
+ #else
+     result = fstatvfs64(fd, &file_stat);
