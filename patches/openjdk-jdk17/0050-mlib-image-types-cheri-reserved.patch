@@ -1,0 +1,34 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0050/N] mlib_image_types.h: handle CHERI sizeof(void*)=16 in reserved[]
+
+`mlib_image` (libmlib_image / Java 2D) computes a reserved padding
+array sized to round the struct to one 64-byte cache line:
+
+  mlib_s32    reserved[7 - 2*sizeof(void*)/4];
+
+On 64-bit Linux: 7 - 2*8/4 = 7 - 4 = 3 elements. On CHERI purecap
+where sizeof(void*) = 16 (capability), the formula gives 7 - 8 = -1,
+which clang treats as a huge unsigned -- "array is too large
+(18446744073709551615 elements)".
+
+The cache-line alignment is an optimization, not a correctness
+requirement. Under purecap drop the padding to one element.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0050)
+
+--- a/src/java.desktop/share/native/libmlib_image/mlib_image_types.h
++++ b/src/java.desktop/share/native/libmlib_image/mlib_image_types.h
+@@ -124,7 +124,13 @@ typedef struct {
+   mlib_s32    bitoffset;   /* the offset in bits from the beginning    */
+                            /* of the data buffer to the first pixel    */
+   mlib_format format;      /* pixels format                            */
++#ifdef __CHERI_PURE_CAPABILITY__
++  /* CHERI purecap pointers are 16 bytes; the original formula yields negative
++     reserved size. Drop cache-line padding to one element. */
++  mlib_s32    reserved[1];
++#else
+   mlib_s32    reserved[7 - 2*sizeof(void*)/4];
++#endif
+                            /* Reserved for future use. Also makes      */
+                            /* size of this structure = 64 bytes, which */
+                            /* is the size of the cache line.           */
