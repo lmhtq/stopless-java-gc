@@ -53,9 +53,10 @@
 0049-libnio-bsd-ipv6-copyfile-xattr.patch
 0050-mlib-image-types-cheri-reserved.patch
 0051-skip-libawt-libattach-on-bsd.patch
+0052-sctp-management-ext-bsd-fallthroughs.patch
 
 # --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0052-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# 0053-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)

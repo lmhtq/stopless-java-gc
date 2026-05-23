@@ -1,0 +1,82 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0052/N] jdk.sctp + jdk.management: bsd fallthroughs
+
+Build71 reached the very tail (Updating images/sec-bin.zip!) and
+failed on two non-essential native libs:
+
+1. jdk.sctp/libsctp: includes <linux/types.h> (Linux UAPI). CheriBSD
+   has no SCTP support and no Linux UAPI headers. The Lib.gmk
+   already excludes macosx/aix; add bsd. SCTP is a network protocol
+   not needed for Phase 1.
+
+2. jdk.management/libmanagement_ext/OperatingSystemImpl.c uses
+   `_ALLBSD_SOURCE` guards around macOS-only sysctl identifiers
+   (HW_MEMSIZE, HOST_VM_INFO, host_statistics, etc.). Same pattern
+   as 0049/0050 where `_ALLBSD_SOURCE` was loosely used for macOS.
+   Change all three guards (#ifdef, #if defined, #elif defined) to
+   `__APPLE__`. CheriBSD falls through to the Linux branch which
+   uses generic `sysinfo()`-style probes via /compat/linux or just
+   throws -- non-essential for Phase 1.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0052)
+
+--- a/make/modules/jdk.sctp/Lib.gmk
++++ b/make/modules/jdk.sctp/Lib.gmk
+@@ -29,7 +29,7 @@ include LibCommon.gmk
+ 
+ ifeq ($(call isTargetOsType, unix), true)
+ 
+-  ifeq ($(call isTargetOs, macosx aix), false)
++  ifeq ($(call isTargetOs, macosx aix bsd), false)
+     $(eval $(call SetupJdkLibrary, BUILD_LIBSCTP, \
+         NAME := sctp, \
+         OPTIMIZATION := LOW, \
+diff --git a/src/jdk.management/unix/native/libmanagement_ext/OperatingSystemImpl.c b/src/jdk.management/unix/native/libmanagement_ext/OperatingSystemImpl.c
+index e33d9b41ebb..fe289d958fa 100644
+--- a/src/jdk.management/unix/native/libmanagement_ext/OperatingSystemImpl.c
++++ b/src/jdk.management/unix/native/libmanagement_ext/OperatingSystemImpl.c
+@@ -32,7 +32,7 @@
+ 
+ #include <sys/types.h>
+ #include <sys/stat.h>
+-#if defined(_ALLBSD_SOURCE)
++#if defined(__APPLE__)
+ #include <sys/sysctl.h>
+ #ifdef __APPLE__
+ #include <sys/param.h>
+@@ -63,7 +63,7 @@
+ 
+ static jlong page_size = 0;
+ 
+-#if defined(_ALLBSD_SOURCE) || defined(_AIX)
++#if defined(__APPLE__) || defined(_AIX)
+ #define MB      (1024UL * 1024UL)
+ #else
+ 
+@@ -235,7 +235,7 @@ Java_com_sun_management_internal_OperatingSystemImpl_getFreeMemorySize0
+         return -1;
+     }
+     return (jlong)vm_stats.free_count * page_size;
+-#elif defined(_ALLBSD_SOURCE)
++#elif defined(__APPLE__)
+     /*
+      * XXBSDL no way to do it in FreeBSD
+      */
+@@ -257,7 +257,7 @@ JNIEXPORT jlong JNICALL
+ Java_com_sun_management_internal_OperatingSystemImpl_getTotalMemorySize0
+   (JNIEnv *env, jobject mbean)
+ {
+-#ifdef _ALLBSD_SOURCE
++#ifdef __APPLE__
+     jlong result = 0;
+     int mib[2];
+     size_t rlen;
+@@ -332,7 +332,7 @@ Java_com_sun_management_internal_OperatingSystemImpl_getOpenFileDescriptorCount0
+     free(fds);
+ 
+     return nfiles;
+-#elif defined(_ALLBSD_SOURCE)
++#elif defined(__APPLE__)
+     /*
+      * XXXBSD: there's no way available to do it in FreeBSD, AFAIK.
+      */
