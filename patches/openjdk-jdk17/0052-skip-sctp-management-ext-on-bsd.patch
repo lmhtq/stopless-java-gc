@@ -1,0 +1,51 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0052/N] skip jdk.sctp + libmanagement_ext native builds on bsd
+
+Build71 reached the very tail of `make images` (sec-bin.zip being
+created!) before failing on two non-essential native libs:
+
+- jdk.sctp libsctp: includes <linux/types.h> (Linux UAPI kernel
+  header). CheriBSD has no SCTP and no Linux UAPI headers. The
+  Lib.gmk already excludes macosx/aix; add bsd.
+
+- jdk.management libmanagement_ext: OperatingSystemImpl.c uses
+  `<sys/swap.h>` and other Linux/macOS-specific headers in a
+  matrix of #ifdef branches that don't include FreeBSD. Same
+  approach as 0051 (libawt/libattach): skip the native build on
+  bsd entirely. Java sources still compile; JMX OS metrics
+  (memory, swap, CPU usage) will throw at runtime if invoked,
+  which is fine for boot validation.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0052)
+
+--- a/make/modules/jdk.management/Lib.gmk
++++ b/make/modules/jdk.management/Lib.gmk
+@@ -41,6 +41,10 @@ ifeq ($(call isTargetOs, linux), true)
+   endif
+ endif
+ 
++# Phase 1: skip libmanagement_ext native build on bsd target. The sysinfo
++# code (OperatingSystemImpl.c etc.) has heavy macOS/Linux assumptions and is
++# non-essential for boot validation (`java -version` etc.).
++ifneq ($(call isTargetOs, bsd), true)
+ $(eval $(call SetupJdkLibrary, BUILD_LIBMANAGEMENT_EXT, \
+     NAME := management_ext, \
+     OPTIMIZATION := $(LIBMANAGEMENT_EXT_OPTIMIZATION), \
+@@ -56,3 +60,4 @@ $(eval $(call SetupJdkLibrary, BUILD_LIBMANAGEMENT_EXT, \
+ $(BUILD_LIBMANAGEMENT_EXT): $(call FindLib, java.base, java)
+ 
+ TARGETS += $(BUILD_LIBMANAGEMENT_EXT)
++endif
+diff --git a/make/modules/jdk.sctp/Lib.gmk b/make/modules/jdk.sctp/Lib.gmk
+index 9aef8b53d0b..dd311469c89 100644
+--- a/make/modules/jdk.sctp/Lib.gmk
++++ b/make/modules/jdk.sctp/Lib.gmk
+@@ -29,7 +29,7 @@ include LibCommon.gmk
+ 
+ ifeq ($(call isTargetOsType, unix), true)
+ 
+-  ifeq ($(call isTargetOs, macosx aix), false)
++  ifeq ($(call isTargetOs, macosx aix bsd), false)
+     $(eval $(call SetupJdkLibrary, BUILD_LIBSCTP, \
+         NAME := sctp, \
+         OPTIMIZATION := LOW, \
