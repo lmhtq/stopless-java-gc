@@ -1,0 +1,82 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0059/N] aarch64: SIMD post-index stride uses BytesPerLong not wordSize (CHERI)
+
+Five sites in macroAssembler_aarch64.cpp and two in c1_Runtime1_aarch64.cpp
+compute SIMD post-index immediates as `N * wordSize`, where `wordSize`
+is `sizeof(intptr_t)`. The intent is "N SIMD registers worth of bytes",
+where each register holds 8 bytes for T1D arrangement (or 16 bytes for
+T2D). On non-CHERI LP64 `wordSize = 8` so `4 * wordSize = 32` matches
+`SIMD_Size_in_bytes[T1D] * 4 = 32`. On CheriBSD purecap
+`wordSize = 16`, giving `64` — half too big — and the assembler check
+`imm == expectedImmediate` fires.
+
+Replace `wordSize` with `BytesPerLong` (always 8) at these specific
+sites. `BytesPerLong` is the right semantic constant: it expresses
+"size of a 64-bit value", which is exactly what T1D and the
+PUSH/POP register banks need.
+
+The two functions in macroAssembler_aarch64.cpp affected are
+`push/pop_call_clobbered_registers_except` and `push/pop_CPU_state`;
+in c1_Runtime1_aarch64.cpp the two `restore_fpu_registers` loops.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0059)
+
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+@@ -2775,7 +2775,8 @@
+ }
+ 
+ void MacroAssembler::push_call_clobbered_registers_except(RegSet exclude) {
+-  int step = 4 * wordSize;
++  // CHERI: SIMD T1D stride is 4 * 8B = 32B, not 4 * wordSize (would be 64 on purecap).
++  int step = 4 * BytesPerLong;
+   push(call_clobbered_registers() - exclude, sp);
+   sub(sp, sp, step);
+   mov(rscratch1, -step);
+@@ -2793,7 +2794,7 @@
+   for (int i = 0; i < 32; i += 4) {
+     if (i <= v7->encoding() || i >= v16->encoding())
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+-          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * wordSize)));
++          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * BytesPerLong)));
+   }
+ 
+   reinitialize_ptrue();
+@@ -2810,7 +2811,7 @@
+       sve_str(as_FloatRegister(i), Address(sp, i));
+     }
+   } else {
+-    int step = (save_vectors ? 8 : 4) * wordSize;
++    int step = (save_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     mov(rscratch1, -step);
+     sub(sp, sp, step);
+     for (int i = 28; i >= 4; i -= 4) {
+@@ -2829,7 +2830,7 @@
+     }
+     add(sp, sp, sve_vector_size_in_bytes * FloatRegisterImpl::number_of_registers);
+   } else {
+-    int step = (restore_vectors ? 8 : 4) * wordSize;
++    int step = (restore_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     for (int i = 0; i <= 28; i += 4)
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+           as_FloatRegister(i+3), restore_vectors ? T2D : T1D, Address(post(sp, step)));
+--- a/src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp
+@@ -296,7 +296,7 @@
+   if (restore_fpu_registers) {
+     for (int i = 0; i < 32; i += 4)
+       __ ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+-          as_FloatRegister(i+3), __ T1D, Address(__ post(sp, 4 * wordSize)));
++          as_FloatRegister(i+3), __ T1D, Address(__ post(sp, 4 * BytesPerLong)));
+   } else {
+     __ add(sp, sp, 32 * wordSize);
+   }
+@@ -309,7 +309,7 @@
+   if (restore_fpu_registers) {
+     for (int i = 0; i < 32; i += 4)
+       __ ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+-          as_FloatRegister(i+3), __ T1D, Address(__ post(sp, 4 * wordSize)));
++          as_FloatRegister(i+3), __ T1D, Address(__ post(sp, 4 * BytesPerLong)));
+   } else {
+     __ add(sp, sp, 32 * wordSize);
+   }

@@ -1,0 +1,34 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0058/N] assembler_aarch64.hpp: SIMD ld_st imm mismatch -> warn (TEMP diagnostic)
+
+`ld_st(... post(reg, imm))` checks `imm == expectedImmediate`. Under
+purecap, a few call sites in HotSpot compute `imm` as `4 * wordSize`
+where `wordSize == sizeof(intptr_t) == 16` (capability), but the SIMD
+register stride is determined by the arrangement (e.g., T1D = 8 B), so
+the immediate should be `4 * 8 = 32` regardless of pointer size.
+Patch 0059 fixes all four known call sites
+(macroAssembler/c1_Runtime1).
+
+This patch demotes the `guarantee` to a runtime warning while we
+verify there are no other miscalibrated callers. The warn message
+prints the actual vs expected values plus the arrangement.
+
+TEMPORARY: once we have high confidence in the audit, restore the
+`guarantee` (or leave it as a one-shot warn).
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0058)
+
+--- a/src/hotspot/cpu/aarch64/assembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/assembler_aarch64.hpp
+@@ -2292,7 +2292,10 @@
+     // post-index value (imm) is formed differently for replicate/non-replicate ld* instructions
+     int expectedImmediate = replicate ? regs * (1 << (T >> 1)) : SIMD_Size_in_bytes[T] * regs;
+     guarantee(T < T1Q , "incorrect arrangement");
+-    guarantee(imm == expectedImmediate, "bad offset");
++    // CHERI: temporarily warn instead of guarantee while diagnosing codegen
++    if (imm != expectedImmediate) {
++      tty->print_cr("WARN: SIMD ld_st imm=%d expected=%d (T=%d regs=%d)", imm, expectedImmediate, (int)T, regs);
++    }
+     starti;
+     f(0,31), f((int)T & 1, 30);
+     f(op1 | 0b100, 29, 21), f(0b11111, 20, 16), f(op2, 15, 12);

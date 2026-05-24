@@ -1,0 +1,42 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0057/N] jvmFlagConstraintsGC.cpp: skip TLAB upper-bound check when max_size uninitialized
+
+`MinTLABSizeConstraintFunc` and `TLABSizeConstraintFunc` check
+`value <= ThreadLocalAllocBuffer::max_size() * HeapWordSize`. The
+upper bound `_max_size` is set later by `Universe::initialize_heap`
+via `set_max_size(heap->max_tlab_size())`. On Linux the ergonomic
+constraint checks happen to fire *after* `set_max_size`; on
+CheriBSD/purecap they fire before, and `max_size()` returns 0 (release
+mode hides the debug assert). The MinTLABSize default 2048 then fails
+`2048 <= 0`, blocking VM startup.
+
+Skip the upper-bound check when `max_size() == 0` (i.e., not yet
+initialized). The same constraint will be re-checked when TLABs are
+actually used.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0057)
+
+--- a/src/hotspot/share/gc/shared/jvmFlagConstraintsGC.cpp
++++ b/src/hotspot/share/gc/shared/jvmFlagConstraintsGC.cpp
+@@ -352,7 +352,10 @@
+                         value, ThreadLocalAllocBuffer::alignment_reserve_in_bytes());
+     return JVMFlag::VIOLATES_CONSTRAINT;
+   }
+-  if (value > (ThreadLocalAllocBuffer::max_size() * HeapWordSize)) {
++  // Skip upper-bound check if max_size is not yet initialized.
++  // GC's set_max_size runs after flag-constraint validation.
++  if (ThreadLocalAllocBuffer::max_size() != 0 &&
++      value > (ThreadLocalAllocBuffer::max_size() * HeapWordSize)) {
+     JVMFlag::printError(verbose,
+                         "MinTLABSize (" SIZE_FORMAT ") must be "
+                         "less than or equal to ergonomic TLAB maximum (" SIZE_FORMAT ")\n",
+@@ -372,7 +375,8 @@
+                           value, MinTLABSize);
+       return JVMFlag::VIOLATES_CONSTRAINT;
+     }
+-    if (value > (ThreadLocalAllocBuffer::max_size() * HeapWordSize)) {
++    if (ThreadLocalAllocBuffer::max_size() != 0 &&
++        value > (ThreadLocalAllocBuffer::max_size() * HeapWordSize)) {
+       JVMFlag::printError(verbose,
+                           "TLABSize (" SIZE_FORMAT ") must be "
+                           "less than or equal to ergonomic TLAB maximum size (" SIZE_FORMAT ")\n",

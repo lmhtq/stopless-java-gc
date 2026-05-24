@@ -1,0 +1,29 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0054/N] copy_bsd_aarch64.hpp: pd_conjoint_words CHERI memmove fallback
+
+Patch 0017 (copy_bsd_aarch64.S stub) disabled the inline-asm
+`_Copy_conjoint_words` / `_Copy_disjoint_words` symbols on
+`__CHERI_PURE_CAPABILITY__`. The companion `.hpp` short-circuits the
+disjoint variants to `memmove` under purecap, but `pd_conjoint_words`
+was missed: it still tries to call the now-undefined assembly symbol
+for `count > 8`, producing an `undefined reference` link error.
+
+Add the same `__CHERI_PURE_CAPABILITY__ -> memmove(to, from, count *
+sizeof(HeapWord))` short-circuit to `pd_conjoint_words`, matching
+`pd_disjoint_words` and friends.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0054)
+
+--- a/src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp
++++ b/src/hotspot/os_cpu/bsd_aarch64/copy_bsd_aarch64.hpp
+@@ -111,6 +111,10 @@
+ #endif // __CHERI_PURE_CAPABILITY__
+ 
+ static void pd_conjoint_words(const HeapWord* from, HeapWord* to, size_t count) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  memmove(to, from, count * sizeof(HeapWord));
++  return;
++#endif
+   __asm volatile( "prfm pldl1strm, [%[s], #0];" :: [s]"r"(from) : "memory");
+   if (__builtin_expect(count <= 8, 1)) {
+     COPY_SMALL(from, to, count);

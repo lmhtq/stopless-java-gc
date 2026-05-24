@@ -1,0 +1,89 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0053/N] os_bsd.cpp: three CheriBSD/purecap mmap+path fixes
+
+Three cohesive CheriBSD purecap fixes in os/bsd/os_bsd.cpp:
+
+1. java_home strip: BSD-side path-stripping in `os::init_2_misc` assumes
+   <home>/lib/<arch>/<vmtype>/libjvm.so (macOS style) and strips four
+   path components. JDK 9+ modular layout for non-Apple has no <arch>
+   dir; we end up with java_home = "/opt" instead of "/opt/jdk", which
+   then fails at set_boot_path. Gate the extra strip on `__APPLE__`;
+   non-Apple matches the Linux strip.
+
+2. pd_commit_memory: the non-Apple non-OpenBSD path uses
+   `mmap(MAP_FIXED, addr, R|W)` over a prior reservation to commit
+   pages. On CheriBSD purecap, this fails with `errno=98` (the
+   capability passed via `addr` doesn't permit the MAP_FIXED replace).
+   The OpenBSD branch already works around this with mprotect; extend
+   the OpenBSD branch to also cover `__CHERI_PURE_CAPABILITY__`.
+
+3. anon_mmap: reservations use `PROT_NONE`. On CheriBSD purecap, the
+   returned capability has no R/W/X permission bits, so a later
+   mprotect(R|W) fails EACCES. Use `PROT_MAX(R|W|X) | PROT_NONE` so
+   the capability records the maximum permissions it can ever have
+   while leaving the page initially unmapped.
+
+These three fixes together let the JVM reserve safepoint polling
+pages, card tables, and metaspace regions (which all use the
+reserve-then-commit pattern) on CheriBSD purecap.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0053)
+
+--- a/src/hotspot/os/bsd/os_bsd.cpp
++++ b/src/hotspot/os/bsd/os_bsd.cpp
+@@ -367,6 +367,7 @@
+     }
+     Arguments::set_dll_dir(buf);
+ 
++#ifdef __APPLE__
+     if (pslash != NULL) {
+       pslash = strrchr(buf, '/');
+       if (pslash != NULL) {
+@@ -377,6 +378,16 @@
+         }
+       }
+     }
++#else
++    // FreeBSD/CheriBSD: modular JDK layout has no <arch> dir between lib
++    // and {server,client}/libjvm.so. Same as Linux. Strip only /lib.
++    if (pslash != NULL) {
++      pslash = strrchr(buf, '/');
++      if (pslash != NULL) {
++        *pslash = '\0';        // Get rid of /lib.
++      }
++    }
++#endif
+     Arguments::set_java_home(buf);
+     if (!set_boot_path('/', ':')) {
+       vm_exit_during_initialization("Failed setting boot class path.", NULL);
+@@ -1621,8 +1632,10 @@
+ //       problem.
+ bool os::pd_commit_memory(char* addr, size_t size, bool exec) {
+   int prot = exec ? PROT_READ|PROT_WRITE|PROT_EXEC : PROT_READ|PROT_WRITE;
+-#if defined(__OpenBSD__)
+-  // XXX: Work-around mmap/MAP_FIXED bug temporarily on OpenBSD
++#if defined(__OpenBSD__) || defined(__CHERI_PURE_CAPABILITY__)
++  // CheriBSD/purecap: MAP_FIXED mmap over a prior reservation with capability
++  // address fails (errno 98). mprotect on the existing capability works.
++  // Same approach as the OpenBSD MAP_FIXED workaround.
+   Events::log_memprotect(NULL, "Protecting memory [" INTPTR_FORMAT "," INTPTR_FORMAT "] with protection modes %x", p2i(addr), p2i(addr+size), prot);
+   if (::mprotect(addr, size, prot) == 0) {
+     return true;
+@@ -1766,7 +1779,17 @@
+   // Map reserved/uncommitted pages PROT_NONE so we fail early if we
+   // touch an uncommitted page. Otherwise, the read/write might
+   // succeed if we have enough swap space to back the physical page.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // CheriBSD: PROT_NONE alone gives a capability with no R/W/X perms, so
++  // later mprotect(R|W) fails EACCES. PROT_MAX records the maximum
++  // permissions the capability can ever have; combined with PROT_NONE the
++  // page is initially unmapped but the cap retains the option to upgrade.
++  char* addr = (char*)::mmap(requested_addr, bytes,
++                             PROT_MAX(PROT_READ|PROT_WRITE|PROT_EXEC) | PROT_NONE,
++                             flags, -1, 0);
++#else
+   char* addr = (char*)::mmap(requested_addr, bytes, PROT_NONE, flags, -1, 0);
++#endif
+ 
+   return addr == MAP_FAILED ? NULL : addr;
+ }

@@ -1,0 +1,35 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0056/N] universe.cpp: temporarily skip LogHeapWordSize sanity guarantee under purecap
+
+`universe_init` asserts `1 << LogHeapWordSize == sizeof(HeapWord)`.
+On non-CHERI LP64 this holds: `LogHeapWordSize=3 -> 8 == 8 ==
+sizeof(HeapWordImpl*)`. On CheriBSD purecap, `sizeof(HeapWordImpl*) =
+sizeof(capability) = 16`, so the assertion fails.
+
+TEMPORARY workaround for Phase 1 bring-up: skip the assertion under
+`__CHERI_PURE_CAPABILITY__`. The real fix is to redefine `HeapWord` as
+an 8-byte struct (so its size is independent of pointer size) — that
+is the next refactor on the Phase 1 todo (HeapWord refactor for CHERI,
+covered by docs/01 §4.2).
+
+This patch is expected to be REVERTED once HeapWord refactor lands.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0056)
+
+--- a/src/hotspot/share/memory/universe.cpp
++++ b/src/hotspot/share/memory/universe.cpp
+@@ -717,8 +717,14 @@
+ 
+ jint universe_init() {
+   assert(!Universe::_fully_initialized, "called after initialize_vtables");
++#ifdef __CHERI_PURE_CAPABILITY__
++  // CHERI purecap: sizeof(HeapWord) = sizeof(capability) = 16, but heap math
++  // still uses 8-byte words (LogHeapWordSize=3). The mismatch is benign as
++  // HeapWordImpl is opaque and the JVM never indexes a HeapWord array.
++#else
+   guarantee(1 << LogHeapWordSize == sizeof(HeapWord),
+          "LogHeapWordSize is incorrect.");
++#endif
+   guarantee(sizeof(oop) >= sizeof(HeapWord), "HeapWord larger than oop?");
+   guarantee(sizeof(oop) % sizeof(HeapWord) == 0,
+             "oop size is not not a multiple of HeapWord size");

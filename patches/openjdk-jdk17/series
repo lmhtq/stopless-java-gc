@@ -55,8 +55,18 @@
 0051-skip-libawt-libattach-on-bsd.patch
 0052-skip-sctp-management-ext-on-bsd.patch
 
-# --- Phase 1 pending: cap_runtime hook + ZGC source ---
-# 0053-cap-runtime-hook.patch                       (link src/cap_runtime/ into libjvm)
+# --- Phase 1: runtime fixes discovered when JVM actually executes ---
+0053-os-bsd-purecap-three-mmap-fixes.patch
+0054-copy-bsd-aarch64-conjoint-words-cheri.patch
+0055-decoder-bsd-elf-non-apple.patch
+0056-universe-loglog-heapword-guarantee-cheri-temp.patch
+0057-tlab-constraint-defer-when-not-initialized.patch
+0058-assembler-aarch64-simd-ld-st-warn-diagnostic.patch
+0059-aarch64-simd-stride-bytesperlong-cheri.patch
+
+# --- Phase 1.5 pending: HeapWord refactor (removes 0056 + 0058) ---
+# 0060-heapword-typedef-cheri-8byte-struct.patch     (HeapWord = 8-byte struct under purecap)
+# 0061-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
