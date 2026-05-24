@@ -1,0 +1,78 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0060/N] globalDefinitions.hpp: HeapWord/MetaWord = 8-byte struct under purecap
+
+The fundamental fix for the LogHeapWordSize/sizeof(HeapWord) mismatch
+on CHERI purecap, replacing the temporary guarantee bypass added in
+0056 (which can now be left in place harmlessly as the assertion no
+longer fires).
+
+Background. HotSpot defines:
+
+  class HeapWordImpl;             // Opaque, never defined.
+  typedef HeapWordImpl* HeapWord; // pointer to incomplete type
+
+Heap math throughout assumes `HeapWordSize == sizeof(HeapWord) ==
+1 << LogHeapWordSize == 8`. Under CHERI purecap, sizeof(any pointer)
+is 16 bytes (a capability), so `sizeof(HeapWord)` becomes 16. All
+heap word counts then over-multiply by 2x, leading to:
+
+  - memset writing past mprotect bounds
+  - heap-size accounting doubling
+  - oop / HeapWord-size invariants breaking
+
+The right fix under CHERI: HeapWord must remain 8 bytes. Since the
+JVM never actually dereferences HeapWordImpl* (the class is opaque),
+the type can be a *struct* instead of a pointer:
+
+  struct HeapWordImpl { int64_t _word; };
+  typedef HeapWordImpl HeapWord;            // sizeof == 8
+
+`HeapWord*` is still a 16-byte capability that points to an 8-byte
+struct, so pointer arithmetic (`hw + 1`) increments by 8 bytes
+correctly. The change is functionally transparent because no code
+dereferences a HeapWord value directly.
+
+Same treatment for `MetaWord`. Both are wrapped in
+`#ifdef __CHERI_PURE_CAPABILITY__` so the non-CHERI build is
+untouched.
+
+Downstream knock-on issues that emerged from this fix and are
+addressed by 0061 + 0062:
+
+  - 0061: BinList Block layout (16-byte ptr + 8-byte size_t = 32 B
+    no longer fits in the original 2-word minimum)
+  - 0062: `genCollectedHeap` guarantee `HeapWordSize == wordSize` is
+    fundamentally incompatible with CHERI (8 != 16) and must be skipped
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0060)
+
+--- a/src/hotspot/share/utilities/globalDefinitions.hpp
++++ b/src/hotspot/share/utilities/globalDefinitions.hpp
+@@ -219,12 +219,27 @@
+ //   hw += oop(hw)->foo();
+ // works, where foo is a method (like size or scavenge) that returns the
+ // object size.
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: sizeof(any pointer) == 16 (capability). To keep HotSpot's
++// invariant sizeof(HeapWord) == (1 << LogHeapWordSize) == 8, define HeapWord
++// and MetaWord as 8-byte opaque structs (not pointer-to-opaque). HotSpot
++// uses HeapWord* / MetaWord* throughout (those remain 16-byte capabilities
++// that increment by sizeof(HeapWord)==8 on pointer arithmetic) and never
++// dereferences the opaque struct directly, so the change is functionally
++// transparent.
++struct HeapWordImpl { int64_t _word; };
++typedef HeapWordImpl HeapWord;
++
++struct MetaWordImpl { int64_t _word; };
++typedef MetaWordImpl MetaWord;
++#else
+ class HeapWordImpl;             // Opaque, never defined.
+ typedef HeapWordImpl* HeapWord;
+ 
+ // Analogous opaque struct for metadata allocated from metaspaces.
+ class MetaWordImpl;             // Opaque, never defined.
+ typedef MetaWordImpl* MetaWord;
++#endif
+ 
+ // HeapWordSize must be 2^LogHeapWordSize.
+ const int HeapWordSize        = sizeof(HeapWord);

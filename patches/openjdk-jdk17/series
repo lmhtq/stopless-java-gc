@@ -64,9 +64,14 @@
 0058-assembler-aarch64-simd-ld-st-warn-diagnostic.patch
 0059-aarch64-simd-stride-bytesperlong-cheri.patch
 
-# --- Phase 1.5 pending: HeapWord refactor (removes 0056 + 0058) ---
-# 0060-heapword-typedef-cheri-8byte-struct.patch     (HeapWord = 8-byte struct under purecap)
-# 0061-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
+# --- Phase 1.5: HeapWord refactor (makes 0056 a no-op) ---
+0060-heapword-metaword-typedef-cheri-8byte-struct.patch
+0061-metaspace-binlist-smallest-word-size-cheri.patch
+0062-gencollheap-skip-heapwordsize-eq-wordsize-cheri.patch
+
+# --- Phase 2 pending: oop-as-capability + cap_runtime hook ---
+# 0063-oop-as-capability-cheri.patch                 (oopDesc layout for cap-sized oop fields)
+# 0064-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
 # 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
 # 0009-zgc-color-via-side-table.patch
 # ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)

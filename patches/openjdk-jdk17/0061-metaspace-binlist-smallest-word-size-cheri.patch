@@ -1,0 +1,36 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0061/N] metaspace/binList.hpp: BinList32 smallest_word_size = 4 under purecap
+
+`BinListImpl<smallest_word_size, num_lists>` asserts:
+
+  smallest_word_size * sizeof(MetaWord) >= sizeof(Block)
+
+`Block { Block* _next; size_t _word_size; }`. On non-CHERI LP64:
+sizeof = 16 = 2*sizeof(MetaWord), so `BinListImpl<2, 32>` works. On
+CHERI purecap (with HeapWord/MetaWord = 8-byte struct from 0060),
+Block has a 16-byte pointer + 8-byte size_t = 24 bytes + alignment =
+32 bytes. The original `2 * 8 = 16 < 32` violates the assertion.
+
+Bump `smallest_word_size` from 2 to 4 under CHERI (4 * 8 = 32 >= 32),
+which preserves the BinList semantics with a slightly higher minimum
+block size. No correctness impact — just changes the smallest bin
+size at the lower end of the metaspace allocator's freelist.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0061)
+
+--- a/src/hotspot/share/memory/metaspace/binList.hpp
++++ b/src/hotspot/share/memory/metaspace/binList.hpp
+@@ -196,7 +196,13 @@
+ 
+ };
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: Block has a 16-byte pointer + 8-byte size_t = 32 bytes
++// (with alignment). Block's smallest-word-size must accommodate this.
++typedef BinListImpl<4, 32> BinList32;
++#else
+ typedef BinListImpl<2, 32> BinList32;
++#endif
+ 
+ } // namespace metaspace
+ 

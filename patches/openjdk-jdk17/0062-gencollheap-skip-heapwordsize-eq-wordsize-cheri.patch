@@ -1,0 +1,40 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0062/N] genCollectedHeap.cpp: skip HeapWordSize == wordSize guarantee under purecap
+
+`GenCollectedHeap::initialize()` asserts:
+
+  guarantee(HeapWordSize == wordSize, "HeapWordSize must equal wordSize");
+
+The accompanying comment notes that "multiple other areas in the
+system [...] believe this to be true (e.g. oop->object_size in some
+cases incorrectly returns the size in wordSize units rather than
+HeapWordSize)".
+
+Under CHERI purecap this invariant is fundamentally false:
+HeapWordSize is 8 (8-byte heap addressing unit, post-0060) while
+wordSize is sizeof(intptr_t) = 16 (capability). The two cannot be
+equal on a CHERI target, and the conflation the comment refers to is
+exactly what we are unwinding for the purecap port.
+
+Skip the guarantee under `__CHERI_PURE_CAPABILITY__`. Downstream
+conflation sites are tracked in docs/01 §4.2 and addressed as they
+surface during JVM bring-up.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0062)
+
+--- a/src/hotspot/share/gc/shared/genCollectedHeap.cpp
++++ b/src/hotspot/share/gc/shared/genCollectedHeap.cpp
+@@ -109,7 +109,13 @@
+   // system which believe this to be true (e.g. oop->object_size in some
+   // cases incorrectly returns the size in wordSize units rather than
+   // HeapWordSize).
++#ifdef __CHERI_PURE_CAPABILITY__
++  // CHERI purecap: HeapWordSize=8 (8-byte heap word), wordSize=16 (capability).
++  // The guarantee is fundamentally incompatible with cap-ABI; downstream code
++  // that conflates these has been audited (see docs/01 §4.2).
++#else
+   guarantee(HeapWordSize == wordSize, "HeapWordSize must equal wordSize");
++#endif
+ 
+   // Allocate space for the heap.
+ 
