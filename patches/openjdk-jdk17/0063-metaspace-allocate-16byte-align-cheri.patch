@@ -1,0 +1,45 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0063/N] metaspace.cpp: round word_size to even for 16-byte cap alignment
+
+Phase 2 entry point. After 0060-0062 the JVM boots through GC init and
+StubRoutines generation, then crashes in `ConstantPool::allocate` at
+the `stp c1, c20, [c0]` instruction emitted by the inlined constructor.
+The stp stores two 16-byte capabilities (vtable + first cap member) at
+offset 0 of the freshly-allocated buffer. For this to work the buffer
+must be 16-byte aligned.
+
+Metaspace allocates in MetaWord units (= 8 bytes after the 0060
+HeapWord/MetaWord refactor). If the previous allocation had an odd
+word_size, the current one starts at an 8-byte-aligned but not
+16-byte-aligned address, violating the alignment required by CHERI
+capability stores.
+
+Round word_size up to even in `Metaspace::allocate` under
+`__CHERI_PURE_CAPABILITY__`. Costs at most 8 bytes per allocation;
+guarantees subsequent allocations remain 16-byte aligned.
+
+This fix advances JVM init past the ConstantPool stp crash, into the
+next layer (capability tag violations on data loaded from
+modules.jimage — Phase 2 work proper, see docs/02 §3).
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0063)
+
+--- a/src/hotspot/share/memory/metaspace.cpp
++++ b/src/hotspot/share/memory/metaspace.cpp
+@@ -895,6 +895,16 @@ size_t Metaspace::max_allocation_word_size() {
+ // Callers are responsible for checking null.
+ MetaWord* Metaspace::allocate(ClassLoaderData* loader_data, size_t word_size,
+                               MetaspaceObj::Type type) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // CHERI purecap: MetaspaceObj subclasses (Klass, ConstantPool, Method, ...)
++  // contain capability-typed fields (vtable ptr, member pointers) that require
++  // 16-byte alignment. MetaWord is 8 bytes, so an odd word_size leaves the
++  // next allocation 8-byte-aligned, violating cap alignment. Round word_size
++  // up to even so every allocation lands on a 16-byte boundary.
++  if (word_size & 1) {
++    word_size++;
++  }
++#endif
+   assert(word_size <= Metaspace::max_allocation_word_size(),
+          "allocation size too large (" SIZE_FORMAT ")", word_size);
+
