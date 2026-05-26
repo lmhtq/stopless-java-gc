@@ -204,3 +204,64 @@ CheriBSD purecap shared object.
 - ~70 build attempts on hasee, build36 → build73
 - 15 commits in `main`
 - Two days wall-clock (2026-05-21 / 2026-05-22) for the build-passes-but-doesnt-run state, plus one day for runtime bring-up + HeapWord refactor.
+
+---
+
+## Update 2026-05-25/26: 16-byte HeapWord pivot + 13 classes load
+
+After comparing against MOJO's public material (Glasgow CHERI-Tech
+2023 slides + Feb 2024 blog post "exactly-constrained-bounds") we
+discovered MOJO had already shipped Epsilon/Serial C64 purecap with
+**16-byte HeapWords**. Our prior choice of 8-byte HeapWord (patch 0060
+old) was fighting the invariants — six follow-on patches were
+suppressing assertions to keep that choice alive.
+
+We pivoted to MOJO-aligned 16-byte HeapWord. Three new patches:
+
+- **0060 (revised)**: `LogHeapWordSize = 4` under `__CHERI_PURE_CAPABILITY__`;
+  HeapWord stays `HeapWordImpl*` (naturally 16 bytes on cap). Forces
+  `HeapWordsPerLong = 1` to keep downstream invariants valid.
+- **0064**: `pd_fill_to_words` now writes `count * sizeof(HeapWord)`
+  bytes (was implicitly assuming 8-byte HeapWord and under-writing
+  by half on purecap).
+- **0065**: 9 metaspace sites changed `word_size * BytesPerWord` (=8)
+  to `word_size * sizeof(MetaWord)` (=16). `VirtualSpaceNode`'s
+  commit/reserve calls were half-mapping metaspace pages, causing
+  SIGSEGV when downstream zero-init wrote the correct 16-byte size.
+
+Six patches retired (moved to `disabled-pre-mojo16/`):
+0056, 0058, 0060(old), 0061, 0062, 0063 — all of which were
+suppressing assertions or working around the 8-byte HeapWord choice.
+
+### Bootclass loading progress
+
+| Pre-pivot | Post-pivot (0060B + 0064 + 0065) |
+|---|---|
+| 6 classes (Object, Serializable, Comparable, CharSequence, Constable, ConstantDesc) | **13 classes** including `java.lang.String`, the entire reflection root set (AnnotatedElement, GenericDeclaration, Type), and the invoke interfaces (TypeDescriptor + OfField) |
+| Crashed in `memset+0x16b` during String load | Loads through to `java.lang.Class`, then SIGPROT (CHERI tag) during Class init |
+
+The new fault class is **back to capability provenance** (tag-zero load
+on some cap-typed field in `java.lang.Class`'s init path) — the same
+problem class that Phase 2's cap-load barrier design is meant to
+address.
+
+### Patch series state (post-pivot)
+
+- 58 active patches (down from 63)
+- 7 disabled in `disabled-pre-mojo16/` (kept for history)
+- Build: `~/projs/.../build/jdk-morello/images/jdk/` deploys cleanly,
+  runs through 10 init phases + 13 bootclass loads before fault.
+
+### Next layer
+
+The Class init SIGPROT is similar in *kind* to the original jimage
+SIGPROT but happens 13 classes deeper into bring-up. Likely candidates:
+
+1. `java.lang.Class`'s native injected fields (klass back-pointer,
+   array klass cache, reflection data cache) — these are cap-typed.
+2. CDS / `_Class_in_object_layout` initialisation.
+3. The `Klass::_secondary_super_cache` or similar Klass cap fields
+   that get loaded before being stored.
+
+Phase 2 (proper) starts here: cap rematerialization handler is the
+mechanism that resolves this fault class.

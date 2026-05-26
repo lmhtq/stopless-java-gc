@@ -1,0 +1,40 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0064/N] copy_aarch64.hpp: pd_fill_to_words honours HeapWord=16 under purecap
+
+`pd_fill_to_words` casts `HeapWord*` to `julong*` (8-byte) and writes
+`count` julongs. On standard LP64 with `HeapWord=8`, this writes
+`count * 8 = count * HeapWordSize` bytes — correct.
+
+Under CHERI purecap with our patch 0060 setting `HeapWord=16`, this
+under-writes the buffer by half (writes `count*8` bytes, caller
+expected `count*16`). Downstream allocators that rely on the buffer
+being zero see garbage in the upper 8 bytes of every HeapWord, which
+shows up as bogus cap fields or invalid vtable pointers — manifesting
+as SIGSEGV deep in class init (e.g., inside String load when an
+uninitialised cap-typed field is dereferenced via memset).
+
+Fix: compute the julong write count as `count * sizeof(HeapWord) /
+sizeof(julong)`. On standard LP64 this is `count * 1 = count`
+(no change). On purecap this is `count * 2` (correct).
+
+This is the same bug pattern as the SIMD-stride miscompute in 0059:
+HotSpot conflates `wordSize == HeapWordSize == sizeof(julong) == 8`
+in many places. We are unwinding those conflations one at a time as
+they surface at runtime.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0064)
+
+--- a/src/hotspot/cpu/aarch64/copy_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/copy_aarch64.hpp
+@@ -29,8 +29,11 @@
+ #include OS_CPU_HEADER(copy)
+
+ static void pd_fill_to_words(HeapWord* tohw, size_t count, juint value) {
++  // Write count HeapWords. HeapWord may be 8 (standard LP64) or 16 (CHERI
++  // purecap). Compute julong count from HeapWord count.
+   julong* to = (julong*) tohw;
+   julong  v  = ((julong) value << 32) | value;
++  count = count * (sizeof(HeapWord) / sizeof(julong));
+   while (count-- > 0) {
+     *to++ = v;
+   }

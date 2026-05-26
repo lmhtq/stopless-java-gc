@@ -1,0 +1,79 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0060/N] globalDefinitions.hpp: HeapWord = 16 bytes under CHERI purecap (MOJO-aligned)
+
+This replaces an earlier "HeapWord = 8-byte struct" attempt (see
+patches/disabled-pre-mojo16/0060-heapword-metaword-typedef-cheri-8byte-struct.patch
+and follow-on patches 0056, 0058, 0059, 0061, 0062, 0063).
+
+Background. HotSpot defines HeapWord as `HeapWordImpl*` (opaque
+pointer). On standard LP64, sizeof(HeapWord) = 8 and `LogHeapWordSize
+= 3` makes `1 << LogHeapWordSize == sizeof(HeapWord)` hold.
+
+On CHERI purecap, sizeof(pointer) = sizeof(capability) = 16. The
+previous attempt forced HeapWord back to 8 bytes via a struct
+typedef and then suppressed every downstream invariant
+(`HeapWordSize == wordSize`, metaspace alignment, SIMD strides, ...)
+— six follow-on patches, several marked TEMP.
+
+MOJO (Manchester + THG, public CHERI-Tech 2023 slides + Feb 2024
+blog) reports keeping HeapWord as a pointer and accepting that
+HeapWord becomes 16 bytes on Morello CheriBSD, with heap math
+throughout treating HeapWord as the 16-byte addressing unit.
+
+This patch adopts that approach:
+
+  1. HeapWord = HeapWordImpl* (unchanged from upstream — naturally
+     16 bytes on purecap).
+  2. LogHeapWordSize = 4 under `__CHERI_PURE_CAPABILITY__` so
+     `1 << LogHeapWordSize == sizeof(HeapWord) == 16` holds.
+  3. HeapWordsPerLong = 1 forced (would otherwise be 8/16 = 0).
+     Physically: each 16-byte HeapWord holds one jlong with 8 bytes
+     slack. The three call sites that use HeapWordsPerLong
+     (align.hpp align_up, accessBackend.inline.hpp divide,
+     arguments.cpp MinObjAlignment assert) all assume >= 1.
+
+Knock-on effect: assertion `1 << LogHeapWordSize == sizeof(HeapWord)`
+in universe.cpp holds naturally (patch 0056 unneeded). genCollectedHeap
+guarantee `HeapWordSize == wordSize` holds (patch 0062 unneeded).
+Metaspace 16-byte alignment is automatic (patch 0063 unneeded). SIMD
+strides of `4*wordSize` are correct again (patches 0058, 0059
+unneeded). BinList smallest_word_size returns to upstream (0061
+unneeded).
+
+Cost: heap math operates in 16-byte units, so heap is roughly 2x
+larger for same Java object count. Acceptable because purecap mode
+already pays a 2x memory cost on every pointer-typed field.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0060B)
+      mojo-jvm.org "exactly-constrained-bounds" (Feb 2024)
+      Glasgow CHERI-Tech 2023 slides "OpenJDK on Morello"
+
+--- a/src/hotspot/share/utilities/globalDefinitions.hpp
++++ b/src/hotspot/share/utilities/globalDefinitions.hpp
+@@ -229,12 +229,26 @@ typedef MetaWordImpl* MetaWord;
+ // HeapWordSize must be 2^LogHeapWordSize.
+ const int HeapWordSize        = sizeof(HeapWord);
+ #ifdef _LP64
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: HeapWord = HeapWordImpl* = 16-byte capability.
++const int LogHeapWordSize     = 4;
++#else
+ const int LogHeapWordSize     = 3;
++#endif
+ #else
+ const int LogHeapWordSize     = 2;
+ #endif
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: HeapWord=16, jlong=8. BytesPerLong/HeapWordSize = 8/16 = 0
++// would divide-by-zero downstream. Force HeapWordsPerLong=1: each 16-byte
++// HeapWord holds one jlong with 8 bytes padding. align.hpp:align_up,
++// accessBackend divide, arguments MinObjAlignment assert all need >= 1.
++const int HeapWordsPerLong    = 1;
++const int LogHeapWordsPerLong = 0;
++#else
+ const int HeapWordsPerLong    = BytesPerLong / HeapWordSize;
+ const int LogHeapWordsPerLong = LogBytesPerLong - LogHeapWordSize;
++#endif
+
+ // The minimum number of native machine words necessary to contain "byte_size"
+ // bytes.

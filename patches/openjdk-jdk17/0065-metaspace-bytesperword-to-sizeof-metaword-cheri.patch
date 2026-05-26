@@ -1,0 +1,141 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0065/N] metaspace: word_size*BytesPerWord -> word_size*sizeof(MetaWord)
+
+Metaspace works in MetaWord units. The codebase mixes two equivalent-
+on-LP64 conventions for converting word counts to byte counts:
+
+  - `word_size * sizeof(MetaWord)`  (correct, used in blockTree,
+    binList, metachunk, chunklevel)
+  - `word_size * BytesPerWord`      (assumes BytesPerWord ==
+    sizeof(MetaWord) == 8, broken under purecap)
+
+On standard LP64 both equal 8. On CHERI purecap MetaWord is 16 bytes
+(patch 0060) while BytesPerWord stays 8 (LogBytesPerWord remains 3 to
+keep bitmap storage and other 64-bit-word assumptions sound). The
+`BytesPerWord` sites half-commit / half-reserve / half-bound the
+metaspace, so when downstream zero-init (pd_fill_to_words, patch
+0064) correctly writes word_size*16 bytes, it walks past the
+half-committed page and faults.
+
+Concretely: SIGSEGV inside `memset+0x183` during the metaspace
+allocation that zero-inits a ConstantPool / Klass for java.lang.String
+resolved to a half-committed VirtualSpaceNode page.
+
+Fix: replace `word_size * BytesPerWord` with `word_size *
+sizeof(MetaWord)` everywhere in the metaspace subsystem that converts
+word-count to byte-count. On LP64 the expression is identical; on
+purecap it correctly uses the 16-byte MetaWord size.
+
+This brings the metaspace subsystem in line with the rest of the
+codebase that already uses `sizeof(MetaWord)` for the same arithmetic.
+
+Refs: docs/05_zgc_cheri_collision_report.md (patch 0065)
+
+diff --git a/src/hotspot/share/memory/metaspace.cpp b/src/hotspot/share/memory/metaspace.cpp
+index d1882c70e2c..bf396f9272d 100644
+--- a/src/hotspot/share/memory/metaspace.cpp
++++ b/src/hotspot/share/memory/metaspace.cpp
+@@ -379,7 +379,7 @@ bool MetaspaceGC::can_expand(size_t word_size, bool is_class) {
+   // Check if the compressed class space is full.
+   if (is_class && Metaspace::using_class_space()) {
+     size_t class_committed = MetaspaceUtils::committed_bytes(Metaspace::ClassType);
+-    if (class_committed + word_size * BytesPerWord > CompressedClassSpaceSize) {
++    if (class_committed + word_size * sizeof(MetaWord) > CompressedClassSpaceSize) {
+       log_trace(gc, metaspace, freelist)("Cannot expand %s metaspace by " SIZE_FORMAT " words (CompressedClassSpaceSize = " SIZE_FORMAT " words)",
+                 (is_class ? "class" : "non-class"), word_size, CompressedClassSpaceSize / sizeof(MetaWord));
+       return false;
+@@ -388,7 +388,7 @@ bool MetaspaceGC::can_expand(size_t word_size, bool is_class) {
+ 
+   // Check if the user has imposed a limit on the metaspace memory.
+   size_t committed_bytes = MetaspaceUtils::committed_bytes();
+-  if (committed_bytes + word_size * BytesPerWord > MaxMetaspaceSize) {
++  if (committed_bytes + word_size * sizeof(MetaWord) > MaxMetaspaceSize) {
+     log_trace(gc, metaspace, freelist)("Cannot expand %s metaspace by " SIZE_FORMAT " words (MaxMetaspaceSize = " SIZE_FORMAT " words)",
+               (is_class ? "class" : "non-class"), word_size, MaxMetaspaceSize / sizeof(MetaWord));
+     return false;
+diff --git a/src/hotspot/share/memory/metaspace/chunklevel.cpp b/src/hotspot/share/memory/metaspace/chunklevel.cpp
+index c8bb19373d6..96a58c76154 100644
+--- a/src/hotspot/share/memory/metaspace/chunklevel.cpp
++++ b/src/hotspot/share/memory/metaspace/chunklevel.cpp
+@@ -36,7 +36,7 @@ using namespace chunklevel;
+ 
+ chunklevel_t chunklevel::level_fitting_word_size(size_t word_size) {
+   assert(MAX_CHUNK_WORD_SIZE >= word_size,
+-         SIZE_FORMAT " - too large allocation size.", word_size * BytesPerWord);
++         SIZE_FORMAT " - too large allocation size.", word_size * sizeof(MetaWord));
+   if (word_size <= MIN_CHUNK_WORD_SIZE) {
+     return HIGHEST_CHUNK_LEVEL;
+   }
+diff --git a/src/hotspot/share/memory/metaspace/metaspaceCommon.cpp b/src/hotspot/share/memory/metaspace/metaspaceCommon.cpp
+index 96673621bb2..d0ae09b005f 100644
+--- a/src/hotspot/share/memory/metaspace/metaspaceCommon.cpp
++++ b/src/hotspot/share/memory/metaspace/metaspaceCommon.cpp
+@@ -173,7 +173,7 @@ void print_number_of_classes(outputStream* out, uintx classes, uintx classes_sha
+ // Note: externally visible for gtests.
+ //static
+ size_t get_raw_word_size_for_requested_word_size(size_t word_size) {
+-  size_t byte_size = word_size * BytesPerWord;
++  size_t byte_size = word_size * sizeof(MetaWord);
+ 
+   // Deallocated metablocks are kept in a binlist which limits their minimal
+   //  size to at least the size of a binlist item (2 words).
+@@ -189,7 +189,7 @@ size_t get_raw_word_size_for_requested_word_size(size_t word_size) {
+   }
+ #endif
+   size_t raw_word_size = byte_size / BytesPerWord;
+-  assert(raw_word_size * BytesPerWord == byte_size, "Sanity");
++  assert(raw_word_size * sizeof(MetaWord) == byte_size, "Sanity");
+   return raw_word_size;
+ }
+ 
+diff --git a/src/hotspot/share/memory/metaspace/virtualSpaceNode.cpp b/src/hotspot/share/memory/metaspace/virtualSpaceNode.cpp
+index 87fc5acde25..000d0eeda96 100644
+--- a/src/hotspot/share/memory/metaspace/virtualSpaceNode.cpp
++++ b/src/hotspot/share/memory/metaspace/virtualSpaceNode.cpp
+@@ -106,8 +106,8 @@ bool VirtualSpaceNode::commit_range(MetaWord* p, size_t word_size) {
+   }
+ 
+   // Commit...
+-  if (os::commit_memory((char*)p, word_size * BytesPerWord, false) == false) {
+-    vm_exit_out_of_memory(word_size * BytesPerWord, OOM_MMAP_ERROR, "Failed to commit metaspace.");
++  if (os::commit_memory((char*)p, word_size * sizeof(MetaWord), false) == false) {
++    vm_exit_out_of_memory(word_size * sizeof(MetaWord), OOM_MMAP_ERROR, "Failed to commit metaspace.");
+   }
+ 
+   if (AlwaysPreTouch) {
+@@ -185,7 +185,7 @@ void VirtualSpaceNode::uncommit_range(MetaWord* p, size_t word_size) {
+   }
+ 
+   // Uncommit...
+-  if (os::uncommit_memory((char*)p, word_size * BytesPerWord) == false) {
++  if (os::uncommit_memory((char*)p, word_size * sizeof(MetaWord)) == false) {
+     // Note: this can actually happen, since uncommit may increase the number of mappings.
+     fatal("Failed to uncommit metaspace.");
+   }
+@@ -242,11 +242,11 @@ VirtualSpaceNode* VirtualSpaceNode::create_node(size_t word_size,
+                                                 SizeCounter* commit_words_counter)
+ {
+   DEBUG_ONLY(assert_is_aligned(word_size, chunklevel::MAX_CHUNK_WORD_SIZE);)
+-  ReservedSpace rs(word_size * BytesPerWord,
++  ReservedSpace rs(word_size * sizeof(MetaWord),
+                    Settings::virtual_space_node_reserve_alignment_words() * BytesPerWord,
+                    os::vm_page_size());
+   if (!rs.is_reserved()) {
+-    vm_exit_out_of_memory(word_size * BytesPerWord, OOM_MMAP_ERROR, "Failed to reserve memory for metaspace");
++    vm_exit_out_of_memory(word_size * sizeof(MetaWord), OOM_MMAP_ERROR, "Failed to reserve memory for metaspace");
+   }
+   MemTracker::record_virtual_memory_type(rs.base(), mtMetaspace);
+   assert_is_aligned(rs.base(), chunklevel::MAX_CHUNK_BYTE_SIZE);
+diff --git a/src/hotspot/share/memory/metaspaceTracer.cpp b/src/hotspot/share/memory/metaspaceTracer.cpp
+index 5899a2140fe..f4d951be4ae 100644
+--- a/src/hotspot/share/memory/metaspaceTracer.cpp
++++ b/src/hotspot/share/memory/metaspaceTracer.cpp
+@@ -63,7 +63,7 @@ void MetaspaceTracer::send_allocation_failure_event(ClassLoaderData *cld,
+   if (event.should_commit()) {
+     event.set_classLoader(cld);
+     event.set_hiddenClassLoader(cld->has_class_mirror_holder());
+-    event.set_size(word_size * BytesPerWord);
++    event.set_size(word_size * sizeof(MetaWord));
+     event.set_metadataType((u1) mdtype);
+     event.set_metaspaceObjectType((u1) objtype);
+     event.commit();

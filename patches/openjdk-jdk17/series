@@ -59,23 +59,26 @@
 0053-os-bsd-purecap-three-mmap-fixes.patch
 0054-copy-bsd-aarch64-conjoint-words-cheri.patch
 0055-decoder-bsd-elf-non-apple.patch
-0056-universe-loglog-heapword-guarantee-cheri-temp.patch
 0057-tlab-constraint-defer-when-not-initialized.patch
-0058-assembler-aarch64-simd-ld-st-warn-diagnostic.patch
+# 0059 stays: aarch64 SIMD stride uses BytesPerLong not wordSize, because
+# under purecap wordSize=16 (cap) but SIMD reg size is BytesPerLong=8. The
+# bug pre-existed but was masked on standard LP64 (wordSize == BytesPerLong).
 0059-aarch64-simd-stride-bytesperlong-cheri.patch
 
-# --- Phase 1.5: HeapWord refactor (makes 0056 a no-op) ---
-0060-heapword-metaword-typedef-cheri-8byte-struct.patch
-0061-metaspace-binlist-smallest-word-size-cheri.patch
-0062-gencollheap-skip-heapwordsize-eq-wordsize-cheri.patch
-0063-metaspace-allocate-16byte-align-cheri.patch
+# --- Phase 1.5 (path B, MOJO-aligned): 16-byte HeapWord under purecap ---
+# Replaces patches 0056, 0058, 0060(old), 0061, 0062, 0063
+# (moved to disabled-pre-mojo16/). Single patch sets LogHeapWordSize=4
+# under __CHERI_PURE_CAPABILITY__; downstream invariants then hold.
+0060-heapword-16byte-cheri-mojo-aligned.patch
+# 0064 follow-on: pd_fill_to_words under-wrote by half (8 vs 16 bytes/word)
+0064-copy-aarch64-pd-fill-to-words-cheri.patch
+# 0065: metaspace word*BytesPerWord -> word*sizeof(MetaWord). VirtualSpaceNode
+# was committing/reserving only half the memory needed under 16-byte MetaWord.
+0065-metaspace-bytesperword-to-sizeof-metaword-cheri.patch
 
-# --- Phase 2 pending: jimage cap rematerialization + cap_runtime hook ---
-# 0064-jimage-cap-rematerialization.patch            (re-derive caps from raw int + bounds when loading from disk)
-# 0065-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
-# 0008-...-zgc-buildable-on-cheribsd.patch          (ZGC starts compiling)
-# 0009-zgc-color-via-side-table.patch
-# ... (full series enumerated in docs/01_phase_i_zgc_port.md §4)
+# --- Phase 2 pending: java.lang.Class init SIGPROT + cap_runtime hook ---
+# 0066-class-init-cap-provenance.patch              (next blocker: Class init cap-tag fault)
+# 0067-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
 
 # --- Phase 2 (deferred) ---
 # 0020-zgc-cap-load-barrier-swap.patch
