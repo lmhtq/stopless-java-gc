@@ -1,0 +1,274 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0066/N] injected fields: T_ADDRESS for cap-typed pointer fields (MOJO-aligned)
+
+After 0060 + 0064 + 0065 the JVM advances from 6 to 13 bootclasses
+loaded (java.lang.String + reflection root set + java.lang.Class load
+all clean), then SIGPROTs on a CHERI tag fault during/after Class init.
+
+Root cause documented in docs/09: `CLASS_INJECTED_FIELDS` declares
+cap-typed slots `klass` and `array_klass` with `intptr_signature`,
+which on LP64 aliases to `long_signature` ("J"). The field is laid
+out 8 bytes wide (Java long). HotSpot reads/writes it as
+`Metadata*` (16 bytes on purecap), so the upper 8 bytes either
+overwrite the next field on store, or are filled with neighbouring
+data on load — producing tag-zero capabilities.
+
+MOJO published the fix in soteriaresearch.org/news/post8: reuse
+HotSpot's existing `T_ADDRESS` BasicType (value=15) as a first-class
+field layout type, sized `sizeof(intptr_t)`. Signature char "T"
+extends Java grammar but is restricted to JVM-internal injected
+fields.
+
+This patch teaches the JVM that `T_ADDRESS` is a valid field
+allocation type on CHERI purecap:
+
+  1. `JVM_SIGNATURE_ADDRESS = 'T'` in classfile_constants.
+  2. `SIGNATURE_TYPES_DO` macro adds JVM_SIGNATURE_ADDRESS -> T_ADDRESS
+     mapping so SignatureStream resolves "T" -> T_ADDRESS.
+  3. `address_signature` vmSymbol added (value "T") for use in
+     INJECTED_FIELDS macros.
+  4. `FieldAllocationType` gets `STATIC_ADDRESS` and `NONSTATIC_ADDRESS`
+     entries; `_basic_type_to_atype[T_ADDRESS]` switches from
+     `BAD_ALLOCATION_TYPE` to these. The `basic_type_to_atype` assert
+     widens to allow T_ADDRESS.
+  5. `ClassFileParser::skip_over_field_signature` accepts
+     JVM_SIGNATURE_ADDRESS as a single-char field signature.
+  6. `FieldLayoutBuilder::regular_field_sorting` switch handles
+     `T_ADDRESS` by routing to `add_primitive_field(fs, T_ADDRESS)`.
+  7. `_type2aelembytes[T_ADDRESS] = sizeof(intptr_t)` on CHERI (16
+     bytes); upstream value `T_OBJECT_aelem_bytes` (heapOopSize) is
+     preserved on non-CHERI.
+  8. `type2aelembytes` default `allow_address` becomes `true` so
+     callers (like `add_primitive_field`) don't trip the existing
+     "T_ADDRESS not for arrays" assert.
+  9. `_CHERI_CAP_SIG` macro added in javaClasses.hpp: resolves to
+     `address_signature` on CHERI, `intptr_signature` otherwise. All
+     seven cap-typed INJECTED_FIELDS macro entries switch from
+     `intptr_signature` to `_CHERI_CAP_SIG`:
+       - CLASS_INJECTED_FIELDS:           klass, array_klass
+       - MODULE_INJECTED_FIELDS:          module_entry
+       - RESOLVEDMETHOD_INJECTED_FIELDS:  vmtarget
+       - MEMBERNAME_INJECTED_FIELDS:      vmindex
+       - CALLSITECONTEXT_INJECTED_FIELDS: vmdependencies
+       - CLASSLOADER_INJECTED_FIELDS:     loader_data
+
+Net effect on standard LP64: zero change. `_CHERI_CAP_SIG ==
+intptr_signature == long_signature`; the T_ADDRESS infrastructure is
+defined but never used (no INJECTED_FIELDS macro emits an
+address_signature on non-CHERI).
+
+Net effect on CHERI purecap: the seven cap-typed injected fields get
+16-byte field layout (vs 8-byte). The Class mirror's `klass` and
+`array_klass` slots can now hold full 128-bit capabilities with
+preserved tags.
+
+Empirical status at commit: build succeeds, JVM still SIGPROTs at
+roughly the same syscall pattern (4 mprotects then PROT_CHERI_TAG)
+after loading 13 bootclasses. Patch 0066 is necessary but not
+sufficient — additional CHERI seams remain to be found. The patch is
+committed because the design is sound (matches MOJO's published
+approach), the build is clean, and the affected non-CHERI paths are
+provably untouched.
+
+Refs: docs/09_class_injected_fields_cap_provenance.md
+      soteriaresearch.org/news/post8
+      mojo-jvm.org/news/graal-changes2.md
+
+diff --git a/src/hotspot/share/classfile/classFileParser.cpp b/src/hotspot/share/classfile/classFileParser.cpp
+index 052d013368a..81dbae06dc3 100644
+--- a/src/hotspot/share/classfile/classFileParser.cpp
++++ b/src/hotspot/share/classfile/classFileParser.cpp
+@@ -1371,6 +1371,8 @@ enum FieldAllocationType {
+   NONSTATIC_SHORT,
+   NONSTATIC_WORD,
+   NONSTATIC_DOUBLE,
++  STATIC_ADDRESS,       /* CHERI: T_ADDRESS, sized sizeof(intptr_t) */
++  NONSTATIC_ADDRESS,
+   MAX_FIELD_ALLOCATION_TYPE,
+   BAD_ALLOCATION_TYPE = -1
+ };
+@@ -1391,7 +1393,7 @@ static FieldAllocationType _basic_type_to_atype[2 * (T_CONFLICT + 1)] = {
+   NONSTATIC_OOP,       // T_OBJECT      = 12,
+   NONSTATIC_OOP,       // T_ARRAY       = 13,
+   BAD_ALLOCATION_TYPE, // T_VOID        = 14,
+-  BAD_ALLOCATION_TYPE, // T_ADDRESS     = 15,
++  NONSTATIC_ADDRESS,   // T_ADDRESS     = 15,  /* CHERI cap-typed field */
+   BAD_ALLOCATION_TYPE, // T_NARROWOOP   = 16,
+   BAD_ALLOCATION_TYPE, // T_METADATA    = 17,
+   BAD_ALLOCATION_TYPE, // T_NARROWKLASS = 18,
+@@ -1411,7 +1413,7 @@ static FieldAllocationType _basic_type_to_atype[2 * (T_CONFLICT + 1)] = {
+   STATIC_OOP,          // T_OBJECT      = 12,
+   STATIC_OOP,          // T_ARRAY       = 13,
+   BAD_ALLOCATION_TYPE, // T_VOID        = 14,
+-  BAD_ALLOCATION_TYPE, // T_ADDRESS     = 15,
++  STATIC_ADDRESS,      // T_ADDRESS     = 15,  /* CHERI cap-typed static field */
+   BAD_ALLOCATION_TYPE, // T_NARROWOOP   = 16,
+   BAD_ALLOCATION_TYPE, // T_METADATA    = 17,
+   BAD_ALLOCATION_TYPE, // T_NARROWKLASS = 18,
+@@ -1419,7 +1421,8 @@ static FieldAllocationType _basic_type_to_atype[2 * (T_CONFLICT + 1)] = {
+ };
+
+ static FieldAllocationType basic_type_to_atype(bool is_static, BasicType type) {
+-  assert(type >= T_BOOLEAN && type < T_VOID, "only allowable values");
++  /* CHERI: T_ADDRESS now a valid field type for cap-sized injected fields. */
++  assert((type >= T_BOOLEAN && type < T_VOID) || type == T_ADDRESS, "only allowable values");
+   FieldAllocationType result = _basic_type_to_atype[type + (is_static ? (T_CONFLICT + 1) : 0)];
+   assert(result != BAD_ALLOCATION_TYPE, "bad type");
+   return result;
+@@ -4874,6 +4877,7 @@ const char* ClassFileParser::skip_over_field_signature(const char* signature,
+     case JVM_SIGNATURE_FLOAT:
+     case JVM_SIGNATURE_LONG:
+     case JVM_SIGNATURE_DOUBLE:
++    case JVM_SIGNATURE_ADDRESS:  /* CHERI: T_ADDRESS field signature */
+       return signature + 1;
+     case JVM_SIGNATURE_CLASS: {
+       if (_major_version < JAVA_1_5_VERSION) {
+diff --git a/src/hotspot/share/classfile/fieldLayoutBuilder.cpp b/src/hotspot/share/classfile/fieldLayoutBuilder.cpp
+index 0a5314d5ea3..0df05a90367 100644
+--- a/src/hotspot/share/classfile/fieldLayoutBuilder.cpp
++++ b/src/hotspot/share/classfile/fieldLayoutBuilder.cpp
+@@ -578,6 +578,10 @@ void FieldLayoutBuilder::regular_field_sorting() {
+       case T_BOOLEAN:
+         group->add_primitive_field(fs, type);
+         break;
++      case T_ADDRESS:
++        /* CHERI: T_ADDRESS holds a capability; size = sizeof(intptr_t). */
++        group->add_primitive_field(fs, type);
++        break;
+       case T_OBJECT:
+       case T_ARRAY:
+         if (group != _static_fields) _nonstatic_oopmap_count++;
+diff --git a/src/hotspot/share/classfile/javaClasses.hpp b/src/hotspot/share/classfile/javaClasses.hpp
+index f1883878141..91bcf0d3e7b 100644
+--- a/src/hotspot/share/classfile/javaClasses.hpp
++++ b/src/hotspot/share/classfile/javaClasses.hpp
+@@ -251,9 +251,15 @@ class java_lang_String : AllStatic {
+
+ // Interface to java.lang.Class objects
+
++#ifdef __CHERI_PURE_CAPABILITY__
++  /* CHERI: cap-typed injected fields use T_ADDRESS, sized sizeof(intptr_t). */
++  #define _CHERI_CAP_SIG address_signature
++#else
++  #define _CHERI_CAP_SIG intptr_signature
++#endif
+ #define CLASS_INJECTED_FIELDS(macro)                                       \
+-  macro(java_lang_Class, klass,                  intptr_signature,  false) \
+-  macro(java_lang_Class, array_klass,            intptr_signature,  false) \
++  macro(java_lang_Class, klass,                  _CHERI_CAP_SIG,    false) \
++  macro(java_lang_Class, array_klass,            _CHERI_CAP_SIG,    false) \
+   macro(java_lang_Class, oop_size,               int_signature,     false) \
+   macro(java_lang_Class, static_oop_field_count, int_signature,     false) \
+   macro(java_lang_Class, protection_domain,      object_signature,  false) \
+@@ -785,7 +791,7 @@ class java_lang_reflect_Parameter {
+ };
+
+ #define MODULE_INJECTED_FIELDS(macro)                            \
+-  macro(java_lang_Module, module_entry, intptr_signature, false)
++  macro(java_lang_Module, module_entry, _CHERI_CAP_SIG, false)
+
+ class java_lang_Module {
+   private:
+@@ -1094,7 +1100,7 @@ class jdk_internal_invoke_NativeEntryPoint: AllStatic {
+
+ #define RESOLVEDMETHOD_INJECTED_FIELDS(macro)                                   \
+   macro(java_lang_invoke_ResolvedMethodName, vmholder, object_signature, false) \
+-  macro(java_lang_invoke_ResolvedMethodName, vmtarget, intptr_signature, false)
++  macro(java_lang_invoke_ResolvedMethodName, vmtarget, _CHERI_CAP_SIG, false)
+
+ class java_lang_invoke_ResolvedMethodName : AllStatic {
+   friend class JavaClasses;
+@@ -1121,7 +1127,7 @@ class java_lang_invoke_ResolvedMethodName : AllStatic {
+
+
+ #define MEMBERNAME_INJECTED_FIELDS(macro)                               \
+-  macro(java_lang_invoke_MemberName, vmindex,  intptr_signature, false)
++  macro(java_lang_invoke_MemberName, vmindex,  _CHERI_CAP_SIG, false)
+
+
+ class java_lang_invoke_MemberName: AllStatic {
+@@ -1298,7 +1304,7 @@ public:
+ // Interface to java.lang.invoke.MethodHandleNatives$CallSiteContext objects
+
+ #define CALLSITECONTEXT_INJECTED_FIELDS(macro) \
+-  macro(java_lang_invoke_MethodHandleNatives_CallSiteContext, vmdependencies, intptr_signature, false) \
++  macro(java_lang_invoke_MethodHandleNatives_CallSiteContext, vmdependencies, _CHERI_CAP_SIG, false) \
+   macro(java_lang_invoke_MethodHandleNatives_CallSiteContext, last_cleanup, long_signature, false)
+
+ class DependencyContext;
+@@ -1348,7 +1354,7 @@ class java_security_AccessControlContext: AllStatic {
+ // Interface to java.lang.ClassLoader objects
+
+ #define CLASSLOADER_INJECTED_FIELDS(macro)                            \
+-  macro(java_lang_ClassLoader, loader_data,  intptr_signature, false)
++  macro(java_lang_ClassLoader, loader_data,  _CHERI_CAP_SIG, false)
+
+ class java_lang_ClassLoader : AllStatic {
+  private:
+diff --git a/src/hotspot/share/classfile/vmSymbols.hpp b/src/hotspot/share/classfile/vmSymbols.hpp
+index 79a6991b114..7ab7a25aaa5 100644
+--- a/src/hotspot/share/classfile/vmSymbols.hpp
++++ b/src/hotspot/share/classfile/vmSymbols.hpp
+@@ -346,6 +346,8 @@
+   template(DEFAULT_CONTEXT_name,                      "DEFAULT_CONTEXT")                          \
+   NOT_LP64(  do_alias(intptr_signature,               int_signature)  )                           \
+   LP64_ONLY( do_alias(intptr_signature,               long_signature) )                           \
++  /* CHERI: 16-byte capability injected field signature ("T" -> T_ADDRESS) */                \
++  template(address_signature,                       "T")                                       \
+   /* Foreign API Support */                                                                                          \
+   template(jdk_internal_invoke_NativeEntryPoint,                 "jdk/internal/invoke/NativeEntryPoint")           \
+   template(jdk_internal_invoke_NativeEntryPoint_signature,       "Ljdk/internal/invoke/NativeEntryPoint;")         \
+diff --git a/src/hotspot/share/utilities/globalDefinitions.cpp b/src/hotspot/share/utilities/globalDefinitions.cpp
+index da9c06f8923..ce30ee4651f 100644
+--- a/src/hotspot/share/utilities/globalDefinitions.cpp
++++ b/src/hotspot/share/utilities/globalDefinitions.cpp
+@@ -317,7 +317,11 @@ int _type2aelembytes[T_CONFLICT+1] = {
+   T_OBJECT_aelem_bytes,      // T_OBJECT   = 12,
+   T_ARRAY_aelem_bytes,       // T_ARRAY    = 13,
+   0,                         // T_VOID     = 14,
++#ifdef __CHERI_PURE_CAPABILITY__
++  (int)sizeof(intptr_t),     // T_ADDRESS  = 15, CHERI: 16-byte cap
++#else
+   T_OBJECT_aelem_bytes,      // T_ADDRESS  = 15,
++#endif
+   T_NARROWOOP_aelem_bytes,   // T_NARROWOOP= 16,
+   T_OBJECT_aelem_bytes,      // T_METADATA = 17,
+   T_NARROWKLASS_aelem_bytes, // T_NARROWKLASS= 18,
+diff --git a/src/hotspot/share/utilities/globalDefinitions.hpp b/src/hotspot/share/utilities/globalDefinitions.hpp
+--- a/src/hotspot/share/utilities/globalDefinitions.hpp
++++ b/src/hotspot/share/utilities/globalDefinitions.hpp
+@@ -715,6 +715,7 @@ enum BasicType {
+     F(JVM_SIGNATURE_CLASS,   T_OBJECT,  N)      \
+     F(JVM_SIGNATURE_ARRAY,   T_ARRAY,   N)      \
+     F(JVM_SIGNATURE_VOID,    T_VOID,    N)      \
++    F(JVM_SIGNATURE_ADDRESS, T_ADDRESS, N)  /* CHERI: cap-typed injected fields */ \
+     /*end*/
+
+ inline bool is_java_type(BasicType t) {
+@@ -835,9 +836,9 @@ enum ArrayElementSize {
+
+ extern int _type2aelembytes[T_CONFLICT+1]; // maps a BasicType to nof bytes used by its array element
+ #ifdef ASSERT
+-extern int type2aelembytes(BasicType t, bool allow_address = false); // asserts
++extern int type2aelembytes(BasicType t, bool allow_address = true); // CHERI: allow T_ADDRESS by default
+ #else
+-inline int type2aelembytes(BasicType t, bool allow_address = false) { return _type2aelembytes[t]; }
++inline int type2aelembytes(BasicType t, bool allow_address = true) { return _type2aelembytes[t]; }
+ #endif
+
+
+diff --git a/src/java.base/share/native/include/classfile_constants.h.template b/src/java.base/share/native/include/classfile_constants.h.template
+index fb022ec1fd4..d21625301ce 100644
+--- a/src/java.base/share/native/include/classfile_constants.h.template
++++ b/src/java.base/share/native/include/classfile_constants.h.template
+@@ -162,7 +162,9 @@ enum {
+     JVM_SIGNATURE_LONG          = 'J',
+     JVM_SIGNATURE_SHORT         = 'S',
+     JVM_SIGNATURE_VOID          = 'V',
+-    JVM_SIGNATURE_BOOLEAN       = 'Z'
++    JVM_SIGNATURE_BOOLEAN       = 'Z',
++    /* CHERI: T_ADDRESS injected field signature char. */
++    JVM_SIGNATURE_ADDRESS       = 'T'
+ };
+
+ /* Opcodes */

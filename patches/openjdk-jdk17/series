@@ -76,8 +76,12 @@
 # was committing/reserving only half the memory needed under 16-byte MetaWord.
 0065-metaspace-bytesperword-to-sizeof-metaword-cheri.patch
 
-# --- Phase 2 pending: java.lang.Class init SIGPROT + cap_runtime hook ---
-# 0066-class-init-cap-provenance.patch              (next blocker: Class init cap-tag fault)
+# --- Phase 2: cap provenance via T_ADDRESS injected fields (MOJO-aligned) ---
+# Necessary but not sufficient for Class init SIGPROT: introduces T_ADDRESS
+# as a first-class 16-byte field type on CHERI, then switches all 7 cap-typed
+# INJECTED_FIELDS macro entries to use it. JVM still SIGPROTs at same point;
+# additional CHERI seams remain.
+0066-injected-field-t-address-cap-cheri.patch
 # 0067-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
 
 # --- Phase 2 (deferred) ---
