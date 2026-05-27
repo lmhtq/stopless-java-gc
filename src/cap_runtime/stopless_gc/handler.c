@@ -42,25 +42,51 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
 
     /* PROT_CHERI_TAG ⇒ caller tried to load/store via tag-zero cap. */
     if (si->si_code != /*PROT_CHERI_TAG=*/2) {
-        /* Some other PROT_* (e.g., bounds violation). Forward to prev handler. */
         if (prev_sa.sa_sigaction) {
             prev_sa.sa_sigaction(sig, si, ctx_);
         }
         return;
     }
 
-    /* si_addr is the faulting capability's address (the cap value the
-       load/store dereferenced). */
-    uintptr_t fault_addr = (uintptr_t)si->si_addr;
-
-    void *new_cap = forward_table_lookup(fault_addr);
+    /* On CHERI, si_addr = faulting PC, not the cap value. To find
+       which cap faulted, scan the cap register file for a tag-zero
+       cap whose address is in our forwarding table. */
+    struct capregs *cregs = &ctx->uc_mcontext.mc_capregs;
+    uintptr_t fault_addr = 0;
+    void *new_cap = NULL;
+    int faulting_reg = -1;
+    for (int i = 0; i < 30; i++) {
+        __uintcap_t c = cregs->cap_x[i];
+        if (cheri_tag_get((void *)c)) continue;  /* not the culprit */
+        uintptr_t addr = (uintptr_t)cheri_address_get((void *)c);
+        void *fwd = forward_table_lookup(addr);
+        if (fwd != NULL) {
+            new_cap = fwd;
+            fault_addr = addr;
+            faulting_reg = i;
+            break;
+        }
+    }
     if (new_cap == NULL) {
-        /* Real fault — chain to default. */
-        fprintf(stderr, "[stopless] unforwarded tag-zero fault at 0x%lx (si_code=%d) — re-raising\n",
-                (unsigned long)fault_addr, si->si_code);
+        /* No matching cap in register file. Last-resort: try si_addr
+           interpreted as cap address (in case kernel ever changes). */
+        new_cap = forward_table_lookup((uintptr_t)si->si_addr);
+        fault_addr = (uintptr_t)si->si_addr;
+    }
+
+    if (new_cap == NULL) {
+        unsigned long pc = (unsigned long)ctx->uc_mcontext.mc_capregs.cap_elr;
+        fprintf(stderr, "[stopless] unforwarded fault: si_addr=%p si_code=%d "
+                "pc=0x%lx fwd_size=%zu (no tag-zero cap in regs matched)\n",
+                si->si_addr, si->si_code, pc, forward_table_size());
         signal(sig, SIG_DFL);
         raise(sig);
         return;
+    }
+    /* Install the new cap into the faulting register so the retry
+       sees a valid cap. */
+    if (faulting_reg >= 0) {
+        cregs->cap_x[faulting_reg] = (__uintcap_t)new_cap;
     }
 
     stopless_handler_faults++;
@@ -98,11 +124,15 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
         stopless_handler_self_heals++;
     }
 
-    /* Advance PC past the faulting instruction (4 bytes on aarch64).
-       On Morello purecap FreeBSD, ELR is a capability (cap_elr) in the
-       mcontext's capregs. We increment its address; bounds/perms stay. */
-    ctx->uc_mcontext.mc_capregs.cap_elr =
-        (__uintcap_t)((char *)ctx->uc_mcontext.mc_capregs.cap_elr + 4);
+    /* Do NOT advance PC: let the faulting instruction re-execute with
+       the newly-patched register holding a valid cap. This is the
+       standard signal-handler retry pattern.
+
+       (Alternative: if we want to emulate the load in software, we'd
+       need to decode the instruction, perform the load, write the
+       destination, and advance PC. The retry-from-PC approach is
+       simpler and matches Cornucopia Reloaded's expected behaviour.)
+     */
 }
 
 __thread volatile void **stopless_v1_pending_slot;
