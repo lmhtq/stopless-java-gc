@@ -1,0 +1,52 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0069/N] stubGenerator: SIMD T2D ld1 stride uses BytesPerLong not wordSize
+
+Three sites in stubGenerator_aarch64.cpp (StubGenerator::generate_arrayCompare_intrinsic vector
+path) compute SIMD post-index stride as `4 * 2 * wordSize` and counter
+decrement as `8 * wordSize`. Standard LP64 wordSize=8 makes these 64
+and 64. CHERI wordSize=16 makes them 128 and 128, which:
+
+  - imm=128 trips the SIMD ld_st `imm == expectedImmediate` guarantee
+    (expected = SIMD_Size_in_bytes[T2D=7]*4 = 64), already demoted
+    to warn by patch 0058
+  - cnt1 decrement of 128 advances the loop 2x too fast,
+    truncating compare lengths
+
+Fix: replace `wordSize` with `BytesPerLong` (always 8) in these three
+sites. Standard LP64 unchanged.
+
+Empirical: build clean, JVM still crashes at the same f() field
+overflow guarantee (different code path; this site isn't on the
+boot-class init hot path). Committed because (a) the fix is correct,
+(b) it removes 3 of ~30 wordSize-misuse hits from the docs/10 scan,
+(c) we'd hit this once we get past the current f() crash.
+
+Refs: docs/12_simd_codegen_wordsize_seam.md
+      docs/10_cheri_seam_scan.md Category I (wordSize misuse, 255 hits aarch64)
+
+diff --git a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+index c92f0cf05bd..8130e08e847 100644
+--- a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+@@ -4910,7 +4910,7 @@ class StubGenerator: public StubCodeGenerator {
+     __ cbnz(tmp1, NOT_EQUAL);
+     __ ldp(tmp1, tmp3, Address(__ post(a1, 2 * wordSize)));
+     __ eor(tmp5, tmp5, tmp6);
+-    __ sub(cnt1, cnt1, 8 * wordSize);
++    __ sub(cnt1, cnt1, 8 * BytesPerLong);
+     __ eor(tmp7, tmp7, tmp8);
+     __ ldp(tmp2, tmp4, Address(__ post(a2, 2 * wordSize)));
+     // tmp6 is not used. MacroAssembler::subs is used here (rather than
+@@ -4938,9 +4938,9 @@ class StubGenerator: public StubCodeGenerator {
+       __ prfm(Address(a1, SoftwarePrefetchHintDistance));
+       __ prfm(Address(a2, SoftwarePrefetchHintDistance));
+     }
+-    __ ld1(v0, v1, v2, v3, __ T2D, Address(__ post(a1, 4 * 2 * wordSize)));
+-    __ sub(cnt1, cnt1, 8 * wordSize);
+-    __ ld1(v4, v5, v6, v7, __ T2D, Address(__ post(a2, 4 * 2 * wordSize)));
++    __ ld1(v0, v1, v2, v3, __ T2D, Address(__ post(a1, 4 * 2 * BytesPerLong)));
++    __ sub(cnt1, cnt1, 8 * BytesPerLong);
++    __ ld1(v4, v5, v6, v7, __ T2D, Address(__ post(a2, 4 * 2 * BytesPerLong)));
+     __ subs(tmp1, cnt1, loopThreshold);
+     __ eor(v0, __ T16B, v0, v4);
+     __ eor(v1, __ T16B, v1, v5);

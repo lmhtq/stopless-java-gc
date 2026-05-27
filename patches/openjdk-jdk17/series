@@ -60,6 +60,10 @@
 0054-copy-bsd-aarch64-conjoint-words-cheri.patch
 0055-decoder-bsd-elf-non-apple.patch
 0057-tlab-constraint-defer-when-not-initialized.patch
+# 0058 re-enabled: SIMD ld_st imm guarantee -> warn, while we audit remaining
+# 4*wordSize sites under purecap. Without this, JVM crashes immediately after
+# 146 bootclasses load (post 0068 fix).
+0058-assembler-aarch64-simd-ld-st-warn-diagnostic.patch
 # 0059 stays: aarch64 SIMD stride uses BytesPerLong not wordSize, because
 # under purecap wordSize=16 (cap) but SIMD reg size is BytesPerLong=8. The
 # bug pre-existed but was masked on standard LP64 (wordSize == BytesPerLong).
@@ -88,7 +92,10 @@
 # under CHERI (HeapWordSize=16), which made align_object_size collapse every
 # instance size to 0. Bootclasses loaded jumped from 13 to 146.
 0068-arguments-object-alignment-cheri.patch
-# 0069-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
+# 0069: stubGenerator SIMD T2D ld1 stride (3 sites) BytesPerLong, not wordSize.
+# Part of the ~30 wordSize-misuse sites identified by docs/10 Category I scan.
+0069-stubgenerator-simd-bytesperlong-cheri.patch
+# 0070-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
 
 # --- Phase 2 (deferred) ---
 # 0020-zgc-cap-load-barrier-swap.patch

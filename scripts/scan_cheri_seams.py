@@ -70,6 +70,12 @@ PATTERNS = [
     ("H", r"\(\s*Klass\s*\*\s*\)\s*\w+(?!->)",                "cast to Klass* (cap provenance check)"),
     ("H", r"\(\s*Metadata\s*\*\s*\)",                          "cast to Metadata* (cap provenance check)"),
     ("H", r"\(\s*Method\s*\*\s*\)\s*\w+(?!->)",                "cast to Method* (cap provenance check)"),
+    # Category I — wordSize misuse in codegen (= 8 always meant; CHERI breaks)
+    ("I", r"\b\d+\s*\*\s*wordSize\b",                          "N*wordSize (Java-slot stride; CHERI wordSize=16 breaks if 8 intended)"),
+    ("I", r"\bwordSize\s*\*\s*\d+\b",                          "wordSize*N (same)"),
+    ("I", r"post\([^,]+,\s*[^)]*\bwordSize\b",                 "post-index using wordSize stride"),
+    ("I", r"pre\([^,]+,\s*[^)]*\bwordSize\b",                  "pre-index using wordSize stride"),
+    ("I", r"Address\s*\([^,]+,\s*[^)]*\bwordSize\b",           "Address(... wordSize ...)"),
 ]
 
 # Lines to suppress (false positives / comments / unrelated)
@@ -119,6 +125,7 @@ CAT_NAMES = {
     "F": "Literal *8 / <<3 (heuristic)",
     "G": "memset / memcpy with BytesPerWord in size arg",
     "H": "Casts to Klass* / Method* / Metadata*",
+    "I": "wordSize misuse in aarch64 codegen (Java-slot vs machine-word)",
 }
 
 def render(results):

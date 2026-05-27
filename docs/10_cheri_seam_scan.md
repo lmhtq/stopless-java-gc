@@ -12,13 +12,14 @@ purecap. Use this as a *worklist* — verify each before patching.
 
 | Category | aarch64 | c1 | classfile | gc-other | gc-shared | gc-z | interp | memory | oops | opto | oscpu-bsd-aarch64 | runtime | utils | **Total** |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| **A** Word-count * BytesPerWord (most  | 31 | 3 |  |  |  |  |  | 9 |  | 1 |  | 2 | 1 | **47** |
+| **A** Word-count * BytesPerWord (most  | 31 | 3 |  |  |  |  |  |  |  | 1 |  | 2 | 1 | **38** |
 | **B** Shift by LogBytesPerWord (== *8  | 33 |  |  | 3 |  | 2 | 1 |  | 3 | 3 |  | 1 | 8 | **54** |
 | **C** sizeof(jlong) used as pointer si | 8 | 1 |  |  |  |  | 2 |  |  | 2 | 1 | 7 | 6 | **27** |
 | **D** Divide by BytesPerWord (byte->wo | 3 |  |  |  |  |  |  | 16 | 6 |  |  | 1 |  | **26** |
 | **E** intptr_signature (Java long-as-p |  |  | 2 |  |  |  |  |  |  |  |  |  |  | **2** |
 | **F** Literal *8 / <<3 (heuristic) |  | 4 |  | 2 | 1 |  | 1 | 1 | 4 | 5 | 1 | 1 | 1 | **21** |
 | **H** Casts to Klass* / Method* / Meta | 4 | 2 | 13 | 1 | 1 |  | 7 |  | 24 | 2 |  | 17 | 5 | **76** |
+| **I** wordSize misuse in aarch64 codeg | 255 |  |  |  |  |  |  |  |  |  |  |  |  | **255** |
 
 
 ## Category A: Word-count * BytesPerWord (most common bug pattern)
@@ -63,19 +64,6 @@ src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp:5015  stp(zr, zr, Address(bas
 src/hotspot/share/c1/c1_FrameMap.cpp:94  update_reserved_argument_area_size(out_preserve * BytesPerWord);
 src/hotspot/share/c1/c1_FrameMap.cpp:142  update_reserved_argument_area_size(out_preserve * BytesPerWord);
 src/hotspot/share/c1/c1_IR.cpp:250  int frame_size = BytesPerWord * Interpreter::size_activation(method->max_stack(),
-```
-
-### memory (9 hits)
-```
-src/hotspot/share/memory/classLoaderMetaspace.cpp:103  size_t delta_bytes = MetaspaceGC::delta_capacity_until_GC(word_size * BytesPerWord);
-src/hotspot/share/memory/metaspace.cpp:981  align_up(word_size * BytesPerWord, 4 * M) >
-src/hotspot/share/memory/metaspace/commitMask.cpp:63  assert(is_aligned(p, _words_per_bit * BytesPerWord),
-src/hotspot/share/memory/metaspace/commitMask.cpp:65  p2i(p), _words_per_bit * BytesPerWord);
-src/hotspot/share/memory/metaspace/commitMask.cpp:82  assert_is_aligned(_base, _words_per_bit * BytesPerWord);
-src/hotspot/share/memory/metaspace/metachunk.cpp:237  assert(is_aligned(base(), word_size() * 2 * BytesPerWord), "Sanity");
-src/hotspot/share/memory/metaspace/metachunk.cpp:240  assert(is_aligned(buddy->base(), word_size() * 2 * BytesPerWord), "Sanity");
-src/hotspot/share/memory/metaspace/metaspaceCommon.cpp:180  byte_size = MAX2(byte_size, FreeBlocks::MinWordSize * BytesPerWord);
-src/hotspot/share/memory/metaspace/testHelpers.cpp:74  _rs = ReservedSpace(reserve_limit * BytesPerWord, Metaspace::reserve_alignment(), os::vm_page_siz...
 ```
 
 ### opto (1 hits)
@@ -474,4 +462,42 @@ src/hotspot/share/utilities/debug.cpp:597  return (nm == NULL) ? (Method*)NULL :
 src/hotspot/share/utilities/debug.cpp:621  Method* mh = (Method*)method;
 src/hotspot/share/utilities/xmlstream.cpp:494  method_text((Method*)x);
 src/hotspot/share/utilities/xmlstream.cpp:496  klass_text((Klass*)x);
+```
+
+
+## Category I: wordSize misuse in aarch64 codegen (Java-slot vs machine-word)
+
+### aarch64 (255 hits)
+```
+src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp:1379  __ stp(klass_RInfo, k_RInfo, Address(__ pre(sp, -2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp:1381  __ ldr(klass_RInfo, Address(__ post(sp, 2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp:1390  __ stp(klass_RInfo, k_RInfo, Address(__ pre(sp, -2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp:1392  __ ldp(k_RInfo, klass_RInfo, Address(__ post(sp, 2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp:1481  __ stp(klass_RInfo, k_RInfo, Address(__ pre(sp, -2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp:1483  __ ldp(k_RInfo, klass_RInfo, Address(__ post(sp, 2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp:2374  stp(r1, r2, __ pre(sp, -2 * wordSize));
+src/hotspot/cpu/aarch64/c1_LIRAssembler_aarch64.cpp:2377  ldp(r1, r2, __ post(sp, 2 * wordSize));
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:151  stp(arg3, arg2, Address(pre(sp, -2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:152  stp(arg1, zr, Address(pre(sp, -2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:153  ldp(c_rarg1, zr, Address(post(sp, 2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:154  ldp(c_rarg3, c_rarg2, Address(post(sp, 2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:284  __ sub(sp, sp, 4 * wordSize); // no pre-increment for st1. Emulate it without modifying other reg...
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:289  __ add(sp, sp, -32 * wordSize);
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:301  __ add(sp, sp, 32 * wordSize);
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:314  __ add(sp, sp, 32 * wordSize);
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:499  __ stp(lr, exception_oop, Address(__ pre(sp, -2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:514  __ ldp(lr, exception_oop, Address(__ post(sp, 2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:664  __ stp(r19, zr, Address(__ pre(sp, -2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:696  __ ldp(r19, zr, Address(__ post(sp, 2 * wordSize)));
+src/hotspot/cpu/aarch64/c1_Runtime1_aarch64.cpp:700  __ ldp(r19, zr, Address(__ post(sp, 2 * wordSize)));
+src/hotspot/cpu/aarch64/c2_MacroAssembler_aarch64.cpp:211  ldr(tmp6, Address(tmp6, -wordSize));
+src/hotspot/cpu/aarch64/c2_MacroAssembler_aarch64.cpp:213  ldrw(tmp6, Address(tmp6, -wordSize/2)); // load last 4 bytes(4 symbols)
+src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp:283  __ stp(r10, r11, Address(__ pre(sp, -2 * wordSize)));
+src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp:289  __ ldp(r10, r11, Address(__ post(sp, 2 * wordSize)));
+src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp:52  ldr(rscratch1, Address(rfp, frame::interpreter_frame_method_offset * wordSize));
+src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp:212  assert(sizeof(ConstantPoolCacheEntry) == 4 * wordSize, "adjust code below");
+src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp:246  assert(sizeof(ConstantPoolCacheEntry) == 4 * wordSize, "adjust code below");
+src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp:250  ldr(cache, Address(rfp, frame::interpreter_frame_cache_offset * wordSize));
+src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp:332  ldr(r, post(esp, wordSize));
+... and 225 more
 ```
