@@ -1,0 +1,73 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0068/N] arguments: auto-bump ObjectAlignmentInBytes to >= HeapWordSize under CHERI
+
+THE bug that capped bootclass loading at 13. Found via instrumentation
+in MemAllocator::mem_clear + FieldLayoutBuilder::regular_field_sorting:
+
+  ClassAllocator::initialize mem=0x448e8000 word_size=0 hs=2
+    HeapWordSize=16 fill_bytes=18446744073709551584   (= -32 in size_t)
+
+The chain:
+
+  ObjectAlignmentInBytes = 8                     (Java standard default)
+  MinObjAlignmentInBytes = 8
+  MinObjAlignment        = 8 / HeapWordSize
+                         = 8 / 16
+                         = 0                     <<-- ZERO under CHERI
+
+  align_object_size(N)   = align_up(N, MinObjAlignment=0)
+                         = 0                     <<-- collapses to zero
+
+  FieldLayoutBuilder::regular_field_sorting:
+    _info->_instance_size = align_object_size(instance_end / wordSize)
+                          = 0                    <<-- every class size 0
+
+  InstanceMirrorKlass::allocate_instance(NULL):
+    int size = instance_size(NULL) = size_helper() = 0
+    Universe::heap()->class_allocate(this, 0, T)
+
+  MemAllocator::mem_clear:
+    Copy::fill_to_aligned_words(mem + hs, _word_size - hs)
+                              = fill(mem+32, 0 - 2)
+                              = fill(mem+32, SIZE_MAX - 1)
+                              = write 16 EB of zeros
+                              -> SIGSEGV in memset
+
+Fix: under `__CHERI_PURE_CAPABILITY__`, if user-set ObjectAlignmentInBytes
+is below HeapWordSize, auto-bump it to HeapWordSize. On standard LP64
+this is a no-op since HeapWordSize=8 and default is 8.
+
+Empirical result: bootclasses loaded jumped from 13 to **146**. JVM now
+crashes at the SIMD post-index immediate guarantee (assembler_aarch64.hpp:2295)
+— same kind of fault patch 0059 partially fixed, but more sites
+remain exercised by the deeper bootstrap.
+
+This is the single most impactful CHERI patch so far in terms of
+classes-loaded delta. Found in a single instrumentation iteration with
+fast_iter.sh (~80s per cycle).
+
+Refs: docs/11_stack_trace_class_mirror_allocate.md (root cause analysis)
+      docs/10_cheri_seam_scan.md (this site missed by Category A scan
+                                   because it's in arguments.cpp, not
+                                   memory/ subsystem)
+
+diff --git a/src/hotspot/share/runtime/arguments.cpp b/src/hotspot/share/runtime/arguments.cpp
+index 5683e4fe025..f20532ef5cb 100644
+--- a/src/hotspot/share/runtime/arguments.cpp
++++ b/src/hotspot/share/runtime/arguments.cpp
+@@ -1502,6 +1502,15 @@ static void no_shared_spaces(const char* message) {
+ void set_object_alignment() {
+   // Object alignment.
+   assert(is_power_of_2(ObjectAlignmentInBytes), "ObjectAlignmentInBytes must be power of 2");
++#ifdef __CHERI_PURE_CAPABILITY__
++  // CHERI purecap: HeapWord = 16 bytes (cap-sized). MinObjAlignment must be
++  // at least HeapWordSize for align_object_size to produce non-zero results
++  // (otherwise MinObjAlignmentInBytes / HeapWordSize = 8/16 = 0, and every
++  // instance gets _word_size=0 from FieldLayoutBuilder via align_object_size).
++  if (ObjectAlignmentInBytes < (intx)HeapWordSize) {
++    ObjectAlignmentInBytes = (intx)HeapWordSize;
++  }
++#endif
+   MinObjAlignmentInBytes     = ObjectAlignmentInBytes;
+   assert(MinObjAlignmentInBytes >= HeapWordsPerLong * HeapWordSize, "ObjectAlignmentInBytes value is too small");
+   MinObjAlignment            = MinObjAlignmentInBytes / HeapWordSize;

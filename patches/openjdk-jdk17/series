@@ -84,7 +84,11 @@
 0066-injected-field-t-address-cap-cheri.patch
 # 0067: remaining 8 metaspace BytesPerWord sites (from docs/10 scan worklist)
 0067-metaspace-9-more-bytesperword-sizeof-metaword.patch
-# 0068-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
+# 0068: MASSIVE FIX. ObjectAlignmentInBytes default of 8 makes MinObjAlignment=0
+# under CHERI (HeapWordSize=16), which made align_object_size collapse every
+# instance size to 0. Bootclasses loaded jumped from 13 to 146.
+0068-arguments-object-alignment-cheri.patch
+# 0069-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
 
 # --- Phase 2 (deferred) ---
 # 0020-zgc-cap-load-barrier-swap.patch
