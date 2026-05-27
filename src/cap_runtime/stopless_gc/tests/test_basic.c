@@ -1,0 +1,114 @@
+/*
+ * test_basic.c — end-to-end exercise of CHERI-Stopless primitives.
+ *
+ * Scenario:
+ *   1. Create arena A of 1 MiB.
+ *   2. Allocate object O (256 bytes) at A[0..256].
+ *   3. Take cap c_old pointing at O.
+ *   4. Allocate destination region D of 1 MiB.
+ *   5. memcpy O's contents into D[0..256] -> c_new.
+ *   6. Insert forwarding c_old.addr -> c_new.
+ *   7. Mark O's range for revocation in A's shadow bitmap.
+ *   8. Trigger cheri_revoke. c_old is now tag-zero.
+ *   9. Set stopless_v1_pending_slot = &c_old.
+ *  10. Load via c_old -> SIGPROT -> handler -> self-heal slot ->
+ *      retry -> success.
+ *  11. Verify the load got the same byte value from the new location.
+ */
+
+#include "../api.h"
+#include "../revoke.h"
+#include "../forward_table.h"
+#include "../handler.h"
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <cheriintrin.h>
+
+extern __thread volatile void **stopless_v1_pending_slot;
+
+int
+main(void)
+{
+    write(2, "step 1: init\n", 13);
+    forward_table_init();
+    if (stopless_handler_install() != 0) {
+        write(2, "FAIL: handler install\n", 22);
+        return 1;
+    }
+    write(2, "step 2: arena_init src\n", 23);
+
+    /* Two arenas (source + destination). */
+    stopless_arena_t a_src, a_dst;
+    if (stopless_arena_init(&a_src, 1 << 20) != 0) return 1;
+    write(2, "step 3: arena_init dst\n", 23);
+    if (stopless_arena_init(&a_dst, 1 << 20) != 0) return 1;
+    write(2, "step 4: allocate obj\n", 21);
+
+    /* Carve an object out of a_src. */
+    const size_t obj_size = 256;
+    char *obj_old = (char *)cheri_bounds_set((char *)a_src.base, obj_size);
+    memset(obj_old, 0xAB, obj_size);
+
+    /* Move: copy into a_dst, get new cap. */
+    char *obj_new = (char *)cheri_bounds_set((char *)a_dst.base, obj_size);
+    memcpy(obj_new, obj_old, obj_size);
+
+    uintptr_t old_addr = (uintptr_t)cheri_address_get(obj_old);
+    forward_table_insert(old_addr, obj_new);
+
+    fprintf(stderr, "DBG arena_src.base=%#p obj_old=%#p old_addr=0x%lx obj_new=%#p\n",
+            a_src.base, (void *)obj_old, (unsigned long)old_addr, (void *)obj_new);
+
+    /* Mark for revocation + sweep. */
+    write(2, "step 5: mark_revoke\n", 20);
+    stopless_mark_revoke(&a_src, old_addr, obj_size);
+    write(2, "step 6: revoke_now\n", 19);
+    if (stopless_revoke_now() != 0) {
+        write(2, "FAIL: revoke_now\n", 17);
+        return 1;
+    }
+    write(2, "step 7: after revoke\n", 21);
+    int tag = (int)cheri_tag_get(obj_old);
+    write(2, tag ? "obj_old still tagged\n" : "obj_old tag cleared\n", 21);
+
+    /* Now obj_old should be tag-zero. Verify. */
+    if (cheri_tag_get(obj_old) != 0) {
+        fprintf(stderr, "FAIL: obj_old still tagged after revoke\n");
+        return 1;
+    }
+
+    /* Set up the self-heal slot side-channel + perform a load. */
+    volatile void *slot = obj_old;  /* stale cap */
+    stopless_v1_pending_slot = (volatile void **)&slot;
+
+    /* Load. This should SIGPROT, handler heals slot to obj_new, PC
+       advances past the load. We then verify slot now contains
+       obj_new and the value at slot[0] is 0xAB. */
+    volatile char *p = (volatile char *)slot;
+    /* The next dereference triggers fault: */
+    char observed = *p;
+
+    if (observed != (char)0xAB) {
+        fprintf(stderr, "FAIL: observed 0x%02x, expected 0xAB\n",
+                (unsigned char)observed);
+        return 1;
+    }
+    if (stopless_handler_faults < 1) {
+        fprintf(stderr, "FAIL: no fault was handled (faults=%llu)\n",
+                stopless_handler_faults);
+        return 1;
+    }
+
+    printf("OK  faults=%llu self_heals=%llu fwd_size=%zu\n",
+           stopless_handler_faults, stopless_handler_self_heals,
+           forward_table_size());
+
+    stopless_handler_remove();
+    stopless_arena_fini(&a_src);
+    stopless_arena_fini(&a_dst);
+    return 0;
+}
