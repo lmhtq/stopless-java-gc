@@ -102,8 +102,34 @@
 0070-globaldef-logklassalign-clamp-cheri.patch
 # 0071-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
 
-# --- Phase 2 (deferred) ---
+# --- Phase 2 (dropped — superseded by Phase C fresh GC) ---
 # 0020-zgc-cap-load-barrier-swap.patch
 # 0021-cornucopia-revoke-driver.patch
 # 0022-sigcaprevoke-handler-install.patch
 # 0023-zgc-forwarding-cache-per-thread.patch
+
+# --- Phase C: StoplessGC, a fresh CHERI-native moving GC (docs/17) ---
+# 0080: HotSpot skeleton for the new GC. Adds src/hotspot/share/gc/stopless/
+#       with stub CollectedHeap / BarrierSet / GCArguments. Does NOT compile
+#       alone — must be paired with 0081 which extends the enum and wires
+#       the build. See docs/c1/{design,impl_notes,test}.md.
+0080-stopless-gc-skeleton.patch
+# 0081: build-system wire-up + CollectedHeap/BarrierSet enum extensions.
+#       Pairs with 0080; line numbers are best-effort (may need rebase on
+#       hasee). See docs/c2/{design,impl_notes,test}.md.
+0081-stopless-gc-feature-enable.patch
+# 0082: link cap_runtime/libstopless_gc.a + libcheri_caprevoke into libjvm.so.
+#       See docs/c3/design.md.
+0082-stopless-runtime-link.patch
+# 0083: StoplessArena C++ wrapper class + StoplessHeap::initialize() rewrite
+#       to use real arenas. See docs/c3/{design,impl_notes,test}.md.
+0083-stopless-arena-cpp-bridge.patch
+# 0084: (NO-OP marker patch — cap_runtime/stopless_gc allocator additions
+#       (allocator.h, allocator.c, tests/test_alloc.c,
+#       tests/test_alloc_concurrent.c) live OUTSIDE the openjdk source
+#       tree, so they are not delivered as openjdk patches. They are
+#       directly committed to src/cap_runtime/stopless_gc/. This entry
+#       is a placeholder for series numbering only.)
+# 0085: Wire StoplessArena::allocate to stopless_alloc + StoplessHeap
+#       OOM path. See docs/c4/{design,impl_notes,test}.md.
+0085-stopless-arena-allocate-wire.patch

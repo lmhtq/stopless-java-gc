@@ -1,0 +1,192 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Wed, 27 May 2026 18:30:00 +0800
+Subject: [PATCH] Phase C-2: wire StoplessGC into JVM build + flag system
+
+Pairs with 0080-stopless-gc-skeleton.patch. After both apply, the JVM
+can be invoked as:
+
+    java -XX:+UseStoplessGC -version
+
+and proceed up to (but not including) the first real allocation.
+
+Edits:
+- collectedHeap.hpp     : enum Name += Stopless
+- barrierSet.hpp        : enum Name += StoplessBarrierSet
+- gc_globals.hpp        : include stopless_globals.hpp + UseStoplessGC flag
+- gcConfig.cpp          : register Stopless in supported GC table
+- arguments.cpp         : select_gc() accepts +UseStoplessGC
+- JvmFeatures.gmk       : compile gc/stopless/ sources
+
+NOTE on line numbers: this patch was authored without local access to
+the openjdk-jdk17u tree (which lives on hasee). Line numbers are
+best-effort. If hunks reject during apply, regenerate with:
+
+    cd third_party/openjdk-jdk17u && git diff > /tmp/0081-fixed.patch
+
+after applying the intent manually. See docs/c2/impl_notes.md.
+
+Design: docs/c2/design.md
+Overview: docs/17_phase_c_overview.md
+
+diff --git a/src/hotspot/share/gc/shared/collectedHeap.hpp b/src/hotspot/share/gc/shared/collectedHeap.hpp
+--- a/src/hotspot/share/gc/shared/collectedHeap.hpp
++++ b/src/hotspot/share/gc/shared/collectedHeap.hpp
+@@ -150,7 +150,8 @@ class CollectedHeap : public CHeapObj<mtGC> {
+     Parallel,
+     G1,
+     Epsilon,
+     Z,
+-    Shenandoah
++    Shenandoah,
++    Stopless
+   };
+
+   protected:
+diff --git a/src/hotspot/share/gc/shared/barrierSet.hpp b/src/hotspot/share/gc/shared/barrierSet.hpp
+--- a/src/hotspot/share/gc/shared/barrierSet.hpp
++++ b/src/hotspot/share/gc/shared/barrierSet.hpp
+@@ -68,7 +68,8 @@ public:
+     G1BarrierSet,
+     Epsilon,
+     Shenandoah,
+     ZBarrierSet,
++    StoplessBarrierSet,
+     Unknown
+   };
+
+diff --git a/src/hotspot/share/gc/shared/gc_globals.hpp b/src/hotspot/share/gc/shared/gc_globals.hpp
+--- a/src/hotspot/share/gc/shared/gc_globals.hpp
++++ b/src/hotspot/share/gc/shared/gc_globals.hpp
+@@ -36,6 +36,9 @@
+ #if INCLUDE_EPSILONGC
+ #include "gc/epsilon/epsilon_globals.hpp"
+ #endif
++#if INCLUDE_STOPLESSGC
++#include "gc/stopless/stopless_globals.hpp"
++#endif
+ #if INCLUDE_G1GC
+ #include "gc/g1/g1_globals.hpp"
+ #endif
+@@ -82,6 +85,9 @@
+   product(bool, UseShenandoahGC, false,                                     \
+           "Use the Shenandoah garbage collector")                           \
+                                                                              \
++  product(bool, UseStoplessGC, false,                                        \
++          "Use the Stopless (CHERI-accelerated) garbage collector")          \
++                                                                             \
+   product(bool, UseZGC, false,                                               \
+           "Use the Z garbage collector")                                     \
+                                                                              \
+@@ -126,6 +132,15 @@
+                                                                              \
+   /* Per-GC flag declarations from individual GC modules */                  \
+                                                                              \
++  EPSILONGC_ONLY(GC_EPSILON_FLAGS(                                           \
++    develop, develop_pd, product, product_pd, notproduct, range, constraint))\
++                                                                             \
++  STOPLESSGC_ONLY(GC_STOPLESS_FLAGS(                                         \
++    develop, develop_pd, product, product_pd, notproduct, range, constraint))\
++                                                                             \
+   /* end of GC_FLAGS */
+
+ #endif // SHARE_GC_SHARED_GC_GLOBALS_HPP
+diff --git a/src/hotspot/share/gc/shared/gcConfig.cpp b/src/hotspot/share/gc/shared/gcConfig.cpp
+--- a/src/hotspot/share/gc/shared/gcConfig.cpp
++++ b/src/hotspot/share/gc/shared/gcConfig.cpp
+@@ -39,6 +39,9 @@
+ #if INCLUDE_EPSILONGC
+ #include "gc/epsilon/epsilonArguments.hpp"
+ #endif
++#if INCLUDE_STOPLESSGC
++#include "gc/stopless/stoplessArguments.hpp"
++#endif
+ #if INCLUDE_G1GC
+ #include "gc/g1/g1Arguments.hpp"
+ #endif
+@@ -71,6 +74,7 @@ struct SupportedGC {
+ GCConfig::IS_##type##_ONLY(static type##Arguments type##Args);
+ #endif
+ EPSILONGC_ONLY(static EpsilonArguments epsilonArguments;)
++STOPLESSGC_ONLY(static StoplessArguments stoplessArguments;)
+ G1GC_ONLY(static G1Arguments g1Arguments;)
+ PARALLELGC_ONLY(static ParallelArguments parallelArguments;)
+ SERIALGC_ONLY(static SerialArguments serialArguments;)
+@@ -82,6 +86,7 @@ static const SupportedGC SupportedGCs[] = {
+   SERIALGC_ONLY_ARG(SupportedGC(UseSerialGC,       CollectedHeap::Serial,     serialArguments,     "serial gc"))
+   SHENANDOAHGC_ONLY_ARG(SupportedGC(UseShenandoahGC, CollectedHeap::Shenandoah, shenandoahArguments, "shenandoah gc"))
+   EPSILONGC_ONLY_ARG(SupportedGC(UseEpsilonGC,     CollectedHeap::Epsilon,    epsilonArguments,    "epsilon gc"))
++  STOPLESSGC_ONLY_ARG(SupportedGC(UseStoplessGC,   CollectedHeap::Stopless,   stoplessArguments,   "stopless gc"))
+   ZGC_ONLY_ARG(SupportedGC(UseZGC,                 CollectedHeap::Z,          zArguments,          "z gc"))
+ };
+
+diff --git a/src/hotspot/share/gc/shared/gcConfig.hpp b/src/hotspot/share/gc/shared/gcConfig.hpp
+--- a/src/hotspot/share/gc/shared/gcConfig.hpp
++++ b/src/hotspot/share/gc/shared/gcConfig.hpp
+@@ -34,6 +34,7 @@ class GCConfig : public AllStatic {
+   ALL_GCS_DO(GC_CONFIG_DECLARE_METHODS)
+
+   static bool is_gc_supported(CollectedHeap::Name name);
+   static bool is_gc_selected(CollectedHeap::Name name);
+   static bool is_gc_selected_ergonomically();
+diff --git a/src/hotspot/share/runtime/arguments.cpp b/src/hotspot/share/runtime/arguments.cpp
+--- a/src/hotspot/share/runtime/arguments.cpp
++++ b/src/hotspot/share/runtime/arguments.cpp
+@@ -2034,6 +2034,9 @@ jint Arguments::parse_xss(const JavaVMOption* option, const char* tail, intx* ou
+   if (UseEpsilonGC) {
+     return EPSILONGC_ONLY_ARG(JNI_OK) NOT_EPSILONGC(JNI_ERR);
+   }
++  if (UseStoplessGC) {
++    return STOPLESSGC_ONLY_ARG(JNI_OK) NOT_STOPLESSGC(JNI_ERR);
++  }
+   if (UseZGC) {
+     return ZGC_ONLY_ARG(JNI_OK) NOT_ZGC(JNI_ERR);
+   }
+diff --git a/src/hotspot/share/utilities/macros.hpp b/src/hotspot/share/utilities/macros.hpp
+--- a/src/hotspot/share/utilities/macros.hpp
++++ b/src/hotspot/share/utilities/macros.hpp
+@@ -158,6 +158,16 @@
+ #define EPSILONGC_ONLY_ARG(arg)
+ #endif // INCLUDE_EPSILONGC
+
++#ifndef INCLUDE_STOPLESSGC
++#define INCLUDE_STOPLESSGC 1
++#endif // INCLUDE_STOPLESSGC
++#if INCLUDE_STOPLESSGC
++#define STOPLESSGC_ONLY(x) x
++#define STOPLESSGC_ONLY_ARG(arg) arg,
++#else
++#define STOPLESSGC_ONLY(x)
++#define STOPLESSGC_ONLY_ARG(arg)
++#endif // INCLUDE_STOPLESSGC
++
+ #ifndef INCLUDE_G1GC
+ #define INCLUDE_G1GC 1
+ #endif // INCLUDE_G1GC
+diff --git a/make/hotspot/lib/JvmFeatures.gmk b/make/hotspot/lib/JvmFeatures.gmk
+--- a/make/hotspot/lib/JvmFeatures.gmk
++++ b/make/hotspot/lib/JvmFeatures.gmk
+@@ -127,6 +127,15 @@ ifneq ($(call check-jvm-feature, epsilongc), true)
+       gc/epsilon/
+ endif
+
++ifneq ($(call check-jvm-feature, stoplessgc), true)
++  JVM_CFLAGS_FEATURES += -DINCLUDE_STOPLESSGC=0
++  JVM_EXCLUDE_PATTERNS += gc/stopless
++else
++  JVM_CFLAGS_FEATURES += -DINCLUDE_STOPLESSGC=1
++endif
++
+ ifneq ($(call check-jvm-feature, g1gc), true)
+   JVM_CFLAGS_FEATURES += -DINCLUDE_G1GC=0
+   JVM_EXCLUDE_PATTERNS += gc/g1
+diff --git a/make/autoconf/jvm-features.m4 b/make/autoconf/jvm-features.m4
+--- a/make/autoconf/jvm-features.m4
++++ b/make/autoconf/jvm-features.m4
+@@ -41,7 +41,7 @@
+ # All valid JVM features, regardless of platform
+ m4_define(jvm_features_valid, m4_normalize( \
+     ifdef([custom_jvm_features_valid], custom_jvm_features_valid) \
+-    cds compiler1 compiler2 dtrace epsilongc g1gc jfr jni-check \
++    cds compiler1 compiler2 dtrace epsilongc stoplessgc g1gc jfr jni-check \
+     jvmci jvmti link-time-opt management minimal nmt opt-size parallelgc \
+     serialgc services shenandoahgc static-build vm-structs zero zgc))

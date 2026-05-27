@@ -13,16 +13,33 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* C++ does not understand C11 _Atomic. C++ TUs that include this
+   header only need the LAYOUT of stopless_arena_t (the field is
+   touched exclusively from the C side via stopless_alloc / used /
+   reset). On aarch64 a plain size_t has the same size and alignment
+   as _Atomic size_t, so the ABI matches without C++ ever reading
+   the field directly. */
+#ifdef __cplusplus
+#  define STOPLESS_ATOMIC_SIZE_T size_t
+#else
+#  include <stdatomic.h>
+#  define STOPLESS_ATOMIC_SIZE_T _Atomic size_t
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Opaque handle: holds the arena cap + its shadow-bitmap cap. */
+/* Opaque handle: holds the arena cap + its shadow-bitmap cap.
+   `bump_offset` (Phase C-4) is the byte cursor consumed by
+   stopless_alloc; lock-free CAS keeps it consistent across
+   mutator threads. */
 typedef struct stopless_arena {
-    void     *base;             /* arena cap, full bounds */
-    size_t    size;             /* arena size in bytes */
-    uint64_t *shadow;           /* shadow-bitmap cap (set bits = revoke) */
-    uintptr_t shadow_base_addr; /* ptraddr_t of arena base, for libcaprevoke API */
+    void     *base;                       /* arena cap, full bounds */
+    size_t    size;                       /* arena size in bytes */
+    uint64_t *shadow;                     /* shadow-bitmap cap (set bits = revoke) */
+    uintptr_t shadow_base_addr;           /* ptraddr_t of arena base, for libcaprevoke API */
+    STOPLESS_ATOMIC_SIZE_T bump_offset;   /* C-4: bump-pointer cursor in bytes */
 } stopless_arena_t;
 
 /* Map an mmap'd region + acquire its shadow bitmap.

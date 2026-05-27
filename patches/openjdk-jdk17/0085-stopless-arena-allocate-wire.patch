@@ -1,0 +1,116 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Wed, 27 May 2026 20:00:00 +0800
+Subject: [PATCH] Phase C-4: wire StoplessArena::allocate to stopless_alloc
+
+After 0083 introduced the C++ wrapper with a nullptr-returning
+allocate() stub, this patch fills in the real implementation by
+delegating to cap_runtime/stopless_gc/allocator.c::stopless_alloc().
+
+Also:
+- adds StoplessArena::used() (now reads C-side atomic bump_offset)
+- adds StoplessArena::reset() (delegates to stopless_arena_reset)
+- StoplessHeap::mem_allocate logs and propagates OOM (C-9 will
+  upgrade this to "trigger GC and retry").
+
+NOTE: this patch removes the placeholder body of `allocate` that
+0083 introduced. Line numbers given assume 0083 was applied first;
+adjust as needed on hasee.
+
+Design: docs/c4/design.md
+
+diff --git a/src/hotspot/share/gc/stopless/stoplessArena.hpp b/src/hotspot/share/gc/stopless/stoplessArena.hpp
+--- a/src/hotspot/share/gc/stopless/stoplessArena.hpp
++++ b/src/hotspot/share/gc/stopless/stoplessArena.hpp
+@@ -36,11 +36,13 @@ class StoplessArena : public CHeapObj<mtGC> {
+
+   // Read-only queries
+   void*  base() const;
+   size_t capacity() const          { return _capacity; }
+-  size_t used() const              { return _bump_offset; }
++  size_t used() const;
+   bool   contains(const void* p) const;
+
+   // Allocation. C-3 returns nullptr; C-4 fills with bump-pointer.
+   void* allocate(size_t bytes);
++  // Reset the bump offset to 0; caller ensures arena fully evacuated.
++  void  reset();
+
+   // Mover-side primitives (forwarded to cap_runtime).
+   int mark_for_revoke(void* cap);
+diff --git a/src/hotspot/share/gc/stopless/stoplessArena.cpp b/src/hotspot/share/gc/stopless/stoplessArena.cpp
+--- a/src/hotspot/share/gc/stopless/stoplessArena.cpp
++++ b/src/hotspot/share/gc/stopless/stoplessArena.cpp
+@@ -9,8 +9,9 @@
+ #include "runtime/java.hpp"
+ #include "utilities/ostream.hpp"
+
+ // The C API. JvmFeatures.gmk adds the include path via -I.
+ extern "C" {
+ #include "revoke.h"
++#include "allocator.h"
+ #include "api.h"
+ }
+@@ -60,11 +61,28 @@ bool StoplessArena::contains(const void* p) const {
+   return (a >= b) && (a < b + _c->size);
+ }
+
+-void* StoplessArena::allocate(size_t bytes) {
+-  // C-4 will fill this in (bump-pointer + csetbounds + perm strip).
+-  // For C-3 we return nullptr so callers see "no memory" gracefully.
+-  (void)bytes;
+-  return nullptr;
++void* StoplessArena::allocate(size_t bytes) {
++  if (_c == nullptr) return nullptr;
++  void* p = stopless_alloc(_c, bytes);
++  // _bump_offset cached for cheap used() calls; the C-side atomic
++  // remains the authoritative copy.
++  _bump_offset = stopless_arena_used(_c);
++  return p;
++}
++
++size_t StoplessArena::used() const {
++  if (_c == nullptr) return 0;
++  return stopless_arena_used(_c);
++}
++
++void StoplessArena::reset() {
++  if (_c == nullptr) return;
++  stopless_arena_reset(_c);
++  _bump_offset = 0;
+ }
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+--- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+@@ -55,16 +55,27 @@ bool StoplessHeap::is_in(const void* p) const {
+
+ HeapWord* StoplessHeap::mem_allocate(size_t size,
+                                      bool* gc_overhead_limit_was_exceeded) {
+-  // C-4 will replace this with _arena->allocate(size * HeapWordSize).
+-  // For C-3, still returns nullptr — but the arena does exist now.
+-  if (_arena != nullptr) {
+-    void* p = _arena->allocate(size * HeapWordSize);
+-    if (p != nullptr) return (HeapWord*)p;
+-  }
+   if (gc_overhead_limit_was_exceeded != nullptr) {
+     *gc_overhead_limit_was_exceeded = false;
+   }
+-  return nullptr;
++  if (_arena == nullptr) return nullptr;
++
++  // `size` is in HeapWords. On CHERI purecap HeapWordSize=16
++  // (patch 0060). Convert to bytes for the bump allocator.
++  size_t bytes = size * HeapWordSize;
++  void*  p     = _arena->allocate(bytes);
++
++  if (p == nullptr) {
++    // OOM. C-9 will trigger a concurrent collection here and retry.
++    // v1: just propagate OOM upward.
++    log_warning(gc)("StoplessHeap: alloc(%zu bytes) returned nullptr "
++                    "(used=%zuK / cap=%zuK)",
++                    bytes,
++                    _arena->used() / K,
++                    _arena->capacity() / K);
++    return nullptr;
++  }
++  return (HeapWord*)p;
+ }
