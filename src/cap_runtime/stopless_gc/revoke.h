@@ -38,6 +38,11 @@ void stopless_mark_revoke(stopless_arena_t *a, uintptr_t obj_addr, size_t len);
    actual sweep — rare). */
 void stopless_unmark_revoke(stopless_arena_t *a, uintptr_t obj_addr, size_t len);
 
+/* Cap-bounds variant: mark the bounds of `obj_cap` for revocation.
+   This matches the cheribsdtest pattern most directly and avoids
+   manual address arithmetic. */
+int  stopless_mark_revoke_cap(stopless_arena_t *a, void *obj_cap);
+
 /* Trigger the actual kernel revocation sweep. Returns 0 on success. */
 int  stopless_revoke_now(void);
 

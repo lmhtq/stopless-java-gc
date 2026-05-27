@@ -87,11 +87,10 @@ void
 stopless_mark_revoke(stopless_arena_t *a, uintptr_t obj_addr, size_t len)
 {
     if (a == NULL || a->shadow == NULL || len == 0) return;
-    /* Use the raw variant (no user_obj safety hook). Matches the
-       libmalloc_simple pattern: caprev_shadow_nomap_set_raw(sbase, sb,
-       (ptraddr_t)addr, size). */
+    /* set_raw signature: (sbase, sb, heap_START, heap_END). The last
+       two are absolute addresses, NOT (start, length). Convert. */
     caprev_shadow_nomap_set_raw(a->shadow_base_addr, a->shadow,
-                                obj_addr, len);
+                                obj_addr, obj_addr + len);
 }
 
 void
@@ -99,7 +98,18 @@ stopless_unmark_revoke(stopless_arena_t *a, uintptr_t obj_addr, size_t len)
 {
     if (a == NULL || a->shadow == NULL || len == 0) return;
     caprev_shadow_nomap_clear_raw(a->shadow_base_addr, a->shadow,
-                                  obj_addr, len);
+                                  obj_addr, obj_addr + len);
+}
+
+int
+stopless_mark_revoke_cap(stopless_arena_t *a, void *obj_cap)
+{
+    if (a == NULL || a->shadow == NULL || obj_cap == NULL) return -1;
+    /* The `caprev_shadow_nomap_set` variant uses the cap's BOUNDS for
+       marking, not explicit (addr, len) arithmetic. Used by
+       cheribsdtest. */
+    return caprev_shadow_nomap_set(a->shadow_base_addr, a->shadow,
+                                   obj_cap, obj_cap);
 }
 
 int
@@ -107,18 +117,31 @@ stopless_revoke_now(void)
 {
     if (ensure_cri() != 0) return -1;
 
-    /* Run a full revocation pass. Follow the libc tls_malloc pattern:
-       sample current enqueue epoch, then call LAST_PASS until dequeue
-       reaches that epoch. */
     atomic_thread_fence(memory_order_acq_rel);
-    cheri_revoke_epoch_t start_epoch = g_cri->epochs.enqueue;
-    while (!cheri_revoke_epoch_clears(g_cri->epochs.dequeue, start_epoch)) {
-        int rc = cheri_revoke(CHERI_REVOKE_LAST_PASS, start_epoch, NULL);
-        if (rc != 0) {
-            fprintf(stderr, "stopless_revoke_now: cheri_revoke failed: %s\n",
-                    strerror(errno));
-            return rc;
-        }
+    fprintf(stderr, "[stopless] epochs before: enq=%llu deq=%llu\n",
+            (unsigned long long)g_cri->epochs.enqueue,
+            (unsigned long long)g_cri->epochs.dequeue);
+
+    cheri_revoke_epoch_t initial = g_cri->epochs.enqueue;
+    int rc = cheri_revoke(CHERI_REVOKE_IGNORE_START | CHERI_REVOKE_LAST_PASS,
+                          initial, NULL);
+    fprintf(stderr, "[stopless] cheri_revoke #1 rc=%d errno=%d epochs: enq=%llu deq=%llu\n",
+            rc, errno,
+            (unsigned long long)g_cri->epochs.enqueue,
+            (unsigned long long)g_cri->epochs.dequeue);
+    if (rc != 0) return rc;
+
+    cheri_revoke_epoch_t target = g_cri->epochs.enqueue;
+    int loops = 0;
+    while (!cheri_revoke_epoch_clears(g_cri->epochs.dequeue, target) && loops < 10) {
+        rc = cheri_revoke(CHERI_REVOKE_LAST_PASS, target, NULL);
+        loops++;
+        fprintf(stderr, "[stopless] cheri_revoke wait #%d rc=%d enq=%llu deq=%llu target=%llu\n",
+                loops, rc,
+                (unsigned long long)g_cri->epochs.enqueue,
+                (unsigned long long)g_cri->epochs.dequeue,
+                (unsigned long long)target);
+        if (rc != 0) return rc;
     }
     return 0;
 }

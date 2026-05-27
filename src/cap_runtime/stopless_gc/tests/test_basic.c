@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #include <cheriintrin.h>
 
 extern __thread volatile void **stopless_v1_pending_slot;
@@ -50,29 +51,48 @@ main(void)
 
     /* Carve an object out of a_src. */
     const size_t obj_size = 256;
-    char *obj_old = (char *)cheri_bounds_set((char *)a_src.base, obj_size);
-    memset(obj_old, 0xAB, obj_size);
+    char *obj_old_init = (char *)cheri_bounds_set((char *)a_src.base, obj_size);
+    memset(obj_old_init, 0xAB, obj_size);
 
     /* Move: copy into a_dst, get new cap. */
     char *obj_new = (char *)cheri_bounds_set((char *)a_dst.base, obj_size);
-    memcpy(obj_new, obj_old, obj_size);
+    memcpy(obj_new, obj_old_init, obj_size);
 
-    uintptr_t old_addr = (uintptr_t)cheri_address_get(obj_old);
+    uintptr_t old_addr = (uintptr_t)cheri_address_get(obj_old_init);
     forward_table_insert(old_addr, obj_new);
 
-    fprintf(stderr, "DBG arena_src.base=%#p obj_old=%#p old_addr=0x%lx obj_new=%#p\n",
-            a_src.base, (void *)obj_old, (unsigned long)old_addr, (void *)obj_new);
+    /* Store obj_old in a HEAP slot (mmap'd separately, not in either
+       arena). The kernel revocation sweep walks heap memory and will
+       clear the tag here when we revoke a_src's object range. */
+    char **obj_old_slot =
+        mmap(NULL, sysconf(_SC_PAGESIZE),
+             PROT_READ | PROT_WRITE,
+             MAP_ANON | MAP_PRIVATE, -1, 0);
+    if (obj_old_slot == MAP_FAILED) return 1;
+    *obj_old_slot = obj_old_init;
+    fprintf(stderr, "DBG slot[0] tag before revoke = %d\n",
+            (int)cheri_tag_get(*obj_old_slot));
+
+    fprintf(stderr, "DBG arena_src.base=%#p obj_old=%#p old_addr=0x%lx obj_new=%#p slot=%#p\n",
+            a_src.base, (void *)obj_old_init, (unsigned long)old_addr,
+            (void *)obj_new, (void *)obj_old_slot);
 
     /* Mark for revocation + sweep. */
-    write(2, "step 5: mark_revoke\n", 20);
-    stopless_mark_revoke(&a_src, old_addr, obj_size);
+    write(2, "step 5: mark_revoke (cap-based)\n", 32);
+    int mrk = stopless_mark_revoke_cap(&a_src, obj_old_init);
+    fprintf(stderr, "DBG mark_revoke_cap rc=%d\n", mrk);
     write(2, "step 6: revoke_now\n", 19);
     if (stopless_revoke_now() != 0) {
         write(2, "FAIL: revoke_now\n", 17);
         return 1;
     }
     write(2, "step 7: after revoke\n", 21);
+    char *obj_old = *obj_old_slot;  /* re-read from heap slot */
+    int tag_slot = (int)cheri_tag_get(*obj_old_slot);
+    int tag_loc  = (int)cheri_tag_get(obj_old_init);  /* local register copy */
     int tag = (int)cheri_tag_get(obj_old);
+    fprintf(stderr, "DBG after revoke: tag(slot)=%d tag(local)=%d tag(reread)=%d\n",
+            tag_slot, tag_loc, tag);
     write(2, tag ? "obj_old still tagged\n" : "obj_old tag cleared\n", 21);
 
     /* Now obj_old should be tag-zero. Verify. */
