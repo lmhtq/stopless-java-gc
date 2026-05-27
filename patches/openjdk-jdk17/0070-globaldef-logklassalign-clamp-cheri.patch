@@ -1,0 +1,60 @@
+From: stopless-java-gc <noreply@anthropic.com>
+Subject: [PATCH 0070/N] globalDefinitions: clamp LogKlassAlignment >= 0 under CHERI
+
+`LogKlassAlignment = LogKlassAlignmentInBytes - LogHeapWordSize` was 3-3=0
+on standard LP64, but becomes 3-4 = **-1** under our CHERI build (where
+patch 0060 sets LogHeapWordSize=4). Negative log value, cast through
+unsigned in downstream shift computations, produces:
+
+  64 - LogKlassAlignment = 64 - (-1) = 65
+  (65 & 63) = 1                                    (immr fine)
+  but anywhere using `LogKlassAlignment` raw as shift produces huge
+  values when cast to unsigned
+
+Semantic: LogKlassAlignment represents "Klass alignment in HeapWord
+units, log2". Klass-aligned to 8 bytes; HeapWord = 16 on CHERI. Ratio
+8/16 = 0.5 < 1, log is negative.
+
+Empirically the JVM aarch64 codegen produces a shift=64 inside an
+`op_shifted_reg(0xa, LSL, ...)` call during boot (the `0xa` decode is
+the logical-shifted-register family: andr/orr/eor). This trips the
+6-bit imms-field encoder guarantee at assembler_aarch64.hpp:248.
+
+Fix: clamp LogKlassAlignment to 0 under purecap. This may produce
+inefficient klass-pointer encoding (no benefit from alignment-derived
+extra range), but we have UseCompressedClassPointers OFF anyway, so
+the compressed-klass path isn't exercised.
+
+Empirical: build clean, JVM still crashes at the SAME location after
+146 bootclasses. So this isn't the actual shift=64 source — committed
+because the clamp is correctness-good independent of the immediate
+crash (avoids a negative-log constant that may haunt other code paths).
+
+Next investigation: cap-aware stack walk to capture more than one frame
+above the op_shifted_reg call site. __builtin_return_address(N>0) is
+unreliable on CHERI; need explicit FP-chain walk via inline-asm
+`mov %0, c29`.
+
+Refs: docs/12_simd_codegen_wordsize_seam.md
+
+diff --git a/src/hotspot/share/utilities/globalDefinitions.hpp b/src/hotspot/share/utilities/globalDefinitions.hpp
+--- a/src/hotspot/share/utilities/globalDefinitions.hpp
++++ b/src/hotspot/share/utilities/globalDefinitions.hpp
+@@ -557,7 +557,17 @@ extern int LogMinObjAlignment;
+ extern int LogMinObjAlignmentInBytes;
+
+ const int LogKlassAlignmentInBytes = 3;
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: LogHeapWordSize=4 > LogKlassAlignmentInBytes=3, which would make
++// LogKlassAlignment = -1 (underflow). The semantic "Klass alignment in HeapWord
++// units" is < 1 on CHERI (Klass aligned to 8 bytes, HeapWord = 16). Clamp to 0:
++// downstream shifts using LogKlassAlignment as the bit count would otherwise
++// produce shift=64 (=BitsPerWord - LogKlassAlignment = 64-(-1) = 65, &63 = 1, or
++// similar overflows) and trip the aarch64 op_shifted_reg encoder.
++const int LogKlassAlignment        = 0;
++#else
+ const int LogKlassAlignment        = LogKlassAlignmentInBytes - LogHeapWordSize;
++#endif
+ const int KlassAlignmentInBytes    = 1 << LogKlassAlignmentInBytes;
+ const int KlassAlignment           = KlassAlignmentInBytes / HeapWordSize;
+

@@ -95,7 +95,10 @@
 # 0069: stubGenerator SIMD T2D ld1 stride (3 sites) BytesPerLong, not wordSize.
 # Part of the ~30 wordSize-misuse sites identified by docs/10 Category I scan.
 0069-stubgenerator-simd-bytesperlong-cheri.patch
-# 0070-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
+# 0070: clamp LogKlassAlignment to 0 under CHERI (otherwise 3-4=-1 underflows).
+# Correctness fix; not the immediate cause of the shift=64 crash but worth doing.
+0070-globaldef-logklassalign-clamp-cheri.patch
+# 0071-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
 
 # --- Phase 2 (deferred) ---
 # 0020-zgc-cap-load-barrier-swap.patch
