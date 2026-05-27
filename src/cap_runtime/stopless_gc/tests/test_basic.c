@@ -27,6 +27,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <cheri/cherireg.h>
 #include <cheriintrin.h>
 
 extern __thread volatile void **stopless_v1_pending_slot;
@@ -49,13 +50,18 @@ main(void)
     if (stopless_arena_init(&a_dst, 1 << 20) != 0) return 1;
     write(2, "step 4: allocate obj\n", 21);
 
-    /* Carve an object out of a_src. */
+    /* Carve an object out of a_src. The mmap-returned cap carries
+       CHERI_PERM_SW_VMEM, which marks it as "VM allocator metadata"
+       and EXEMPTS it from kernel revocation sweep. We must strip
+       that permission so the object cap is subject to revocation. */
     const size_t obj_size = 256;
     char *obj_old_init = (char *)cheri_bounds_set((char *)a_src.base, obj_size);
+    obj_old_init = (char *)cheri_perms_and(obj_old_init, ~CHERI_PERM_SW_VMEM);
     memset(obj_old_init, 0xAB, obj_size);
 
     /* Move: copy into a_dst, get new cap. */
     char *obj_new = (char *)cheri_bounds_set((char *)a_dst.base, obj_size);
+    obj_new = (char *)cheri_perms_and(obj_new, ~CHERI_PERM_SW_VMEM);
     memcpy(obj_new, obj_old_init, obj_size);
 
     uintptr_t old_addr = (uintptr_t)cheri_address_get(obj_old_init);
