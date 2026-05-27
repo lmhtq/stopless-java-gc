@@ -21,7 +21,7 @@ Design: docs/c4/design.md
 diff --git a/src/hotspot/share/gc/stopless/stoplessArena.hpp b/src/hotspot/share/gc/stopless/stoplessArena.hpp
 --- a/src/hotspot/share/gc/stopless/stoplessArena.hpp
 +++ b/src/hotspot/share/gc/stopless/stoplessArena.hpp
-@@ -36,11 +36,13 @@ class StoplessArena : public CHeapObj<mtGC> {
+@@ -36,12 +36,14 @@ class StoplessArena : public CHeapObj<mtGC> {
 
    // Read-only queries
    void*  base() const;
@@ -50,7 +50,7 @@ diff --git a/src/hotspot/share/gc/stopless/stoplessArena.cpp b/src/hotspot/share
 +#include "allocator.h"
  #include "api.h"
  }
-@@ -60,11 +61,28 @@ bool StoplessArena::contains(const void* p) const {
+@@ -60,9 +61,22 @@ bool StoplessArena::contains(const void* p) const {
    return (a >= b) && (a < b + _c->size);
  }
 
@@ -81,7 +81,7 @@ diff --git a/src/hotspot/share/gc/stopless/stoplessArena.cpp b/src/hotspot/share
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-@@ -55,16 +55,27 @@ bool StoplessHeap::is_in(const void* p) const {
+@@ -55,14 +55,25 @@ bool StoplessHeap::is_in(const void* p) const {
 
  HeapWord* StoplessHeap::mem_allocate(size_t size,
                                       bool* gc_overhead_limit_was_exceeded) {

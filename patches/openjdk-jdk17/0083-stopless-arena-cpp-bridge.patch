@@ -15,7 +15,7 @@ new file mode 100644
 index 0000000..0000009
 --- /dev/null
 +++ b/src/hotspot/share/gc/stopless/stoplessArena.hpp
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,65 @@
 +/*
 + * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
 + *
@@ -86,7 +86,7 @@ new file mode 100644
 index 0000000..0000010
 --- /dev/null
 +++ b/src/hotspot/share/gc/stopless/stoplessArena.cpp
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,96 @@
 +/*
 + * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
 + *
@@ -194,7 +194,7 @@ diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.hpp b/src/hotspot/share/
 
  // The Stopless heap is a single contiguous arena of CHERI-tagged
  // memory. v1 has no allocator (C-4 adds bump-pointer) and no collector
-@@ -22,8 +23,8 @@ class StoplessHeap : public CollectedHeap {
+@@ -22,9 +23,8 @@ class StoplessHeap : public CollectedHeap {
    friend class VMStructs;
   private:
    SoftRefPolicy        _soft_ref_policy;
@@ -205,7 +205,7 @@ diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.hpp b/src/hotspot/share/
 
   public:
    static StoplessHeap* heap();
-@@ -40,9 +41,9 @@ class StoplessHeap : public CollectedHeap {
+@@ -40,10 +41,10 @@ class StoplessHeap : public CollectedHeap {
    jint initialize() override;
    void post_initialize() override     { CollectedHeap::post_initialize(); }
    void initialize_serviceability() override { /* C-7 */ }
@@ -230,7 +230,7 @@ diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/
  #include "gc/shared/gcArguments.hpp"
  #include "memory/universe.hpp"
  #include "runtime/globals.hpp"
-@@ -22,17 +23,18 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -22,41 +23,61 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),

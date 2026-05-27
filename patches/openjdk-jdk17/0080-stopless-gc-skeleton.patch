@@ -1,111 +1,30 @@
 From: lxh <lmhtq1991@gmail.com>
-Date: Wed, 27 May 2026 18:00:00 +0800
+Date: Wed, 27 May 2026 21:30:00 +0800
 Subject: [PATCH] Phase C-1: StoplessGC HotSpot skeleton
 
-Adds a new GC subsystem under src/hotspot/share/gc/stopless/. This
-patch only introduces the source files; the build-system wire-up and
-CollectedHeap::Name enum extension live in patches 0081-0082.
+Adds src/hotspot/share/gc/stopless/ — the new CollectedHeap subclass
+for the CHERI-Stopless GC. v1 implementations are minimum-viable
+stubs: TLAB disabled, alloc returns nullptr (caller throws OOM),
+collect is a no-op. Real behaviour comes in C-3 (arena) and C-9
+(concurrent mover).
 
 Files:
-- stoplessHeap.hpp/.cpp       — CollectedHeap subclass (stubs)
-- stoplessArguments.hpp/.cpp  — GCArguments subclass
-- stoplessBarrierSet.hpp/.cpp — BarrierSet with NOP read/write
-- stopless_globals.hpp        — -XX:+UseStoplessGC flag definitions
-- vmStructs_stopless.hpp      — empty for v1
+- stoplessArguments.hpp/.cpp   — GCArguments subclass
+- stoplessBarrierSet.hpp/.cpp  — BarrierSet (read=NOP, write=NOP)
+- stoplessHeap.hpp/.cpp        — CollectedHeap with all 17u pure
+                                 virtuals stubbed
+- stopless_globals.hpp         — product flag declarations
+- vmStructs_stopless.hpp       — empty placeholder
 
 Design: docs/c1/design.md
 Overview: docs/17_phase_c_overview.md
 
-diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.hpp b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
+diff --git a/src/hotspot/share/gc/stopless/stoplessArguments.cpp b/src/hotspot/share/gc/stopless/stoplessArguments.cpp
 new file mode 100644
-index 0000000..0000001
+index 00000000000..d35e3ed156c
 --- /dev/null
-+++ b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
-@@ -0,0 +1,86 @@
-+/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
-+ *
-+ * Phase C-1 skeleton — see docs/c1/design.md.
-+ */
-+
-+#ifndef SHARE_GC_STOPLESS_STOPLESSHEAP_HPP
-+#define SHARE_GC_STOPLESS_STOPLESSHEAP_HPP
-+
-+#include "gc/shared/collectedHeap.hpp"
-+#include "gc/shared/softRefPolicy.hpp"
-+#include "memory/virtualspace.hpp"
-+#include "services/memoryManager.hpp"
-+
-+class StoplessBarrierSet;
-+
-+// The Stopless heap is a single contiguous arena of CHERI-tagged
-+// memory. v1 has no allocator (C-4 adds bump-pointer) and no collector
-+// (C-9 adds the concurrent mover). This skeleton exists so the GC
-+// machinery can be configured at JVM launch with -XX:+UseStoplessGC
-+// and the JVM proceeds far enough to test the wire-up.
-+
-+class StoplessHeap : public CollectedHeap {
-+  friend class VMStructs;
-+ private:
-+  SoftRefPolicy        _soft_ref_policy;
-+  StoplessBarrierSet*  _barrier_set;
-+  size_t               _arena_capacity;
-+  size_t               _arena_used;
-+
-+ public:
-+  static StoplessHeap* heap();
-+
-+  StoplessHeap();
-+
-+  // ---- CollectedHeap virtuals (minimal stubs for Phase C-1) -------
-+
-+  Name kind() const override          { return CollectedHeap::Stopless; }
-+  const char* name() const override   { return "Stopless"; }
-+
-+  SoftRefPolicy* soft_ref_policy() override { return &_soft_ref_policy; }
-+
-+  jint initialize() override;
-+  void post_initialize() override     { CollectedHeap::post_initialize(); }
-+  void initialize_serviceability() override { /* C-7 */ }
-+
-+  size_t capacity() const override     { return _arena_capacity; }
-+  size_t used() const override         { return _arena_used; }
-+  size_t max_capacity() const override { return _arena_capacity; }
-+
-+  bool is_in(const void* p) const override;
-+  bool is_maximal_no_gc() const override { return true; }
-+
-+  HeapWord* mem_allocate(size_t size,
-+                         bool* gc_overhead_limit_was_exceeded) override;
-+
-+  void collect(GCCause::Cause cause) override            { /* C-9 */ }
-+  void do_full_collection(bool clear_all_soft_refs) override { /* v1 no-op */ }
-+
-+  void object_iterate(ObjectClosure* cl) override        { ShouldNotReachHere(); }
-+
-+  void print_on(outputStream* st) const override;
-+  void print_tracing_info() const override               { /* no-op */ }
-+
-+  void prepare_for_verify() override                     { /* no-op */ }
-+  void verify(VerifyOption option) override              { /* no-op */ }
-+
-+  jlong millis_since_last_gc() override                  { return 0; }
-+
-+  HeapWord* block_start(const void* addr) const override { return nullptr; }
-+  bool block_is_obj(const HeapWord* addr) const override { return false; }
-+
-+  // -----------------------------------------------------------------
-+
-+  StoplessBarrierSet* barrier_set() const { return _barrier_set; }
-+};
-+
-+#endif // SHARE_GC_STOPLESS_STOPLESSHEAP_HPP
-diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-new file mode 100644
-index 0000000..0000002
---- /dev/null
-+++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-@@ -0,0 +1,71 @@
++++ b/src/hotspot/share/gc/stopless/stoplessArguments.cpp
+@@ -0,0 +1,32 @@
 +/*
 + * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
 + *
@@ -113,76 +32,37 @@ index 0000000..0000002
 + */
 +
 +#include "precompiled.hpp"
++#include "gc/stopless/stoplessArguments.hpp"
 +#include "gc/stopless/stoplessHeap.hpp"
-+#include "gc/stopless/stoplessBarrierSet.hpp"
 +#include "gc/shared/gcArguments.hpp"
-+#include "memory/universe.hpp"
 +#include "runtime/globals.hpp"
-+#include "utilities/ostream.hpp"
++#include "runtime/globals_extension.hpp"
 +
-+StoplessHeap* StoplessHeap::heap() {
-+  CollectedHeap* heap = Universe::heap();
-+  assert(heap != nullptr, "Uninitialized access to StoplessHeap::heap()");
-+  assert(heap->kind() == CollectedHeap::Stopless, "Not a StoplessHeap");
-+  return (StoplessHeap*)heap;
++void StoplessArguments::initialize_alignments() {
++  size_t page_size = UseLargePages ? os::large_page_size() : os::vm_page_size();
++  size_t align = MAX2((size_t)os::vm_allocation_granularity(), page_size);
++  SpaceAlignment = align;
++  HeapAlignment  = align;
 +}
 +
-+StoplessHeap::StoplessHeap()
-+  : _soft_ref_policy(),
-+    _barrier_set(nullptr),
-+    _arena_capacity(0),
-+    _arena_used(0) {
++void StoplessArguments::initialize() {
++  GCArguments::initialize();
++  assert(UseStoplessGC, "Sanity");
++
++  // No JIT-side patching needed: the CHERI cap-tag check on every
++  // oop load IS the read barrier. Stopless does not require ParallelGC-
++  // style remembered sets or G1-style SATB queues.
 +}
 +
-+jint StoplessHeap::initialize() {
-+  // Phase C-3 will mmap the actual arena via cap_runtime/stopless_arena_init.
-+  // For C-1 we just record the requested sizes so the JVM proceeds.
-+  size_t min_byte_size = MAX2(MinHeapSize, (size_t)4 * M);
-+  size_t max_byte_size = MAX2(MaxHeapSize, min_byte_size);
-+  _arena_capacity = max_byte_size;
-+  _arena_used     = 0;
-+
-+  // Install our (NOP) barrier set so BarrierSet::barrier_set() returns
-+  // something non-null. Real read/write barriers are no-ops in C-1
-+  // because the CHERI cap-tag check IS the barrier.
-+  _barrier_set = new StoplessBarrierSet();
-+  BarrierSet::set_barrier_set(_barrier_set);
-+
-+  return JNI_OK;
-+}
-+
-+bool StoplessHeap::is_in(const void* p) const {
-+  // v1: arena not yet allocated. C-3 will replace this.
-+  (void)p;
-+  return false;
-+}
-+
-+HeapWord* StoplessHeap::mem_allocate(size_t size,
-+                                     bool* gc_overhead_limit_was_exceeded) {
-+  // C-4 fills in. For C-1 we return nullptr so the caller raises OOM
-+  // gracefully rather than crashing — useful when running -version
-+  // without ever needing to actually allocate.
-+  (void)size;
-+  if (gc_overhead_limit_was_exceeded != nullptr) {
-+    *gc_overhead_limit_was_exceeded = false;
-+  }
-+  return nullptr;
-+}
-+
-+void StoplessHeap::print_on(outputStream* st) const {
-+  st->print_cr("Stopless Heap (CHERI-accelerated, Phase C-1 skeleton)");
-+  st->print_cr("  capacity %zuK, used %zuK",
-+               _arena_capacity / K, _arena_used / K);
-+  if (_barrier_set != nullptr) {
-+    _barrier_set->print_on(st);
-+  }
++CollectedHeap* StoplessArguments::create_heap() {
++  return new StoplessHeap();
 +}
 diff --git a/src/hotspot/share/gc/stopless/stoplessArguments.hpp b/src/hotspot/share/gc/stopless/stoplessArguments.hpp
 new file mode 100644
-index 0000000..0000003
+index 00000000000..7a5df383ecd
 --- /dev/null
 +++ b/src/hotspot/share/gc/stopless/stoplessArguments.hpp
-@@ -0,0 +1,24 @@
+@@ -0,0 +1,25 @@
 +/*
 + * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
 + *
@@ -197,6 +77,8 @@ index 0000000..0000003
 +class CollectedHeap;
 +
 +class StoplessArguments : public GCArguments {
++ private:
++  virtual void initialize_alignments();
 + public:
 +  void initialize() override;
 +  size_t conservative_max_heap_alignment() override {
@@ -206,12 +88,12 @@ index 0000000..0000003
 +};
 +
 +#endif // SHARE_GC_STOPLESS_STOPLESSARGUMENTS_HPP
-diff --git a/src/hotspot/share/gc/stopless/stoplessArguments.cpp b/src/hotspot/share/gc/stopless/stoplessArguments.cpp
+diff --git a/src/hotspot/share/gc/stopless/stoplessBarrierSet.cpp b/src/hotspot/share/gc/stopless/stoplessBarrierSet.cpp
 new file mode 100644
-index 0000000..0000004
+index 00000000000..40260a2cbfd
 --- /dev/null
-+++ b/src/hotspot/share/gc/stopless/stoplessArguments.cpp
-@@ -0,0 +1,26 @@
++++ b/src/hotspot/share/gc/stopless/stoplessBarrierSet.cpp
+@@ -0,0 +1,27 @@
 +/*
 + * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
 + *
@@ -219,30 +101,32 @@ index 0000000..0000004
 + */
 +
 +#include "precompiled.hpp"
-+#include "gc/stopless/stoplessArguments.hpp"
-+#include "gc/stopless/stoplessHeap.hpp"
-+#include "gc/shared/gcArguments.hpp"
-+#include "runtime/globals.hpp"
-+#include "runtime/globals_extension.hpp"
++#include "gc/stopless/stoplessBarrierSet.hpp"
++#include "utilities/ostream.hpp"
 +
-+void StoplessArguments::initialize() {
-+  GCArguments::initialize();
-+  assert(UseStoplessGC, "Sanity");
++#ifdef COMPILER1
++#include "gc/shared/c1/barrierSetC1.hpp"
++#endif
++#ifdef COMPILER2
++#include "gc/shared/c2/barrierSetC2.hpp"
++#endif
 +
-+  // No JIT-side patching needed: the CHERI cap-tag check on every
-+  // oop load IS the read barrier. Stopless does not require ParallelGC-
-+  // style remembered sets or G1-style SATB queues.
-+}
++StoplessBarrierSet::StoplessBarrierSet() : BarrierSet(
++          make_barrier_set_assembler<BarrierSetAssembler>(),
++          make_barrier_set_c1<BarrierSetC1>(),
++          make_barrier_set_c2<BarrierSetC2>(),
++          NULL /* barrier_set_nmethod */,
++          BarrierSet::FakeRtti(BarrierSet::StoplessBarrierSet)) {}
 +
-+CollectedHeap* StoplessArguments::create_heap() {
-+  return new StoplessHeap();
++void StoplessBarrierSet::print_on(outputStream* st) const {
++  st->print_cr("Stopless barrier set: read=NOP (CHERI hw), write=NOP (Phase C-1)");
 +}
 diff --git a/src/hotspot/share/gc/stopless/stoplessBarrierSet.hpp b/src/hotspot/share/gc/stopless/stoplessBarrierSet.hpp
 new file mode 100644
-index 0000000..0000005
+index 00000000000..e22144cfd01
 --- /dev/null
 +++ b/src/hotspot/share/gc/stopless/stoplessBarrierSet.hpp
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,53 @@
 +/*
 + * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
 + *
@@ -290,13 +174,18 @@ index 0000000..0000005
 +  static const BarrierSet::Name value = BarrierSet::StoplessBarrierSet;
 +};
 +
++template<>
++struct BarrierSet::GetType<BarrierSet::StoplessBarrierSet> {
++  typedef ::StoplessBarrierSet type;
++};
++
 +#endif // SHARE_GC_STOPLESS_STOPLESSBARRIERSET_HPP
-diff --git a/src/hotspot/share/gc/stopless/stoplessBarrierSet.cpp b/src/hotspot/share/gc/stopless/stoplessBarrierSet.cpp
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 new file mode 100644
-index 0000000..0000006
+index 00000000000..069115be038
 --- /dev/null
-+++ b/src/hotspot/share/gc/stopless/stoplessBarrierSet.cpp
-@@ -0,0 +1,29 @@
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+@@ -0,0 +1,75 @@
 +/*
 + * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
 + *
@@ -304,31 +193,177 @@ index 0000000..0000006
 + */
 +
 +#include "precompiled.hpp"
++#include "gc/stopless/stoplessHeap.hpp"
 +#include "gc/stopless/stoplessBarrierSet.hpp"
++#include "gc/shared/gcArguments.hpp"
++#include "memory/universe.hpp"
++#include "runtime/globals.hpp"
++#include "gc/shared/gc_globals.hpp"
++#include "gc/shared/tlab_globals.hpp"
 +#include "utilities/ostream.hpp"
 +
-+#ifdef COMPILER1
-+#include "gc/shared/c1/barrierSetC1.hpp"
-+#endif
-+#ifdef COMPILER2
-+#include "gc/shared/c2/barrierSetC2.hpp"
-+#endif
-+
-+StoplessBarrierSet::StoplessBarrierSet() :
-+  BarrierSet(make_barrier_set_assembler<BarrierSetAssembler>(),
-+#ifdef COMPILER1
-+             make_barrier_set_c1<BarrierSetC1>(),
-+#endif
-+             make_barrier_set_c2<BarrierSetC2>(),
-+             /* fake_rtti */ BarrierSet::FakeRtti(BarrierSet::StoplessBarrierSet)) {
++StoplessHeap* StoplessHeap::heap() {
++  CollectedHeap* heap = Universe::heap();
++  assert(heap != nullptr, "Uninitialized access to StoplessHeap::heap()");
++  assert(heap->kind() == CollectedHeap::Stopless, "Not a StoplessHeap");
++  return (StoplessHeap*)heap;
 +}
 +
-+void StoplessBarrierSet::print_on(outputStream* st) const {
-+  st->print_cr("Stopless barrier set: read=NOP (CHERI hw), write=NOP (Phase C-1)");
++StoplessHeap::StoplessHeap()
++  : _soft_ref_policy(),
++    _barrier_set(nullptr),
++    _arena_capacity(0),
++    _arena_used(0) {
 +}
++
++jint StoplessHeap::initialize() {
++  // v1: no TLAB. Java alloc goes straight through mem_allocate.
++  UseTLAB = false;
++  // Phase C-3 will mmap the actual arena via cap_runtime/stopless_arena_init.
++  // For C-1 we just record the requested sizes so the JVM proceeds.
++  size_t min_byte_size = MAX2(MinHeapSize, (size_t)4 * M);
++  size_t max_byte_size = MAX2(MaxHeapSize, min_byte_size);
++  _arena_capacity = max_byte_size;
++  _arena_used     = 0;
++
++  // Install our (NOP) barrier set so BarrierSet::barrier_set() returns
++  // something non-null. Real read/write barriers are no-ops in C-1
++  // because the CHERI cap-tag check IS the barrier.
++  _barrier_set = new StoplessBarrierSet();
++  BarrierSet::set_barrier_set(_barrier_set);
++
++  return JNI_OK;
++}
++
++bool StoplessHeap::is_in(const void* p) const {
++  // v1: arena not yet allocated. C-3 will replace this.
++  (void)p;
++  return false;
++}
++
++HeapWord* StoplessHeap::mem_allocate(size_t size,
++                                     bool* gc_overhead_limit_was_exceeded) {
++  // C-4 fills in. For C-1 we return nullptr so the caller raises OOM
++  // gracefully rather than crashing — useful when running -version
++  // without ever needing to actually allocate.
++  (void)size;
++  if (gc_overhead_limit_was_exceeded != nullptr) {
++    *gc_overhead_limit_was_exceeded = false;
++  }
++  return nullptr;
++}
++
++void StoplessHeap::print_on(outputStream* st) const {
++  st->print_cr("Stopless Heap (CHERI-accelerated, Phase C-1 skeleton)");
++  st->print_cr("  capacity %zuK, used %zuK",
++               _arena_capacity / K, _arena_used / K);
++  if (_barrier_set != nullptr) {
++    _barrier_set->print_on(st);
++  }
++}
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.hpp b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
+new file mode 100644
+index 00000000000..324b638739c
+--- /dev/null
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
+@@ -0,0 +1,94 @@
++/*
++ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ *
++ * Phase C-1 skeleton — see docs/c1/design.md.
++ */
++
++#ifndef SHARE_GC_STOPLESS_STOPLESSHEAP_HPP
++#define SHARE_GC_STOPLESS_STOPLESSHEAP_HPP
++
++#include "gc/shared/collectedHeap.hpp"
++#include "gc/shared/softRefPolicy.hpp"
++#include "memory/virtualspace.hpp"
++#include "services/memoryManager.hpp"
++#include "services/memoryPool.hpp"
++#include "utilities/growableArray.hpp"
++
++class StoplessBarrierSet;
++
++// The Stopless heap is a single contiguous arena of CHERI-tagged
++// memory. v1 has no allocator (C-4 adds bump-pointer) and no collector
++// (C-9 adds the concurrent mover). This skeleton exists so the GC
++// machinery can be configured at JVM launch with -XX:+UseStoplessGC
++// and the JVM proceeds far enough to test the wire-up.
++
++class StoplessHeap : public CollectedHeap {
++  friend class VMStructs;
++ private:
++  SoftRefPolicy        _soft_ref_policy;
++  StoplessBarrierSet*  _barrier_set;
++  size_t               _arena_capacity;
++  size_t               _arena_used;
++
++ public:
++  static StoplessHeap* heap();
++
++  StoplessHeap();
++
++  // ---- CollectedHeap virtuals (minimal stubs for Phase C-1) -------
++
++  Name kind() const override          { return CollectedHeap::Stopless; }
++  const char* name() const override   { return "Stopless"; }
++
++  SoftRefPolicy* soft_ref_policy() override { return &_soft_ref_policy; }
++
++  jint initialize() override;
++  void post_initialize() override     { CollectedHeap::post_initialize(); }
++  void initialize_serviceability() override { /* C-7 */ }
++
++  size_t capacity() const override     { return _arena_capacity; }
++  size_t used() const override         { return _arena_used; }
++  size_t max_capacity() const override { return _arena_capacity; }
++
++  bool is_in(const void* p) const override;
++  bool is_maximal_no_gc() const override { return true; }
++
++  HeapWord* mem_allocate(size_t size,
++                         bool* gc_overhead_limit_was_exceeded) override;
++
++  void collect(GCCause::Cause cause) override            { /* C-9 */ }
++  void do_full_collection(bool clear_all_soft_refs) override { /* v1 no-op */ }
++
++  void object_iterate(ObjectClosure* cl) override        { ShouldNotReachHere(); }
++  
++  size_t tlab_capacity(Thread* thr) const override        { return 0; }
++  size_t tlab_used(Thread* thr) const override            { return 0; }
++
++  GrowableArray<GCMemoryManager*> memory_managers() override { return GrowableArray<GCMemoryManager*>(); }
++  GrowableArray<MemoryPool*> memory_pools() override         { return GrowableArray<MemoryPool*>(); }
++
++  // Stubs for required virtuals — Phase C v1 doesn't need real impls.
++  bool print_location(outputStream* st, void* addr) const override { return false; }
++  void gc_threads_do(ThreadClosure* tc) const override              { /* no extra threads */ }
++  void register_nmethod(nmethod* nm) override                       { }
++  void unregister_nmethod(nmethod* nm) override                     { }
++  void flush_nmethod(nmethod* nm) override                          { }
++  void verify_nmethod(nmethod* nm) override                         { }
++
++  void print_on(outputStream* st) const override;
++  void print_tracing_info() const override               { /* no-op */ }
++
++  void prepare_for_verify() override                     { /* no-op */ }
++  void verify(VerifyOption option) override              { /* no-op */ }
++
++  jlong millis_since_last_gc()                  { return 0; }
++
++  HeapWord* block_start(const void* addr) const { return nullptr; }
++  bool block_is_obj(const HeapWord* addr) const { return false; }
++
++  // -----------------------------------------------------------------
++
++  StoplessBarrierSet* barrier_set() const { return _barrier_set; }
++};
++
++#endif // SHARE_GC_STOPLESS_STOPLESSHEAP_HPP
 diff --git a/src/hotspot/share/gc/stopless/stopless_globals.hpp b/src/hotspot/share/gc/stopless/stopless_globals.hpp
 new file mode 100644
-index 0000000..0000007
+index 00000000000..55fb02cecc4
 --- /dev/null
 +++ b/src/hotspot/share/gc/stopless/stopless_globals.hpp
 @@ -0,0 +1,25 @@
@@ -359,7 +394,7 @@ index 0000000..0000007
 +#endif // SHARE_GC_STOPLESS_STOPLESS_GLOBALS_HPP
 diff --git a/src/hotspot/share/gc/stopless/vmStructs_stopless.hpp b/src/hotspot/share/gc/stopless/vmStructs_stopless.hpp
 new file mode 100644
-index 0000000..0000008
+index 00000000000..484f9b5e06c
 --- /dev/null
 +++ b/src/hotspot/share/gc/stopless/vmStructs_stopless.hpp
 @@ -0,0 +1,17 @@

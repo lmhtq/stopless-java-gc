@@ -118,9 +118,9 @@
 #       Pairs with 0080; line numbers are best-effort (may need rebase on
 #       hasee). See docs/c2/{design,impl_notes,test}.md.
 0081-stopless-gc-feature-enable.patch
-# 0082: link cap_runtime/libstopless_gc.a + libcheri_caprevoke into libjvm.so.
-#       See docs/c3/design.md.
-0082-stopless-runtime-link.patch
+# 0082: SUPERSEDED — content folded into 0081 to avoid cross-patch line
+#       offset fragility on JvmFeatures.gmk. Stub kept for series numbering.
+# 0082-stopless-runtime-link.patch
 # 0083: StoplessArena C++ wrapper class + StoplessHeap::initialize() rewrite
 #       to use real arenas. See docs/c3/{design,impl_notes,test}.md.
 0083-stopless-arena-cpp-bridge.patch
