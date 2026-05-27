@@ -26,7 +26,7 @@ CFLAGS += -std=c11
 OBJS = revoke.o forward_table.o handler.o
 LIB  = libstopless_gc.a
 
-TESTS = test_basic
+TESTS = test_basic test_multi
 
 .PHONY: all clean
 
@@ -40,6 +40,9 @@ $(LIB): $(OBJS)
 
 test_basic: tests/test_basic.c $(LIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -L. -lstopless_gc -lcheri_caprevoke
+
+test_multi: tests/test_multi.c $(LIB)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -L. -lstopless_gc -lcheri_caprevoke -lpthread
 
 clean:
 	rm -f *.o $(LIB) $(TESTS)
