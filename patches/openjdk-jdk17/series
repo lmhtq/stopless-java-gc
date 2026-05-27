@@ -82,7 +82,9 @@
 # INJECTED_FIELDS macro entries to use it. JVM still SIGPROTs at same point;
 # additional CHERI seams remain.
 0066-injected-field-t-address-cap-cheri.patch
-# 0067-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
+# 0067: remaining 8 metaspace BytesPerWord sites (from docs/10 scan worklist)
+0067-metaspace-9-more-bytesperword-sizeof-metaword.patch
+# 0068-cap-runtime-hook.patch                        (link src/cap_runtime/ into libjvm)
 
 # --- Phase 2 (deferred) ---
 # 0020-zgc-cap-load-barrier-swap.patch
