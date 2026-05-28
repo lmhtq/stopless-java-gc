@@ -1,0 +1,378 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Wed, 27 May 2026 21:00:00 +0800
+Subject: [PATCH] Phase C-3 + C-4: StoplessArena C++ wrapper + bump-pointer
+ allocate wired through mem_allocate
+
+Replaces the placeholder `_arena_capacity = MaxHeapSize` logic in
+StoplessHeap::initialize() with a real arena construction backed by
+cap_runtime/stopless_gc/.
+
+Combines what the old design split across patches 0083 (C-3) and 0085
+(C-4) into a single canonical patch because they touch the same files
+and the intermediate "stub allocate" state has no independent value;
+splitting required hand-authoring an intermediate diff, which is what
+caused the prior Mac-session patch divergence.
+
+Files:
+ * new: src/hotspot/share/gc/stopless/stoplessArena.hpp
+        RAII wrapper class StoplessArena (66 lines).
+ * new: src/hotspot/share/gc/stopless/stoplessArena.cpp
+        Bridge to cap_runtime via extern "C" #include of
+        revoke.h + allocator.h (NOT api.h — that header is currently
+        aspirational with no .c bodies). Calls stopless_arena_init/fini,
+        stopless_alloc, stopless_arena_used/reset, stopless_mark_revoke_cap,
+        stopless_revoke_now. Does NOT call stopless_init() — handler
+        install lives in C-7.
+ * modify: stoplessHeap.hpp
+        Forward-declare StoplessArena; replace _arena_capacity/_used
+        fields with _arena*; capacity()/used()/max_capacity() now
+        out-of-line.
+ * modify: stoplessHeap.cpp
+        initialize() does `new StoplessArena(max_byte_size)`. is_in()
+        consults arena. mem_allocate() calls _arena->allocate(size *
+        HeapWordSize) and log_warning's OOM. capacity/used/max_capacity
+        delegate to arena. print_on() delegates to arena.
+
+Design: docs/c3/design.md, docs/c4/design.md
+Playbook: docs/20_c3_c4_regen_playbook.md
+Supersedes: hand-authored 0083-stopless-arena-cpp-bridge.patch and
+            0085-stopless-arena-allocate-wire.patch (both removed).
+
+diff --git a/src/hotspot/share/gc/stopless/stoplessArena.cpp b/src/hotspot/share/gc/stopless/stoplessArena.cpp
+new file mode 100644
+index 00000000000..a84ec853eef
+--- /dev/null
++++ b/src/hotspot/share/gc/stopless/stoplessArena.cpp
+@@ -0,0 +1,107 @@
++/*
++ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ *
++ * Phase C-3 + C-4 — see docs/c3/design.md and docs/c4/design.md.
++ */
++
++#include "precompiled.hpp"
++#include "gc/stopless/stoplessArena.hpp"
++#include "runtime/java.hpp"
++#include "utilities/ostream.hpp"
++
++// cap_runtime C API. The JVM build adds the include path via -I in
++// make/hotspot/lib/JvmFeatures.gmk (see patch 0081 for stoplessgc
++// feature wiring). Use the low-level revoke.h/allocator.h directly —
++// api.h is currently aspirational (declares stopless_init et al. that
++// have no .c body).
++extern "C" {
++#include "revoke.h"
++#include "allocator.h"
++}
++
++#include <stdlib.h> // calloc/free
++
++StoplessArena::StoplessArena(size_t capacity_bytes)
++  : _c(nullptr), _capacity(capacity_bytes), _bump_offset(0) {
++
++  // Heap-allocate the stopless_arena_t. We cannot embed it directly
++  // because its layout includes a CHERI cap field (`void* base`) that
++  // must be initialised by stopless_arena_init via the C side.
++  _c = (stopless_arena_t*)::calloc(1, sizeof(*_c));
++  if (_c == nullptr) {
++    vm_exit_during_initialization("StoplessArena: calloc failed");
++  }
++
++  // mmap + shadow-bitmap acquisition.
++  int rc = stopless_arena_init(_c, capacity_bytes);
++  if (rc != 0) {
++    ::free(_c);
++    _c = nullptr;
++    vm_exit_during_initialization("StoplessArena: stopless_arena_init failed");
++  }
++}
++
++StoplessArena::~StoplessArena() {
++  if (_c != nullptr) {
++    stopless_arena_fini(_c);
++    ::free(_c);
++    _c = nullptr;
++  }
++}
++
++void* StoplessArena::base() const {
++  return (_c != nullptr) ? _c->base : nullptr;
++}
++
++bool StoplessArena::contains(const void* p) const {
++  if (_c == nullptr || _c->base == nullptr) return false;
++  uintptr_t a = (uintptr_t)p;
++  uintptr_t b = (uintptr_t)_c->base;
++  return (a >= b) && (a < b + _c->size);
++}
++
++void* StoplessArena::allocate(size_t bytes) {
++  if (_c == nullptr) return nullptr;
++  void* p = stopless_alloc(_c, bytes);
++  // Cache C-side authoritative bump offset for cheap used() calls.
++  _bump_offset = stopless_arena_used(_c);
++  return p;
++}
++
++size_t StoplessArena::used() const {
++  if (_c == nullptr) return 0;
++  return stopless_arena_used(_c);
++}
++
++void StoplessArena::reset() {
++  if (_c == nullptr) return;
++  stopless_arena_reset(_c);
++  _bump_offset = 0;
++}
++
++int StoplessArena::mark_for_revoke(void* cap) {
++  if (_c == nullptr) return -1;
++  return stopless_mark_revoke_cap(_c, cap);
++}
++
++int StoplessArena::revoke_sweep() {
++  // Per-process: revoke_now sweeps ALL marked bits across all arenas.
++  // C-9 may want a per-arena variant; for v1 we share the global sweep.
++  return stopless_revoke_now();
++}
++
++void StoplessArena::print_on(outputStream* st) const {
++  if (_c == nullptr) {
++    st->print_cr("  StoplessArena: <uninitialized>");
++    return;
++  }
++  st->print_cr("  StoplessArena: base=" PTR_FORMAT
++               " capacity=%zuK used=%zuK",
++               p2i(_c->base), _capacity / K,
++               stopless_arena_used(_c) / K);
++}
++
++void StoplessArena::verify() {
++  // v1: trust the C library. If invariants are violated we'd see
++  // SIGSEGV inside cap_runtime/ instead.
++}
+diff --git a/src/hotspot/share/gc/stopless/stoplessArena.hpp b/src/hotspot/share/gc/stopless/stoplessArena.hpp
+new file mode 100644
+index 00000000000..06f5163d38e
+--- /dev/null
++++ b/src/hotspot/share/gc/stopless/stoplessArena.hpp
+@@ -0,0 +1,66 @@
++/*
++ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ *
++ * Phase C-3 — see docs/c3/design.md.
++ *
++ * StoplessArena is a HotSpot-style RAII wrapper around the C struct
++ * stopless_arena_t defined in cap_runtime/stopless_gc/revoke.h.
++ *
++ * Lifetime contract:
++ *   StoplessArena a(64 * M);             // mmap + shadow alloc, may abort
++ *   void* p = a.allocate(128);           // C-4 fills this in
++ *   a.mark_for_revoke(p);                // C-9 will call this
++ *   a.revoke_sweep();                    // C-9 will call this
++ *   ...                                  // destructor unmaps + frees shadow
++ */
++
++#ifndef SHARE_GC_STOPLESS_STOPLESSARENA_HPP
++#define SHARE_GC_STOPLESS_STOPLESSARENA_HPP
++
++#include "memory/allocation.hpp"
++#include "utilities/globalDefinitions.hpp"
++
++// Forward-declare the C struct — full definition only included in .cpp.
++struct stopless_arena;
++typedef struct stopless_arena stopless_arena_t;
++
++class outputStream;
++
++class StoplessArena : public CHeapObj<mtGC> {
++ private:
++  stopless_arena_t* _c;            // owned, allocated in constructor
++  size_t            _capacity;
++  volatile size_t   _bump_offset;  // cached mirror of C-side atomic
++
++ public:
++  // Constructs and mmap-initializes the arena. Aborts the VM via
++  // vm_exit_during_initialization() if the underlying allocation or
++  // shadow-bitmap acquisition fails.
++  StoplessArena(size_t capacity_bytes);
++  ~StoplessArena();
++
++  // Read-only queries
++  void*  base() const;
++  size_t capacity() const          { return _capacity; }
++  size_t used() const;
++  bool   contains(const void* p) const;
++
++  // Allocation. C-3 returns nullptr; C-4 fills with bump-pointer.
++  void* allocate(size_t bytes);
++  // Reset the bump offset to 0; caller ensures arena fully evacuated.
++  void  reset();
++
++  // Mover-side primitives (forwarded to cap_runtime).
++  int mark_for_revoke(void* cap);
++  int revoke_sweep();
++
++  // Diagnostics
++  void print_on(outputStream* st) const;
++  void verify();
++
++ private:
++  StoplessArena(const StoplessArena&) = delete;
++  StoplessArena& operator=(const StoplessArena&) = delete;
++};
++
++#endif // SHARE_GC_STOPLESS_STOPLESSARENA_HPP
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+index 069115be038..8cdb0cb1894 100644
+--- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+@@ -7,7 +7,9 @@
+ #include "precompiled.hpp"
+ #include "gc/stopless/stoplessHeap.hpp"
+ #include "gc/stopless/stoplessBarrierSet.hpp"
++#include "gc/stopless/stoplessArena.hpp"
+ #include "gc/shared/gcArguments.hpp"
++#include "logging/log.hpp"
+ #include "memory/universe.hpp"
+ #include "runtime/globals.hpp"
+ #include "gc/shared/gc_globals.hpp"
+@@ -24,22 +26,21 @@ StoplessHeap* StoplessHeap::heap() {
+ StoplessHeap::StoplessHeap()
+   : _soft_ref_policy(),
+     _barrier_set(nullptr),
+-    _arena_capacity(0),
+-    _arena_used(0) {
++    _arena(nullptr) {
+ }
+ 
+ jint StoplessHeap::initialize() {
+   // v1: no TLAB. Java alloc goes straight through mem_allocate.
+   UseTLAB = false;
+-  // Phase C-3 will mmap the actual arena via cap_runtime/stopless_arena_init.
+-  // For C-1 we just record the requested sizes so the JVM proceeds.
+-  size_t min_byte_size = MAX2(MinHeapSize, (size_t)4 * M);
+-  size_t max_byte_size = MAX2(MaxHeapSize, min_byte_size);
+-  _arena_capacity = max_byte_size;
+-  _arena_used     = 0;
++  // Floor 4 MiB to avoid degenerate small heaps.
++  size_t max_byte_size = MAX2(MaxHeapSize, (size_t)4 * M);
++
++  // Allocate the real CHERI-backed arena via cap_runtime. Aborts the
++  // VM (vm_exit_during_initialization) on mmap/shadow failure.
++  _arena = new StoplessArena(max_byte_size);
+ 
+   // Install our (NOP) barrier set so BarrierSet::barrier_set() returns
+-  // something non-null. Real read/write barriers are no-ops in C-1
++  // something non-null. Real read/write barriers are no-ops in v1
+   // because the CHERI cap-tag check IS the barrier.
+   _barrier_set = new StoplessBarrierSet();
+   BarrierSet::set_barrier_set(_barrier_set);
+@@ -48,27 +49,53 @@ jint StoplessHeap::initialize() {
+ }
+ 
+ bool StoplessHeap::is_in(const void* p) const {
+-  // v1: arena not yet allocated. C-3 will replace this.
+-  (void)p;
+-  return false;
++  return _arena != nullptr && _arena->contains(p);
+ }
+ 
+ HeapWord* StoplessHeap::mem_allocate(size_t size,
+                                      bool* gc_overhead_limit_was_exceeded) {
+-  // C-4 fills in. For C-1 we return nullptr so the caller raises OOM
+-  // gracefully rather than crashing — useful when running -version
+-  // without ever needing to actually allocate.
+-  (void)size;
+   if (gc_overhead_limit_was_exceeded != nullptr) {
+     *gc_overhead_limit_was_exceeded = false;
+   }
+-  return nullptr;
++  if (_arena == nullptr) return nullptr;
++
++  // `size` is in HeapWords. On CHERI purecap HeapWordSize=16 (patch
++  // 0060). Convert to bytes for the bump allocator.
++  size_t bytes = size * HeapWordSize;
++  void*  p     = _arena->allocate(bytes);
++
++  if (p == nullptr) {
++    // OOM. C-9 will trigger a concurrent collection here and retry.
++    // v1: just propagate OOM upward.
++    log_warning(gc)("StoplessHeap: alloc(%zu bytes) returned nullptr "
++                    "(used=%zuK / cap=%zuK)",
++                    bytes,
++                    _arena->used() / K,
++                    _arena->capacity() / K);
++    return nullptr;
++  }
++  return (HeapWord*)p;
++}
++
++size_t StoplessHeap::capacity() const {
++  return _arena != nullptr ? _arena->capacity() : 0;
++}
++
++size_t StoplessHeap::used() const {
++  return _arena != nullptr ? _arena->used() : 0;
++}
++
++size_t StoplessHeap::max_capacity() const {
++  return _arena != nullptr ? _arena->capacity() : 0;
+ }
+ 
+ void StoplessHeap::print_on(outputStream* st) const {
+-  st->print_cr("Stopless Heap (CHERI-accelerated, Phase C-1 skeleton)");
+-  st->print_cr("  capacity %zuK, used %zuK",
+-               _arena_capacity / K, _arena_used / K);
++  st->print_cr("Stopless Heap (CHERI-accelerated)");
++  if (_arena != nullptr) {
++    _arena->print_on(st);
++  } else {
++    st->print_cr("  <arena not initialized>");
++  }
+   if (_barrier_set != nullptr) {
+     _barrier_set->print_on(st);
+   }
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.hpp b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
+index 324b638739c..de9321a2f0d 100644
+--- a/src/hotspot/share/gc/stopless/stoplessHeap.hpp
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
+@@ -15,20 +15,19 @@
+ #include "utilities/growableArray.hpp"
+ 
+ class StoplessBarrierSet;
++class StoplessArena;
+ 
+ // The Stopless heap is a single contiguous arena of CHERI-tagged
+-// memory. v1 has no allocator (C-4 adds bump-pointer) and no collector
+-// (C-9 adds the concurrent mover). This skeleton exists so the GC
+-// machinery can be configured at JVM launch with -XX:+UseStoplessGC
+-// and the JVM proceeds far enough to test the wire-up.
++// memory. v1 has no collector (C-9 adds the concurrent mover). The
++// arena itself (C-3) plus bump-pointer allocator (C-4) is wired up;
++// mem_allocate produces real CHERI-bounded caps.
+ 
+ class StoplessHeap : public CollectedHeap {
+   friend class VMStructs;
+  private:
+   SoftRefPolicy        _soft_ref_policy;
+   StoplessBarrierSet*  _barrier_set;
+-  size_t               _arena_capacity;
+-  size_t               _arena_used;
++  StoplessArena*       _arena;       // owned, created in initialize()
+ 
+  public:
+   static StoplessHeap* heap();
+@@ -46,9 +45,9 @@ class StoplessHeap : public CollectedHeap {
+   void post_initialize() override     { CollectedHeap::post_initialize(); }
+   void initialize_serviceability() override { /* C-7 */ }
+ 
+-  size_t capacity() const override     { return _arena_capacity; }
+-  size_t used() const override         { return _arena_used; }
+-  size_t max_capacity() const override { return _arena_capacity; }
++  size_t capacity() const override;
++  size_t used() const override;
++  size_t max_capacity() const override;
+ 
+   bool is_in(const void* p) const override;
+   bool is_maximal_no_gc() const override { return true; }

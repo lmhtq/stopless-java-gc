@@ -1,12 +1,32 @@
 From: lxh <lmhtq1991@gmail.com>
-Date: Wed, 27 May 2026 19:00:00 +0800
-Subject: [PATCH] Phase C-3a: (NO-OP) link cap_runtime/libstopless_gc.a
+Date: Wed, 27 May 2026 21:30:00 +0800
+Subject: [PATCH] Phase C-3a: fix STOPLESS_RUNTIME_DIR path in JvmFeatures.gmk
 
-Originally this patch added the STOPLESS_RUNTIME_DIR + JVM_LIBS_FEATURES
-glue to make/hotspot/lib/JvmFeatures.gmk. That content has been folded
-into 0081 to avoid a fragile cross-patch line offset on the same file.
+0081 added the stoplessgc Make block but set STOPLESS_RUNTIME_DIR to
+$(TOPDIR)/../cap_runtime/stopless_gc, i.e., one level UP from
+third_party/openjdk-jdk17/. Our cap_runtime actually lives in the
+sibling tree `src/cap_runtime/stopless_gc/`, so from openjdk's TOPDIR
+the correct relative path is two levels up, then `src/cap_runtime/...`.
 
-This patch is intentionally empty so the series numbering is preserved
-for docs/c3 design references.
+Symptom under the buggy path: the `wildcard $(STOPLESS_RUNTIME_DIR)/
+libstopless_gc.a` check silently fails (path doesn't exist), so the
+`-I$(STOPLESS_RUNTIME_DIR)` flag is not added, and stoplessArena.cpp
+fails at compile time with `fatal error: 'revoke.h' file not found`.
 
-Design: docs/c3/design.md
+This patch resurrects the previously-empty 0082 (which had been folded
+into 0081 prematurely) with the minimal one-line path fix.
+
+Design: docs/c3/design.md §6 (Build wiring)
+
+diff --git a/make/hotspot/lib/JvmFeatures.gmk b/make/hotspot/lib/JvmFeatures.gmk
+--- a/make/hotspot/lib/JvmFeatures.gmk
++++ b/make/hotspot/lib/JvmFeatures.gmk
+@@ -154,7 +154,7 @@ ifneq ($(call check-jvm-feature, stoplessgc), true)
+   JVM_EXCLUDE_PATTERNS += gc/stopless
+ else
+   JVM_CFLAGS_FEATURES += -DINCLUDE_STOPLESSGC=1
+-  STOPLESS_RUNTIME_DIR ?= $(TOPDIR)/../cap_runtime/stopless_gc
++  STOPLESS_RUNTIME_DIR ?= $(TOPDIR)/../../src/cap_runtime/stopless_gc
+   ifneq ($(wildcard $(STOPLESS_RUNTIME_DIR)/libstopless_gc.a),)
+     JVM_LIBS_FEATURES += $(STOPLESS_RUNTIME_DIR)/libstopless_gc.a -lcheri_caprevoke
+     JVM_CFLAGS_FEATURES += -I$(STOPLESS_RUNTIME_DIR)

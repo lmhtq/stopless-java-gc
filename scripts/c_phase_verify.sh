@@ -137,9 +137,13 @@ stage_B() {
     0080-stopless-gc-skeleton.patch
     0081-stopless-gc-feature-enable.patch
     0082-stopless-runtime-link.patch
-    0083-stopless-arena-cpp-bridge.patch
-    0085-stopless-arena-allocate-wire.patch
+    0083-stopless-arena-and-allocate.patch
   )
+  # NOTE: 0083 supersedes the old 0083-cpp-bridge + 0085-allocate-wire
+  # (C-3 + C-4 combined). Old hand-authored patches preserved as .orig.
+  # Also: `git apply --check` rejects already-applied patches, so this
+  # stage is only meaningful on a freshly-reset OpenJDK tree. Use
+  # `git apply --reverse --check` on an applied tree as a sanity check.
 
   local rc=0
   for p in "${patches[@]}"; do
