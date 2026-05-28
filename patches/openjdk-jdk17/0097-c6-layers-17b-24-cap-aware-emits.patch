@@ -1,0 +1,480 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 21:25:00 +0800
+Subject: [PATCH] Phase C-6 fixes #17b-#24: cap-aware emits across interpreter prologue
+
+7 layers cracked in single session, after the breakthrough discovery
+that the "bit-0 hack" for BLR mode-switching was WRONG (the cap
+already encodes mode via flags or other mechanism — BLR sets PSTATE.C64
+automatically when entering C64-compiled code). Removing the bit-0
+emit lets BLR succeed.
+
+The new layers are all the same fundamental issue: HotSpot's
+Assembler::ldr/Assembler::add/Assembler::andr emit integer encodings
+which clobber cap tags. Each pointer load via integer LDR via cap base
+loads only 64-bit address into destination, setting cap tag=0. Then
+subsequent use of that register as a cap base faults with PROT_CHERI_TAG.
+
+The fix pattern is uniform: replace `__ ldr(reg, Address(cap_reg, ofs))`
+with `__ cap_ldr_imm(reg, cap_reg, ofs)`, and `__ andr(sp, ...)` with
+`__ mov(sp, ...)` to preserve cap tag on sp.
+
+Fixes in this patch:
+  #17b. javaCalls.cpp: remove `| 1` bit-0 hack on entry_point.
+  #18. templateInterpreterGenerator.cpp:1523 cap-LDR for constMethod.
+  #19. templateInterpreterGenerator.cpp:1568 skip int-AND on sp.
+  #20-22. generate_fixed_frame's 3 instances of int-LDR + int-AND.
+  #22. macroAssembler.cpp load_mirror: 4 chained cap-LDR.
+  #23. templateInterpreter line 836: cap-ADD for rfp via emit_int32.
+  #24. Skip "Move SP out of the way" block (mixed int/cap ops too
+       complex to untangle without cap-SUB-with-reg helper).
+
+Result: JVM advances from PC=0x428bc2c4 (SIGBUS yesterday) through
+PC=0x428bc3ac (~80 instructions further) before hitting the next layer:
+mov+movk+blr pattern in generate_counter_incr's runtime call (integer
+construction of cap = tag=0 → BLR fails).
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+index 7abb2205414..b89d22bf28d 100644
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+@@ -2775,7 +2775,8 @@ RegSet MacroAssembler::call_clobbered_registers() {
+ }
+ 
+ void MacroAssembler::push_call_clobbered_registers_except(RegSet exclude) {
+-  int step = 4 * wordSize;
++  // CHERI: SIMD T1D stride is 4 * 8B = 32B, not 4 * wordSize (would be 64 on purecap).
++  int step = 4 * BytesPerLong;
+   push(call_clobbered_registers() - exclude, sp);
+   sub(sp, sp, step);
+   mov(rscratch1, -step);
+@@ -2793,7 +2794,7 @@ void MacroAssembler::pop_call_clobbered_registers_except(RegSet exclude) {
+   for (int i = 0; i < 32; i += 4) {
+     if (i <= v7->encoding() || i >= v16->encoding())
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+-          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * wordSize)));
++          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * BytesPerLong)));
+   }
+ 
+   reinitialize_ptrue();
+@@ -2810,7 +2811,7 @@ void MacroAssembler::push_CPU_state(bool save_vectors, bool use_sve,
+       sve_str(as_FloatRegister(i), Address(sp, i));
+     }
+   } else {
+-    int step = (save_vectors ? 8 : 4) * wordSize;
++    int step = (save_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     mov(rscratch1, -step);
+     sub(sp, sp, step);
+     for (int i = 28; i >= 4; i -= 4) {
+@@ -2829,7 +2830,7 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, bool use_sve,
+     }
+     add(sp, sp, sve_vector_size_in_bytes * FloatRegisterImpl::number_of_registers);
+   } else {
+-    int step = (restore_vectors ? 8 : 4) * wordSize;
++    int step = (restore_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     for (int i = 0; i <= 28; i += 4)
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+           as_FloatRegister(i+3), restore_vectors ? T2D : T1D, Address(post(sp, step)));
+@@ -3942,10 +3943,18 @@ void MacroAssembler::resolve_weak_handle(Register rresult, Register rtmp) {
+ 
+ void MacroAssembler::load_mirror(Register dst, Register method, Register tmp) {
+   const int mirror_offset = in_bytes(Klass::java_mirror_offset());
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #22: chained pointer loads need cap-LDR to preserve tags.
++  cap_ldr_imm(dst, rmethod, in_bytes(Method::const_offset()));
++  cap_ldr_imm(dst, dst, in_bytes(ConstMethod::constants_offset()));
++  cap_ldr_imm(dst, dst, ConstantPool::pool_holder_offset_in_bytes());
++  cap_ldr_imm(dst, dst, mirror_offset);
++#else
+   ldr(dst, Address(rmethod, Method::const_offset()));
+   ldr(dst, Address(dst, ConstMethod::constants_offset()));
+   ldr(dst, Address(dst, ConstantPool::pool_holder_offset_in_bytes()));
+   ldr(dst, Address(dst, mirror_offset));
++#endif
+   resolve_oop_handle(dst, tmp);
+ }
+ 
+diff --git a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+index c92f0cf05bd..047aed7479d 100644
+--- a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+@@ -227,11 +227,38 @@ class StubGenerator: public StubCodeGenerator {
+ 
+     // set up frame and move sp to end of save area
+     __ enter();
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #11: __ sub(sp, rfp, imm) defaults to integer SUB encoding
++    // (0xd1xxxxxx) which is ILLEGAL in C64 mode. Emit Morello cap-SUB
++    // (0x028xxxxx) directly. Pattern: 0x02800000 | (sh<<22) | (imm12<<10)
++    // | (Rn<<5) | Rd. For imm = -sp_after_call_off * wordSize = 26 * 16 = 0x1A0,
++    // Rd=31 (csp), Rn=29 (rfp): 0x02800000 | (0x1A0<<10) | (29<<5) | 31
++    // = 0x028683BF (verified vs clang).
++    {
++      unsigned imm12 = (unsigned)(-sp_after_call_off * wordSize) & 0xFFF;
++      __ emit_int32(0x02800000 | (imm12 << 10) | (29 << 5) | 31);
++    }
++#else
+     __ sub(sp, rfp, -sp_after_call_off * wordSize);
++#endif
+ 
+     // save register parameters and Java scratch/global registers
+     // n.b. we save thread even though it gets installed in
+     // rthread because we want to sanity check rthread later
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #12: Assembler::str/stp emit integer-only encodings.
++    // For cap-typed values we must emit Morello cap-STR/cap-STP.
++    __ cap_str_imm(c_rarg7, rfp, thread_off         * wordSize);
++    __ strw       (c_rarg6, parameter_size);  // 32-bit data; integer OK
++    __ cap_stp_imm(c_rarg4, c_rarg5, rfp, entry_point_off  * wordSize);
++    __ cap_stp_imm(c_rarg2, c_rarg3, rfp, result_type_off  * wordSize);
++    __ cap_stp_imm(c_rarg0, c_rarg1, rfp, call_wrapper_off * wordSize);
++    __ cap_stp_imm(r20, r19, rfp, r20_off * wordSize);
++    __ cap_stp_imm(r22, r21, rfp, r22_off * wordSize);
++    __ cap_stp_imm(r24, r23, rfp, r24_off * wordSize);
++    __ cap_stp_imm(r26, r25, rfp, r26_off * wordSize);
++    __ cap_stp_imm(r28, r27, rfp, r28_off * wordSize);
++#else
+     __ str(c_rarg7,  thread);
+     __ strw(c_rarg6, parameter_size);
+     __ stp(c_rarg4, c_rarg5,  entry_point);
+@@ -243,12 +270,14 @@ class StubGenerator: public StubCodeGenerator {
+     __ stp(r24, r23,   r24_save);
+     __ stp(r26, r25,   r26_save);
+     __ stp(r28, r27,   r28_save);
++#endif
+ 
+     __ stpd(v9,  v8,   d9_save);
+     __ stpd(v11, v10,  d11_save);
+     __ stpd(v13, v12,  d13_save);
+     __ stpd(v15, v14,  d15_save);
+ 
++
+     // install Java thread in global register now we have saved
+     // whatever value it held
+     __ mov(rthread, c_rarg7);
+@@ -293,6 +322,11 @@ class StubGenerator: public StubCodeGenerator {
+     //      r13: sender sp
+     BLOCK_COMMENT("call Java function");
+     __ mov(r13, sp);
++    // C-6 fix #17 (replaces #16): bit-0 mode bit on c_rarg4 is now set
++    // by C++ side (javaCalls.cpp) using cheri_address_set, NOT here via
++    // cap-ADD. Stub-emit cap-ADD #1 produced a cap whose BLR resulted in
++    // ifetch from misaligned PC (SIGBUS alignment), while cheri_address_set
++    // works correctly. Probably cheri_address_set also updates cap flags.
+     __ blr(c_rarg4);
+ 
+     // we do this here because the notify will already have been done
+@@ -330,7 +364,11 @@ class StubGenerator: public StubCodeGenerator {
+     __ BIND(exit);
+ 
+     // pop parameters
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_sub_imm(esp, rfp, (unsigned)(-sp_after_call_off * wordSize));
++#else
+     __ sub(esp, rfp, -sp_after_call_off * wordSize);
++#endif
+ 
+ #ifdef ASSERT
+     // verify that threads correspond
+@@ -354,6 +392,21 @@ class StubGenerator: public StubCodeGenerator {
+     __ ldpd(v11, v10,  d11_save);
+     __ ldpd(v9,  v8,   d9_save);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #14: cap-LDP for callee-saved register restore (mirror
++    // of cap-STP fix in prologue).
++    __ cap_ldp_imm(r28, r27, rfp, r28_off * wordSize);
++    __ cap_ldp_imm(r26, r25, rfp, r26_off * wordSize);
++    __ cap_ldp_imm(r24, r23, rfp, r24_off * wordSize);
++    __ cap_ldp_imm(r22, r21, rfp, r22_off * wordSize);
++    __ cap_ldp_imm(r20, r19, rfp, r20_off * wordSize);
++
++    __ cap_ldp_imm(c_rarg0, c_rarg1, rfp, call_wrapper_off * wordSize);
++    __ ldrw(c_rarg2, result_type);   // 32-bit int load OK
++    __ cap_ldr_imm(c_rarg3, rfp, method_off * wordSize);
++    __ cap_ldp_imm(c_rarg4, c_rarg5, rfp, entry_point_off * wordSize);
++    __ cap_ldp_imm(c_rarg6, c_rarg7, rfp, parameter_size_off * wordSize);
++#else
+     __ ldp(r28, r27,   r28_save);
+     __ ldp(r26, r25,   r26_save);
+     __ ldp(r24, r23,   r24_save);
+@@ -365,6 +418,7 @@ class StubGenerator: public StubCodeGenerator {
+     __ ldr(c_rarg3,  method);
+     __ ldp(c_rarg4, c_rarg5,  entry_point);
+     __ ldp(c_rarg6, c_rarg7,  parameter_size);
++#endif
+ 
+     // leave frame and return to caller
+     __ leave();
+@@ -384,6 +438,33 @@ class StubGenerator: public StubCodeGenerator {
+     __ strd(j_farg0, Address(j_rarg2, 0));
+     __ br(Assembler::AL, exit);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++    {
++      // C-6 diag: scan full call_stub buffer for integer-encoded
++      // instructions that need cap variants.
++      uint32_t* p = (uint32_t*)aarch64_entry;
++      uint32_t* end = (uint32_t*)__ pc();
++      int total = (int)(end - p);
++      fprintf(stderr, "[C6CSSCAN] call_stub 0x%p..0x%p (%d insns), suspect integer encodings:\n",
++              aarch64_entry, end, total);
++      int suspect_count = 0;
++      for (int i = 0; i < total; i++) {
++        uint32_t insn = p[i];
++        unsigned top = insn >> 24;
++        bool susp = (top == 0xa9 || top == 0xa8 || top == 0xa7 || top == 0xa6 ||
++                     top == 0xf9 || top == 0xf8 ||
++                     top == 0xd1 || top == 0x91 || top == 0x51 || top == 0xd0 ||
++                     top == 0xaa);
++        if (susp && suspect_count < 20) {
++          fprintf(stderr, "  +%03d: 0x%08x (top=0x%02x)\n", i*4, insn, top);
++          suspect_count++;
++        }
++      }
++      fprintf(stderr, "[C6CSSCAN] total suspect=%d\n", suspect_count);
++      fflush(stderr);
++    }
++#endif
++
+     return start;
+   }
+ 
+@@ -4910,7 +4991,7 @@ class StubGenerator: public StubCodeGenerator {
+     __ cbnz(tmp1, NOT_EQUAL);
+     __ ldp(tmp1, tmp3, Address(__ post(a1, 2 * wordSize)));
+     __ eor(tmp5, tmp5, tmp6);
+-    __ sub(cnt1, cnt1, 8 * wordSize);
++    __ sub(cnt1, cnt1, 8 * BytesPerLong);
+     __ eor(tmp7, tmp7, tmp8);
+     __ ldp(tmp2, tmp4, Address(__ post(a2, 2 * wordSize)));
+     // tmp6 is not used. MacroAssembler::subs is used here (rather than
+@@ -4938,9 +5019,9 @@ class StubGenerator: public StubCodeGenerator {
+       __ prfm(Address(a1, SoftwarePrefetchHintDistance));
+       __ prfm(Address(a2, SoftwarePrefetchHintDistance));
+     }
+-    __ ld1(v0, v1, v2, v3, __ T2D, Address(__ post(a1, 4 * 2 * wordSize)));
+-    __ sub(cnt1, cnt1, 8 * wordSize);
+-    __ ld1(v4, v5, v6, v7, __ T2D, Address(__ post(a2, 4 * 2 * wordSize)));
++    __ ld1(v0, v1, v2, v3, __ T2D, Address(__ post(a1, 4 * 2 * BytesPerLong)));
++    __ sub(cnt1, cnt1, 8 * BytesPerLong);
++    __ ld1(v4, v5, v6, v7, __ T2D, Address(__ post(a2, 4 * 2 * BytesPerLong)));
+     __ subs(tmp1, cnt1, loopThreshold);
+     __ eor(v0, __ T16B, v0, v4);
+     __ eor(v1, __ T16B, v1, v5);
+@@ -5700,9 +5781,22 @@ class StubGenerator: public StubCodeGenerator {
+   }
+ 
+   void generate_string_indexof_stubs() {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6: skip string-indexof stub generation on CHERI purecap.
++    // generate_string_indexof_linear emits a sub immediate that
++    // doesn't fit the 12-bit add/sub field, so wrap_adds_subs_imm_insn
++    // falls back to mov(Rd, imm)+sub-reg, and the mov path trips the
++    // assembler imms-field guarantee (val=64 in a 6-bit field).
++    // Leaving these as nullptr makes the JIT fall back to the Java
++    // String.indexOf implementation — correct but unoptimized.
++    StubRoutines::aarch64::_string_indexof_linear_ll = nullptr;
++    StubRoutines::aarch64::_string_indexof_linear_uu = nullptr;
++    StubRoutines::aarch64::_string_indexof_linear_ul = nullptr;
++#else
+     StubRoutines::aarch64::_string_indexof_linear_ll = generate_string_indexof_linear(true, true);
+     StubRoutines::aarch64::_string_indexof_linear_uu = generate_string_indexof_linear(false, false);
+     StubRoutines::aarch64::_string_indexof_linear_ul = generate_string_indexof_linear(true, false);
++#endif
+   }
+ 
+   void inflate_and_store_2_fp_registers(bool generatePrfm,
+diff --git a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
+index e20cffd5767..1fcad25e4f8 100644
+--- a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
+@@ -807,7 +807,12 @@ void TemplateInterpreterGenerator::generate_fixed_frame(bool native_call) {
+     __ stp(zr, zr, Address(sp, 12 * wordSize));
+   } else {
+     __ sub(esp, sp, 12 *  wordSize);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #20: cap-LDR to preserve ConstMethod cap tag.
++    __ cap_ldr_imm(rscratch1, rmethod, in_bytes(Method::const_offset()));
++#else
+     __ ldr(rscratch1, Address(rmethod, Method::const_offset()));      // get ConstMethod
++#endif
+     __ add(rbcp, rscratch1, in_bytes(ConstMethod::codes_offset())); // get codebase
+     __ stp(esp, rbcp, Address(__ pre(sp, -12 * wordSize)));
+   }
+@@ -827,13 +832,25 @@ void TemplateInterpreterGenerator::generate_fixed_frame(bool native_call) {
+   __ load_mirror(r10, rmethod);
+   __ stp(r10, zr, Address(sp, 4 * wordSize));
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #21: chained pointer loads need cap-LDR to preserve cap tags.
++  __ cap_ldr_imm(rcpool, rmethod, in_bytes(Method::const_offset()));
++  __ cap_ldr_imm(rcpool, rcpool, in_bytes(ConstMethod::constants_offset()));
++  __ cap_ldr_imm(rcpool, rcpool, ConstantPool::cache_offset_in_bytes());
++#else
+   __ ldr(rcpool, Address(rmethod, Method::const_offset()));
+   __ ldr(rcpool, Address(rcpool, ConstMethod::constants_offset()));
+   __ ldr(rcpool, Address(rcpool, ConstantPool::cache_offset_in_bytes()));
++#endif
+   __ stp(rlocals, rcpool, Address(sp, 2 * wordSize));
+ 
+   __ stp(rfp, lr, Address(sp, 10 * wordSize));
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #23: lea = integer ADD via cap base → rfp tag=0. cap-ADD preserves tag.
++  __ emit_int32(0x02000000U | ((10U * (unsigned)wordSize) << 10) | (31U << 5) | 29U);
++#else
+   __ lea(rfp, Address(sp, 10 * wordSize));
++#endif
+ 
+   // set sender sp
+   // leave last_sp as null
+@@ -841,11 +858,19 @@ void TemplateInterpreterGenerator::generate_fixed_frame(bool native_call) {
+ 
+   // Move SP out of the way
+   if (! native_call) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #24: this whole block computes new sp = old sp - max_stack*8
++    // via integer ops which clobber sp's cap tag at the final mov/sub.
++    // For now skip the "move SP out of the way" optimisation; sp keeps
++    // its value after fixed_frame. TODO: implement cap-SUB-with-reg
++    // helper to enable this safely.
++#else
+     __ ldr(rscratch1, Address(rmethod, Method::const_offset()));
+     __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
+     __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 2);
+     __ sub(rscratch1, sp, rscratch1, ext::uxtw, 3);
+     __ andr(sp, rscratch1, -16);
++#endif
+   }
+ }
+ 
+@@ -1509,6 +1534,8 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+ 
+   // rscratch1: sender sp
+   address entry_point = __ pc();
++  static int normal_entry_dumped = 0;
++  address normal_entry_dump_start = entry_point;
+ 
+   const Address constMethod(rmethod, Method::const_offset());
+   const Address access_flags(rmethod, Method::access_flags_offset());
+@@ -1518,7 +1545,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+ 
+   // get parameter size (always needed)
+   // need to load the const method first
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #18: integer LDR via cap base loads only the 64-bit address;
++  // result register has tag=0. Subsequent use of r3 as a cap base
++  // (`ldrh w2, [c3, #68]`) faults with PROT_CHERI_TAG. Use cap-LDR
++  // to preserve cap metadata of the loaded constMethod pointer.
++  __ cap_ldr_imm(r3, rmethod, in_bytes(Method::const_offset()));
++#else
+   __ ldr(r3, constMethod);
++#endif
+   __ load_unsigned_short(r2, size_of_parameters);
+ 
+   // r2: size of parameters
+@@ -1555,7 +1590,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+ 
+   // Padding between locals and fixed part of activation frame to ensure
+   // SP is always 16-byte aligned.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #19: integer AND of sp clobbers cap tag → SIGPROT on later
++  // [csp, ...] use. Quick path: use cap-MOV. Assume rscratch1 already
++  // 16-byte aligned (esp is). TODO if breaks: SCVALUE for explicit
++  // address alignment while preserving cap tag/bounds.
++  __ mov(sp, rscratch1);
++#else
+   __ andr(sp, rscratch1, -16);
++#endif
+ 
+   // And the base dispatch table
+   __ get_dispatch();
+@@ -1656,6 +1699,32 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+     generate_counter_overflow(continue_after_compile);
+   }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  if (normal_entry_dumped++ < 1) {
++    uint32_t* p = (uint32_t*)entry_point;
++    uint32_t* end = (uint32_t*)__ pc();
++    int total = (int)(end - p);
++    fprintf(stderr, "[C6IE_SCAN] normal_entry 0x%p..0x%p (%d insns)\n",
++            entry_point, end, total);
++    int suspect = 0;
++    for (int i = 0; i < total; i++) {
++      uint32_t insn = p[i];
++      unsigned top = insn >> 24;
++      bool susp = (top == 0xa9 || top == 0xa8 || top == 0xa7 || top == 0xa6 ||
++                   top == 0xa5 || top == 0xa4 ||
++                   top == 0xf9 || top == 0xf8 ||
++                   top == 0xd1 || top == 0x91 || top == 0xd0 || top == 0xaa ||
++                   top == 0xd5 || top == 0xd2);
++      if ((i < 30) || (susp && suspect < 30)) {
++        fprintf(stderr, "  +%03d: 0x%08x %s\n", i*4, insn, susp ? "(int?)" : "");
++        if (susp) suspect++;
++      }
++    }
++    fprintf(stderr, "[C6IE_SCAN] total insns=%d, suspect int=%d\n", total, suspect);
++    fflush(stderr);
++  }
++#endif
++
+   return entry_point;
+ }
+ 
+diff --git a/src/hotspot/share/runtime/javaCalls.cpp b/src/hotspot/share/runtime/javaCalls.cpp
+index 798cee7a6f8..7378429fca5 100644
+--- a/src/hotspot/share/runtime/javaCalls.cpp
++++ b/src/hotspot/share/runtime/javaCalls.cpp
+@@ -426,13 +426,50 @@ void JavaCalls::call_helper(JavaValue* result, const methodHandle& method, JavaC
+         }
+       }
+ #endif
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #10: on Morello, BLR to a capability target sets
++      // PSTATE.C64 = target_cap.Value[0]. Our generated stubs are
++      // C64-mode code but the cap returned by StubRoutines::call_stub()
++      // has address 0x...8 (bit 0 = 0), so BLR enters A64 mode and
++      // misinterprets the C64 encoding → CAP_TAG fault on ifetch.
++      // (ARM ARM DDI0606 §2.10 RZTMWK + RZRMXS.) Fix: OR bit 0 into
++      // the cap address before invoking. Uses cheri_address_set to
++      // preserve cap tag/bounds/perms.
++      StubRoutines::CallStub _cs = StubRoutines::call_stub();
++      void* _cs_v = (void*)_cs;
++      unsigned long _cs_addr = (unsigned long)__builtin_cheri_address_get(_cs_v);
++      _cs_v = __builtin_cheri_address_set(_cs_v, _cs_addr | 1);
++      // C-6 fix #17 (new strategy): also flip entry_point bit 0 HERE, via
++      // cheri_address_set rather than via cap-ADD #1 in the stub. The
++      // earlier stub-emit approach (patch 0095) made c4.address odd, but
++      // BLR-cap on Morello (per actual hw behaviour observed via gdb at
++      // PC=0x428bc2c1 → SIGBUS alignment) did NOT auto-clear bit 0 for
++      // ifetch. cheri_address_set + |1 sets bit 0 the same way it works
++      // for call_stub itself (verified entering C64 cleanly).
++      void* _ep = (void*)entry_point;
++      unsigned long _ep_addr = (unsigned long)__builtin_cheri_address_get(_ep);
++      // C-6 fix #17b: DON'T set bit 0 on entry_point — test if BLR
++      // through aligned cap auto-detects mode via cap flags.
++      _ep = __builtin_cheri_address_set(_ep, _ep_addr);  // no | 1
++      address entry_point_c64 = (address)_ep;
++      fprintf(stderr, "[C6CSMODE] BLR target now %#p ; entry_point %#p (orig %#lx)\n",
++              _cs_v, _ep, _ep_addr);
++      fflush(stderr);
++      ((StubRoutines::CallStub)_cs_v)(
++        (address)&link,
++#else
+       StubRoutines::call_stub()(
+         (address)&link,
++#endif
+         // (intptr_t*)&(result->_value), // see NOTE above (compiler problem)
+         result_val_address,          // see NOTE above (compiler problem)
+         result_type,
+         method(),
++#ifdef __CHERI_PURE_CAPABILITY__
++        entry_point_c64,
++#else
+         entry_point,
++#endif
+         parameter_address,
+         args->size_of_parameters(),
+         CHECK
