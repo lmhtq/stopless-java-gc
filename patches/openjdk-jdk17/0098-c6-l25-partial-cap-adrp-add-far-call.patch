@@ -1,0 +1,104 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 22:50:00 +0800
+Subject: [PATCH] Phase C-6 fix #25 (partial): call_VM_leaf_base adrp+cap-ADD
+
+Replaces the integer `mov rscratch1, entry_point; blr rscratch1`
+pattern with `adrp + cap-ADD + blr` so rscratch1 holds a valid
+capability (tag=1) rather than an integer (tag=0).
+
+Result: BLR succeeds in cap-dispatching, BUT lands at a PCC-derived
+cap whose bounds = [code_cache_start, code_cache_end). The entry_point
+(libjvm.so .text address) is OUTSIDE those bounds → SIGBUS
+PROT_CHERI_BOUNDS at first instruction fetch.
+
+This patch is HALF the fix. The other half — getting a cap whose
+bounds COVER the entry_point — requires:
+- a runtime-populated table of valid function caps, OR
+- a relocation-aware codegen that emits GOT-style indirect loads, OR
+- passing the entry_point cap as a parameter from C++ (where pointers
+  have wide bounds) into a register before stub dispatch
+
+Each option is a HotSpot-level architectural change, not a single-emit
+fix. Out of scope for this session.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+index 7abb2205414..059c47f3aa5 100644
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+@@ -1520,7 +1520,18 @@ void MacroAssembler::call_VM_leaf_base(address entry_point,
+ 
+   stp(rscratch1, rmethod, Address(pre(sp, -2 * wordSize)));
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #25: mov+movk constructs an integer address (cap tag=0);
++  // BLR via tag=0 cap fails with SIGBUS. Use adrp+cap-ADD to derive a
++  // valid cap from PCC pointing to entry_point.
++  uint64_t offset;
++  adrp(rscratch1, ExternalAddress(entry_point), offset);
++  // cap-ADD Rd=Rn=rscratch1, imm12=offset (preserves cap tag from ADRP).
++  emit_int32(0x02000000U | ((unsigned)(offset & 0xFFF) << 10)
++             | (rscratch1->encoding() << 5) | rscratch1->encoding());
++#else
+   mov(rscratch1, entry_point);
++#endif
+   blr(rscratch1);
+   if (retaddr)
+     bind(*retaddr);
+@@ -2775,7 +2786,8 @@ RegSet MacroAssembler::call_clobbered_registers() {
+ }
+ 
+ void MacroAssembler::push_call_clobbered_registers_except(RegSet exclude) {
+-  int step = 4 * wordSize;
++  // CHERI: SIMD T1D stride is 4 * 8B = 32B, not 4 * wordSize (would be 64 on purecap).
++  int step = 4 * BytesPerLong;
+   push(call_clobbered_registers() - exclude, sp);
+   sub(sp, sp, step);
+   mov(rscratch1, -step);
+@@ -2793,7 +2805,7 @@ void MacroAssembler::pop_call_clobbered_registers_except(RegSet exclude) {
+   for (int i = 0; i < 32; i += 4) {
+     if (i <= v7->encoding() || i >= v16->encoding())
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+-          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * wordSize)));
++          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * BytesPerLong)));
+   }
+ 
+   reinitialize_ptrue();
+@@ -2810,7 +2822,7 @@ void MacroAssembler::push_CPU_state(bool save_vectors, bool use_sve,
+       sve_str(as_FloatRegister(i), Address(sp, i));
+     }
+   } else {
+-    int step = (save_vectors ? 8 : 4) * wordSize;
++    int step = (save_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     mov(rscratch1, -step);
+     sub(sp, sp, step);
+     for (int i = 28; i >= 4; i -= 4) {
+@@ -2829,7 +2841,7 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, bool use_sve,
+     }
+     add(sp, sp, sve_vector_size_in_bytes * FloatRegisterImpl::number_of_registers);
+   } else {
+-    int step = (restore_vectors ? 8 : 4) * wordSize;
++    int step = (restore_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     for (int i = 0; i <= 28; i += 4)
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+           as_FloatRegister(i+3), restore_vectors ? T2D : T1D, Address(post(sp, step)));
+@@ -3942,10 +3954,18 @@ void MacroAssembler::resolve_weak_handle(Register rresult, Register rtmp) {
+ 
+ void MacroAssembler::load_mirror(Register dst, Register method, Register tmp) {
+   const int mirror_offset = in_bytes(Klass::java_mirror_offset());
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #22: chained pointer loads need cap-LDR to preserve tags.
++  cap_ldr_imm(dst, rmethod, in_bytes(Method::const_offset()));
++  cap_ldr_imm(dst, dst, in_bytes(ConstMethod::constants_offset()));
++  cap_ldr_imm(dst, dst, ConstantPool::pool_holder_offset_in_bytes());
++  cap_ldr_imm(dst, dst, mirror_offset);
++#else
+   ldr(dst, Address(rmethod, Method::const_offset()));
+   ldr(dst, Address(dst, ConstMethod::constants_offset()));
+   ldr(dst, Address(dst, ConstantPool::pool_holder_offset_in_bytes()));
+   ldr(dst, Address(dst, mirror_offset));
++#endif
+   resolve_oop_handle(dst, tmp);
+ }
+ 
