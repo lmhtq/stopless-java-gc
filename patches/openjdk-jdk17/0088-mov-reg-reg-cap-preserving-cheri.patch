@@ -1,0 +1,68 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 12:30:00 +0800
+Subject: [PATCH] Phase C-6 fix #6: cap-preserving mov(Register, Register) on CHERI
+
+`MacroAssembler::mov(Register Rd, Register Rn)` on AArch64 encodes
+as `orr Rd, ZR, Rn`. On CHERI Morello, ORR is an INTEGER op — it
+copies the lower 64 bits but CLEARS THE TAG of any capability in
+Rn during the move. Subsequent uses of Rd as a capability (load,
+store, branch) fault with PROT_CHERI_TAG.
+
+Concrete trigger: `StubRoutines::forward_exception` does
+  __ mov(r19, r0);   // exception handler cap → r19
+  __ br(r19);         // jump to handler
+The first mov clears r19's tag; the br lands at the tag-zero PC and
+the CPU faults at end-of-stub (the immediate-next instruction
+address inside the stub blob).
+
+Diagnosis path: cap_runtime SIGPROT handler (installed via patch
+0087) captured si_addr=pc=0x428b8138, identified via -XX:+PrintStubCode
+as the END of `StubRoutines::forward exception
+[0x428b8100, 0x428b8138]`. Source inspection of generate_forward_exception
+revealed the int-mov of a cap handler address.
+
+Fix: under __CHERI_PURE_CAPABILITY__, change mov(Rd, Rn) to use
+`add Rd, Rn, #0` instead of `orr Rd, ZR, Rn`. On Morello, `add cap+0`
+is the canonical cap-preserving move idiom — it preserves tag and
+provenance. On classic AArch64 this is functionally equivalent (add
+of integer + 0). The existing sp-case already used `add Rd, Rn, #0`
+because ORR doesn't accept SP; we extend that path to all reg-reg
+moves under CHERI.
+
+Effect: with this patch, JVM init progresses past the forward_exception
+SIGPROT and into TemplateInterpreterGenerator::generate_native_entry,
+which exposes the NEXT layer (val=32 in 5-bit field at bits [9:5] —
+register-number encoding overflow, likely a CHERI cap-register beyond
+the AArch64 GP-register range). Documented in docs/26 (next session).
+
+Scope note: this is a global change to all reg-reg moves, not just
+forward_exception. Lots of other JVM paths benefit (any cap moved
+between registers via the inline `mov` helper). The performance
+difference between `orr Rd, ZR, Rn` and `add Rd, Rn, #0` is
+negligible.
+
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+@@ -236,11 +236,23 @@
+   inline void mov(Register Rd, Register Rn) {
+     assert(Rd != r31_sp && Rn != r31_sp, "should be");
+     if (Rd == Rn) {
+     } else if (Rd == sp || Rn == sp) {
+       Assembler::add(Rd, Rn, 0U);
+     } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #6: on CHERI purecap, register-to-register moves must
++      // be cap-preserving. The classic `orr Rd, ZR, Rn` is an INTEGER op
++      // that clears the cap tag of Rn during the copy. The Morello
++      // `add Rd, Rn, #0` preserves tag and provenance (it's the cap-mov
++      // idiom). Concrete symptom: `__ mov(r19, r0)` in
++      // generate_forward_exception lost the tag of the exception
++      // handler address, so the subsequent `br r19` SIGPROT'd at the
++      // tag-zero PC.
++      Assembler::add(Rd, Rn, 0U);
++#else
+       orr(Rd, zr, Rn);
++#endif
+     }
+   }
