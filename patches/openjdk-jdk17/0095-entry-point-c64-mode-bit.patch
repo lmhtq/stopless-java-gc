@@ -1,0 +1,43 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 16:30:00 +0800
+Subject: [PATCH] Phase C-6 fix #16: set bit 0 on entry_point before BLR
+
+Mirror of patch 0092 but for the Java entry_point cap (c_rarg4),
+not the call_stub cap itself. Per ARM ARM §2.10 RZTMWK, BLR sets
+PSTATE.C64 from the target cap's bit 0. The Java entry_point
+(interpreter/JIT entry) is C64 code, so the BLR target must have
+bit 0 set to enter C64 mode.
+
+HotSpot's stub pointers are byte-aligned (bit 0 = 0). cap-ADD #1
+preserves tag and sets bit 0 in the address (which on BLR becomes
+the mode bit, with actual fetch address having bit 0 cleared
+automatically — same semantics as ARM/Thumb interworking on
+classic AArch32).
+
+Encoding cap-ADD c4, c4, #1: 0x02000484 (verified vs clang).
+
+After this patch, call_stub correctly enters Java entry_point in
+C64 mode. But the JVM still SIGILLs — now inside the template
+interpreter itself, which is the next big porting target (~256
+bytecode entry stubs, each potentially having the same integer-
+vs-cap encoding issue as call_stub had).
+
+C-6 cascade resolved for call_stub. Layer 17+ work shifts to
+template interpreter (separate stubGenerator file).
+
+diff --git a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+--- a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+@@ -323,6 +323,15 @@
+     BLOCK_COMMENT("call Java function");
+     __ mov(r13, sp);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #16: set bit 0 on entry_point cap so BLR enters C64
++    // mode (mirror of patch 0092 for call_stub's own entry; same rule
++    // RZTMWK from ARM ARM §2.10). cap-ADD c4, c4, #1 preserves tag,
++    // adds 1 to address (which then becomes the mode bit on BLR).
++    // Encoding: 0x02000000 | (imm12<<10) | (Rn<<5) | Rd
++    // For c4: 0x02000000 | (1<<10) | (4<<5) | 4 = 0x02000484
++    __ emit_int32(0x02000000U | (1U << 10) | (4U << 5) | 4U);
++#endif
+     __ blr(c_rarg4);
