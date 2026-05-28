@@ -65,6 +65,43 @@ attempt (still being investigated) converted it to a cap-LDP but kept
 c0 as base — likely a HotSpot-side register-alias confusion where
 `r0` and `c_rarg0` collide.
 
+## Followup data (gdb session 2 at end of day)
+
+A second gdb run captured all relevant cap registers at fault:
+
+```
+c0  = 0x42681440 [rwRW,  0x42681440-0x426814c0]    (128B wrapper cap)
+c4  = 0x428bc2c1 [rwxRWE, 0x428b4000-0x448b4000]   (sentry, BLR target)
+c12 = 0x4b045ae0 [rwxRWE, 0x4abb8000-0x4f3b8000]   (method cap)
+c29 = 0x42681370 [rwRW,  0x42482000-0x42682000]   (rfp, 2MB stack)
+c30 = 0x428b41b1 [rwxRWE, 0x428b4000-0x448b4000]  (LR, sentry)
+csp = 0x426811c0
+```
+
+Raw bytes at PC: `0x62f94009 0x63794088 0x63794084 0x68cb0200`.
+
+**Open puzzle**: C6IE_SCAN at generation time reported the FIRST instruction
+of normal_entry at the same 0x428bc2c0 address as `0xf9400983` (integer
+LDR x3). gdb at fault time reads `0x62f94009`. Different bytes, same
+nominal address. Three hypotheses:
+
+1. CodeCache reused the address: C6IE_SCAN dumped the first generate_normal_entry's
+   stub; the JVM then evicted/overwrote that region with a later stub.
+2. C6IE_SCAN had an address-arithmetic bug (cap-cast to uint32_t* could
+   misbehave with bit-0 mode marker).
+3. The `entry_point` cap returned to C++ by `__ pc()` had a different
+   meaning of "address" than what BLR jumps to.
+
+Search for `0x62F94009` (little-endian `09 40 f9 62`) in libjvm.so:
+**0 occurrences**. So the instruction is NOT statically encoded; it's
+runtime-generated via some `emit_int32(constructed_value)`. Need to find
+which generator constructs this value.
+
+Best next-session move: re-run gdb but set a hardware breakpoint at
+each `generate_normal_entry` return to capture all entry_point addresses,
+matching them against the runtime BLR target. That tells us which
+generate_normal_entry instance is actually being called.
+
 ## Source-side detective work (TODO next session)
 
 Search for the emit site of `ldp c_,c_, [Rn, #-224]!` with Rn=0:
