@@ -1,0 +1,39 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 17:30:00 +0800
+Subject: [PATCH] Phase C-6 fix #17 (diag): templateInterpreter scanner + SIGILL handler
+
+Two infrastructure pieces for next session's interpreter cap-port:
+
+1. cap_runtime SIGILL handler: stopless_handler_install now also
+   registers a SIGILL handler that prints faulting PC + surrounding
+   bytes when SIGILL fires. With SA_NODEFER + return-code check.
+   Caveat: in iter 59, the install returned rc=0 but the handler
+   never actually fires when JVM SIGILLs — suggests JVM's own
+   signal handler (installed AFTER ours during create_vm) takes
+   over and dies before forwarding. OR the kernel handles
+   Morello-specific undef-cap-insn differently from typical SIGILL.
+   Solved next session by either: reinstalling our handler later,
+   or attaching gdb to the QEMU process.
+
+2. C6IE_SCAN diagnostic in TemplateInterpreterGenerator::
+   generate_normal_entry: dumps the first 30 instructions emitted
+   + scans for integer-encoded suspects. Output from iter 55:
+     [C6IE_SCAN] normal_entry 0x0x428bc2c0..0x0x428bc550 (164 insns)
+     total insns=164, suspect int=30
+   Plus instruction-by-instruction listing. Most are legal C64-mode
+   integer-via-cap-base operations (0xf8/0xf9 LDR/STR-x); the
+   illegal one needs sub-isolation.
+
+Session arc context: after patches 0091-0095, call_stub itself is
+~80% cap-ported (prologue + epilogue use cap-STP/STR/LDP/LDR, bit
+0 set on stub function pointer + Java entry_point). JVM successfully
+enters call_stub in C64 mode, executes prologue, calls into Java
+entry_point... and SIGILLs somewhere inside.
+
+The next layer of porting work is the ~256 bytecode interpreter
+stubs in templateInterpreterGenerator_aarch64.cpp, plus shared
+helpers in macroAssembler that emit integer encodings (e.g.,
+load_unsigned_short, mov_metadata, etc). Each needs cap-variant
+treatment, same pattern as call_stub.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
