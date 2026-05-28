@@ -1,0 +1,63 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 13:00:00 +0800
+Subject: [PATCH] Phase C-6 fix #7: mov(Rd, zr) special case for patch 0088
+
+Patch 0088 changed `mov(Reg, Reg)` to use `add(Rd, Rn, #0)` on
+CHERI to preserve cap tags. But that broke the `mov(Rd, zr)` case
+because HotSpot encodes the zero register `zr` as Register #32
+(distinct from `sp` at #33 and the explicit `r31_sp` at #31), and
+`Assembler::add` doesn't translate #32 → the bits[9:5] Rn field.
+Result: emit field overflow when generating native-method entry
+stubs that issue `mov(rscratch, zr)` (one of many).
+
+Diagnosis: with patch 0087's SIGPROT diagnostic + patch 0088
+unblocking forward_exception, the JVM now reached
+TemplateInterpreterGenerator::generate_native_entry and hit a
+NEW assembler guarantee:
+  [C6f] OVERFLOW val=32(0x20) msb=9 lsb=5 nbits=5 insn_so_far=0x91000016
+                    ^^                                      ^^^^^^^^^^^
+                    Rn=32                              ADD partial encoding
+  ra1 = generate_native_entry
+        templateInterpreterGenerator_aarch64.cpp:1145
+which decodes as: trying to encode `ADD Xd, X32, #0` — a register
+beyond the 5-bit valid range.
+
+Register encoding from register_aarch64.hpp:120-122:
+  r31_sp  = (31)   // real reg 31 — used where context picks ZR or SP
+  zr      = (32)   // pseudo, gets translated by aware encoders
+  sp      = (33)   // pseudo, gets translated by aware encoders
+
+The original `orr(Rd, zr, Rn)` worked because `orr`'s encoder
+recognizes zr and emits register #31 with the ORR ZR variant.
+`Assembler::add` translates `sp` but not `zr`.
+
+Fix: special-case `Rn == zr` in mov(Reg, Reg) — fall back to the
+classic `orr Rd, ZR, ZR` pattern, which is the correct semantic
+anyway (mov-from-zr means "zero out Rd", which is integer-zero,
+not cap-preserving — we WANT the tag clear).
+
+Effect: with this patch, JVM init progresses further into
+String::<clinit> execution. Hits next blocker at PC 0x428b4138
+(another stub-blob fault, presumably yet another cap-truncating
+sequence). To be diagnosed next session.
+
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+@@ -239,6 +239,15 @@
+       Assembler::add(Rd, Rn, 0U);
++    } else if (Rn == zr) {
++      // Move zero into Rd; this is intentionally an integer-zero
++      // (NOT cap-preserving) since the source is the zero register.
++      // Must use orr here because Assembler::add doesn't translate
++      // zr (encoded as #32 in HotSpot to disambiguate from sp/r31_sp);
++      // passing zr to add would emit register #32 in the 5-bit Rn
++      // field, overflowing. orr's encoder handles zr correctly.
++      orr(Rd, zr, Rn);
+     } else {
+ #ifdef __CHERI_PURE_CAPABILITY__
+       Assembler::add(Rd, Rn, 0U);
+ #else
+       orr(Rd, zr, Rn);
+ #endif
+     }
