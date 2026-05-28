@@ -1,0 +1,77 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 13:30:00 +0800
+Subject: [PATCH] Phase C-6 fix #8: real Morello MOV (Capability) opcode
+
+Patches 0088+0089 attempted to make mov(Reg, Reg) cap-preserving by
+swapping `orr Rd, ZR, Rn` for `add Rd, Rn, #0`. That was wrong: on
+Morello, the standard AArch64 ADD immediate (opcode prefix 0x91xxxxxx
+for sf=1) is the INTEGER ADD; it operates on the address portion of
+the registers but does NOT preserve cap tag. Confirmed empirically
+via Morello clang on a tiny test program:
+
+  mov  c0, c1     -> 0xC2C1D020          // MOV (Capability)
+  add  c0, c1, #0 -> 0x02000020          // ADD (Capability, immediate)
+  mov  x0, x1     -> 0xAA0103E0          // MOV (Register) — orr alias
+  add  x0, x1, #0 -> 0x91000020          // standard ADD imm (what we'd emit)
+
+HotSpot's `Assembler::add(Rd, Rn, imm)` emits the standard AArch64
+encoding at 0x91xxxxxx, not the Morello cap-ADD at 0x02xxxxxx.
+
+Real fix: emit the Morello "MOV (Capability)" opcode directly via
+emit_int32(). Encoding:
+
+    MOV Cd, Cn = 0xC2C1D000 | (Rn << 5) | Rd     // Rd,Rn ∈ 0..30
+
+Verified at build time by reading back the buffer after `__ mov(r19, r0)`
+in generate_forward_exception:
+    [C6mov] emitted mov(r19, r0) bytes = 0xc2c1d013  (expected exactly)
+
+This patch supersedes the body of 0088's "use add" approach for the
+CHERI branch. The 0089 special-case for zr (use orr) stays in place
+since mov-from-zr is semantically integer-zero anyway.
+
+Note: even with this opcode-correct fix, the next layer in the C-6
+cascade still SIGPROTs at the same address (PC = end of
+forward_exception = start of the next stub, generate_call_stub).
+But via separate instrumentation we confirmed
+SharedRuntime::exception_handler_for_return_address is never reached,
+so the fault is on ENTRY to call_stub (called when init_class(String)
+invokes <clinit> via JavaCalls::call_static), NOT inside
+forward_exception's mov sequence. So this patch is a genuine fix for
+forward_exception's mov-tag-loss, but it doesn't unblock the JVM
+because the next layer is independent.
+
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+@@ -239,15 +239,29 @@
+     if (Rd == Rn) {
+     } else if (Rd == sp || Rn == sp) {
+       Assembler::add(Rd, Rn, 0U);
+-    } else if (Rn == zr) {
++    } else if (Rd == zr || Rn == zr) {
+       // Move zero into Rd; this is intentionally an integer-zero
+       // (NOT cap-preserving) since the source is the zero register.
+       // Must use orr here because Assembler::add doesn't translate
+       // zr (encoded as #32 in HotSpot to disambiguate from sp/r31_sp);
+       // passing zr to add would emit register #32 in the 5-bit Rn
+       // field, overflowing. orr's encoder handles zr correctly.
+       orr(Rd, zr, Rn);
+     } else {
+ #ifdef __CHERI_PURE_CAPABILITY__
+-      Assembler::add(Rd, Rn, 0U);
++      // C-6 fix #8: emit the Morello MOV (Capability) instruction
++      // directly. Encoding: 0xC2C1D000 | (Rn << 5) | Rd, where Rd
++      // and Rn are 5-bit (0..30). Confirmed via Morello clang:
++      //   mov c0, c1  -> 0xC2C1D020
++      //   mov c19, c0 -> 0xC2C1D013
++      //   mov c2, c3  -> 0xC2C1D062
++      // Prior attempts (orr Rd, ZR, Rn — integer; add Rd, Rn, #0 —
++      // also integer ADD imm at opcode 0x91xxxxxx, NOT the cap-ADD
++      // at 0x02xxxxxx) both clear the cap tag. The MOV (Capability)
++      // instruction at 0xC2C1Dxxx is the canonical preserving form.
++      emit_int32(0xC2C1D000 | (Rn->encoding() << 5) | Rd->encoding());
+ #else
+       orr(Rd, zr, Rn);
+ #endif
+     }
