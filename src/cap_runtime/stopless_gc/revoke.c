@@ -43,9 +43,17 @@ stopless_arena_init(stopless_arena_t *out, size_t size)
     memset(out, 0, sizeof(*out));
 
     /* Map the arena. PROT_MAX wired wide so we can later mprotect for
-       write barriers (§3.6 of design). */
+       write barriers (§3.6 of design).
+       PROT_CAP is required for the arena to accept cap stores (i.e.,
+       store-via-cap of a tagged capability such as a Java oop). Without
+       it, mmap returns a cap whose perms lack STORE_CAP, and the first
+       oop-store through such a cap SIGPROTs (CheriBSD mman.h:PROT_CAP).
+       test_basic/test_alloc happened not to exercise cap-stores into the
+       arena, so they passed despite the missing perm — JVM Throwable's
+       static-final-String init was the first observable trigger. */
     void *p = mmap(NULL, size,
-                   PROT_READ | PROT_WRITE | PROT_MAX(PROT_READ | PROT_WRITE),
+                   PROT_READ | PROT_WRITE | PROT_CAP |
+                   PROT_MAX(PROT_READ | PROT_WRITE | PROT_CAP),
                    MAP_ANON | MAP_PRIVATE, -1, 0);
     if (p == MAP_FAILED) {
         fprintf(stderr, "stopless_arena_init: mmap failed: %s\n", strerror(errno));

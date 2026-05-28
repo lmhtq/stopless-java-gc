@@ -1,0 +1,60 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 11:30:00 +0800
+Subject: [PATCH] Phase C-6 fix #5: skip generate_string_indexof_stubs on CHERI
+
+Pinpointed via dladdr + addr2line on __builtin_return_address(0..3)
+from inside the assembler_aarch64.hpp f() guarantee. The
+`MacroAssembler::sub(Reg, Reg, uint64_t)` call from
+`generate_string_indexof_linear` produces an immediate too big for
+the 12-bit add/sub-imm field; `wrap_adds_subs_imm_insn` falls back to
+`mov(Rd, imm) + sub-reg`; the `mov` path encodes via bfm-family
+logical-immediate, whose `imms` field at bits [15:10] is only 6 bits
+and overflows for the generated constant (val=64, nbits=6).
+
+Crash trace at the moment of the guarantee:
+  ra1 = MacroAssembler::sub(Reg, Reg, unsigned long)
+        macroAssembler_aarch64.hpp:1187
+  ra2 = StubGenerator::generate_string_indexof_stubs
+        stubGenerator_aarch64.cpp:5703
+  ra3 = StubGenerator constructor
+
+v1 fix: under __CHERI_PURE_CAPABILITY__, skip the three
+generate_string_indexof_linear calls and leave the stub pointers as
+nullptr. The JIT/interpreter falls back to the plain-Java
+String.indexOf implementation. Correct but unoptimized.
+
+v2 future fix (not yet done): make mov(Rd, imm) purecap-aware so it
+chooses an encoding whose imms field doesn't overflow.
+
+Validated: with this patch, `java -XX:+UseStoplessGC -version`
+proceeds past stubRoutines_init2 + MethodHandles::generate_adapters
+and reaches initialize_java_lang_classes (the first Java method
+execution). Next blocker is a hang inside `String::<clinit>` — see
+docs/24_c6_breakthrough_to_string_clinit.md.
+
+diff --git a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+--- a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+@@ -5700,9 +5700,21 @@
+   }
+
+   void generate_string_indexof_stubs() {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #5: skip string-indexof stub generation on CHERI purecap.
++    // generate_string_indexof_linear emits a sub immediate that
++    // doesn't fit the 12-bit add/sub field, so wrap_adds_subs_imm_insn
++    // falls back to mov(Rd, imm)+sub-reg, and the mov path trips the
++    // assembler imms-field guarantee (val=64 in a 6-bit field).
++    // Leaving these as nullptr makes the JIT fall back to the Java
++    // String.indexOf implementation — correct but unoptimized.
++    StubRoutines::aarch64::_string_indexof_linear_ll = nullptr;
++    StubRoutines::aarch64::_string_indexof_linear_uu = nullptr;
++    StubRoutines::aarch64::_string_indexof_linear_ul = nullptr;
++#else
+     StubRoutines::aarch64::_string_indexof_linear_ll = generate_string_indexof_linear(true, true);
+     StubRoutines::aarch64::_string_indexof_linear_uu = generate_string_indexof_linear(false, false);
+     StubRoutines::aarch64::_string_indexof_linear_ul = generate_string_indexof_linear(true, false);
++#endif
+   }
+
+   void inflate_and_store_2_fp_registers(bool generatePrfm,
