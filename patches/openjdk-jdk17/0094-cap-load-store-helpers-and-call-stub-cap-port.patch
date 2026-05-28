@@ -1,0 +1,44 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 16:00:00 +0800
+Subject: [PATCH] Phase C-6 fix #12-15: cap-STR/STP/LDR/LDP/SUB helpers + call_stub port
+
+Cumulative cap-aware instruction emission helpers in MacroAssembler
+plus systematic conversion of call_stub's prologue + epilogue to use
+them. Reduces suspect-integer-instruction count in call_stub from 17
+down to 5.
+
+New helpers in macroAssembler_aarch64.hpp:
+  cap_str_imm(Ct, Cn, imm)        — STR Ct, [Cn, #imm]   (0xC2/0xA2)
+  cap_stp_imm(Ct, Ct2, Cn, imm)   — STP Ct, Ct2, [Cn, #imm]  (0x42800)
+  cap_ldr_imm(Ct, Cn, imm)        — LDR Ct, [Cn, #imm]   (0xC2400/0xA2400)
+  cap_ldp_imm(Ct, Ct2, Cn, imm)   — LDP Ct, Ct2, [Cn, #imm]  (0x42C00)
+  cap_sub_imm(Cd, Cn, imm12)      — SUB Cd, Cn, #imm     (0x02800)
+
+All encodings empirically verified against Morello clang output.
+
+Also: mov(Reg, sp) sp-case in macroAssembler_aarch64.hpp now emits
+Morello cap-ADD (0x02000000-family) instead of Assembler::add which
+emits integer ADD (0x91xxxxxx). Affects every reg-reg move involving
+SP/CSP. Eliminated suspect integer instructions at +076 and +108 in
+the call_stub scan.
+
+In stubGenerator_aarch64.cpp generate_call_stub:
+  - prologue: __ str(c7, thread), 4 cap-STP args, 5 cap-STP callee-saved
+    → all converted to cap_str_imm/cap_stp_imm
+  - epilogue (mirror): cap-LDP for restore, cap-LDR for method
+  - mid: __ sub(esp, rfp, ...) at line 362 → cap_sub_imm
+
+Remaining 5 suspect-integer instructions in call_stub are 64-bit
+integer LDR/STR via cap base register, which IS legal Morello C64
+encoding. They load/store integer data (or pointer addresses) via
+cap-bounded memory. Some may still be wrong if the underlying value
+is a cap (e.g., `__ ldr(j_rarg2, result)` loads the result-pointer
+cap). Selective conversion needed; deferred to next session.
+
+Net effect: JVM still SIGILLs (mode hasn't unblocked the actual
+__ ldr/__ str for cap values), but the call_stub is now ~75% cap-
+ported. Next session: walk the remaining 5 with the C6CSSCAN
+diagnostic, identify which are cap vs int data, convert.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+EOF
