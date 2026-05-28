@@ -1,0 +1,62 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 15:00:00 +0800
+Subject: [PATCH] Phase C-6 fix #11: cap-SUB in call_stub prologue
+
+After patch 0092 (BLR target bit 0 = C64 mode), the JVM correctly
+enters C64 mode when invoking call_stub. The cap-STP (0x62BF7BFD)
+and cap-ADD (0x020003FD) prologue instructions then execute
+successfully (verified). But the THIRD instruction was still
+integer SUB:
+
+  emitted (integer SUB sp, x29, #0x1a0):  0xd10683bf
+  needed  (cap-SUB csp, c29, #0x1a0):     0x028683bf
+
+In C64 mode, 0xd10683bf is not a recognized Morello instruction
+encoding (llvm-objdump on the bytes shows `.word 0xd10683bf` rather
+than a disassembly) → SIGILL (exit 132).
+
+Cap-SUB immediate encoding:
+  0x02800000 | (sh<<22) | (imm12<<10) | (Rn<<5) | Rd
+
+For sp = csp = Rd #31, rfp = c29 = Rn #29, imm12 = 0x1A0:
+  0x02800000 | 0 | (0x1A0<<10) | (29<<5) | 31 = 0x028683BF
+(verified against Morello clang output).
+
+Spot fix in generate_call_stub: emit_int32() the cap-SUB directly
+under __CHERI_PURE_CAPABILITY__, bypassing MacroAssembler::sub
+which defaults to integer encoding.
+
+Result: SIGILL on the cap-SUB site goes away. New SIGILL on the
+next integer-encoded instruction (likely __ str(c_rarg7, thread)
+which defaults to integer STR). This same pattern (HotSpot's
+Assembler emits integer encoding by default, need cap variant)
+applies to STR/LDR/STP/LDP/STRW/LDRW/STRB/LDRB and all other
+memory-access emitters. C-13 territory.
+
+Big-picture: with patch 0092 + 0093, the JVM successfully enters
+call_stub in C64 mode and executes 3 cap-aware instructions
+(0x62BF7BFD + 0x020003FD + 0x028683BF). The SIGILL now indicates
+the next integer instruction in the prologue. Mechanically
+identifiable next-iter work: convert remaining str/stp/ldr/ldp
+emitters in generate_call_stub (and other stub generators) to
+cap variants.
+
+diff --git a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+--- a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+@@ -228,7 +228,19 @@
+     // set up frame and move sp to end of save area
+     __ enter();
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #11: __ sub(sp, rfp, imm) emits integer SUB (0xd1xxxxxx)
++    // which is illegal in C64 mode. Emit Morello cap-SUB (0x028xxxxx).
++    // Encoding: 0x02800000 | (sh<<22) | (imm12<<10) | (Rn<<5) | Rd
++    // For imm = -sp_after_call_off * wordSize = 26 * 16 = 0x1A0,
++    // Rd=31 (csp), Rn=29 (rfp): 0x028683BF.
++    {
++      unsigned imm12 = (unsigned)(-sp_after_call_off * wordSize) & 0xFFF;
++      __ emit_int32(0x02800000 | (imm12 << 10) | (29 << 5) | 31);
++    }
++#else
+     __ sub(sp, rfp, -sp_after_call_off * wordSize);
++#endif
