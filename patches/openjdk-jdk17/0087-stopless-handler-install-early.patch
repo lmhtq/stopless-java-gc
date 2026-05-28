@@ -1,0 +1,44 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 12:00:00 +0800
+Subject: [PATCH] Phase C-7 partial: install SIGPROT handler early in StoplessHeap::initialize
+
+C-7's full goal is to bridge stopless_handler into the JVM's crash
+handler protocol so the GC's revoke-and-forward path runs *before*
+hs_err generation. That's still TODO. This patch lands the minimum
+useful piece: install stopless_handler at the start of
+StoplessHeap::initialize so that any subsequent SIGPROT yields a
+diagnostic line ("[stopless] unforwarded fault: pc=0x...") instead
+of being silently killed by the kernel with no hs_err.
+
+Effect: with this patch, the next C-6 cascade SIGPROT
+(in JIT/stub-blob code at PC 0x428xxxxx, presumably interpreter
+dispatch or pre-generated stub for String::<clinit>) is now
+observable; before it was "In-address space security exception"
+followed by silent kernel kill (no core, no hs_err).
+
+The handler is the same one used by cap_runtime/stopless_gc/tests/
+test_basic — see handler.c. Re-raises with SIG_DFL if no match in
+forwarding table (expected during init, since no GC moves yet).
+
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+--- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+@@ -30,7 +30,18 @@ StoplessHeap::StoplessHeap()
+     _arena(nullptr) {
+ }
+
++extern "C" int stopless_handler_install(void);
++
+ jint StoplessHeap::initialize() {
++  // C-7 partial: install SIGPROT handler EARLY so cap violations
++  // produce a diagnostic instead of a silent kernel-kill SIGPROT.
++  if (stopless_handler_install() != 0) {
++    fprintf(stderr, "[Stopless] WARN: stopless_handler_install failed\n");
++    fflush(stderr);
++  } else {
++    fprintf(stderr, "[Stopless] SIGPROT handler installed\n");
++    fflush(stderr);
++  }
+   // v1: no TLAB. Java alloc goes straight through mem_allocate.
+   UseTLAB = false;
+   // Floor 4 MiB to avoid degenerate small heaps.
