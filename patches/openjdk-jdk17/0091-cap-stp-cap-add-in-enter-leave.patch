@@ -1,0 +1,82 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 14:00:00 +0800
+Subject: [PATCH] Phase C-6 fix #9: cap-stp + cap-add in enter()/leave()
+
+`MacroAssembler::enter()` was emitting:
+  0xa9be7bfd  stp x29, x30, [sp, #-16]!    integer 8-byte pair
+  0x910003fd  add x29, sp, #0              integer ADD
+
+Both are *integer* AArch64 instructions: they execute on Morello
+purecap but operate only on the address portions of the registers,
+clearing the cap tags of rfp/lr/sp in the destination.
+
+Replace with the empirically-verified Morello cap variants (see
+docs/27 for the encoding table):
+  0x62bf7bfd  stp c29, c30, [csp, #-32]!   cap 16-byte pair (preserves tags)
+  0x020003fd  add c29, csp, #0             cap ADD (preserves tag)
+
+leave() mirrored.
+
+Verified the emitted bytes match clang's output for `stp c29, c30,
+[csp, #-32]!` (0x62BF7BFD) and `add c29, csp, #0` (0x020003FD).
+
+Result: with this patch, the call_stub stub starts with the correct
+cap-preserving prologue. However, the JVM still SIGPROTs at PC =
+call_stub start, with PCC.tag=1 + bounds OK + EXECUTE perm OK +
+csp.tag=1 + csp STORE_CAP OK. The fault appears to be an ifetch-time
+CHERI tag violation that ISN'T caused by stp/add operand semantics.
+
+Hypotheses for the residual fault (for next session):
+  - C64/A64 mode bit mismatch in PCC (we generate code expecting
+    C64, kernel may have set A64 for the new stub region).
+  - Bounds precision issue: cap precision rounding for the stub's
+    PCC.base/length might exclude the actual stub start address.
+  - The cap_runtime SIGPROT handler runs in a mode that misreports
+    si_addr/pc for ifetch faults specifically; the real fault may
+    be later in the stub.
+
+Recommend: gdb-attach to QEMU after JVM hangs (use -XX:-CreateCoredumpOnCrash
+to force a halt instead of immediate kill) and inspect PCC's full
+state at fault time. Or: instrument cap_runtime handler to print
+ucontext-->mc_cheri_flags (which holds C64/A64 mode bits).
+
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+@@ -734,12 +734,42 @@
+   // Stack frame creation/removal
+   void enter()
+   {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #9: emit Morello cap-stp + cap-mov in stack frame setup.
++    // The standard AArch64 STP (0xA9...) emitted by stp(Reg,Reg,Address)
++    // is INTEGER stp — clears cap tags of rfp/lr. Morello cap-STP
++    // (0x62800000-family) stores 16-byte cap pairs preserving tags.
++    // Encoding: 0x62800000 | (imm7<<15) | (Rt2<<10) | (Rn<<5) | Rt
++    // For -2*wordSize = -32 bytes, imm7 = -2 = 0x7E (7-bit signed).
++    //   0x62800000 | (0x7E<<15) | (30<<10) | (31<<5) | 29 = 0x62BF7BFD
++    // Verified matches clang output.
++    emit_int32(0x62800000 | ((-32/16 & 0x7F) << 15) |
++               (30 << 10) | (31 << 5) | 29);
++    // mov(rfp, sp) — emit cap-add #0 from csp.
++    //   0x02000000 | (31<<5) | 29 = 0x020003FD
++    emit_int32(0x02000000 | (31 << 5) | 29);
++#else
+     stp(rfp, lr, Address(pre(sp, -2 * wordSize)));
+     mov(rfp, sp);
++#endif
+   }
+   void leave()
+   {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // mirror of enter(): cap-add sp,rfp,#0 then cap-ldp post-imm +32
++    //   0x02000000 | (29<<5) | 31 = 0x020003BF
++    emit_int32(0x02000000 | (29 << 5) | 31);
++    //   0x22C00000 | (2<<15) | (30<<10) | (31<<5) | 29 = 0x22C17BFD
++    emit_int32(0x22C00000 | ((32/16 & 0x7F) << 15) |
++               (30 << 10) | (31 << 5) | 29);
++#else
+     mov(sp, rfp);
+     ldp(rfp, lr, Address(post(sp, 2 * wordSize)));
++#endif
+   }
