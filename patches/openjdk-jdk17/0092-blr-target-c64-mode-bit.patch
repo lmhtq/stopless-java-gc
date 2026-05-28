@@ -1,0 +1,77 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Thu, 28 May 2026 14:30:00 +0800
+Subject: [PATCH] Phase C-6 fix #10: set bit 0 on stub function pointer for C64 mode
+
+Per the Morello ARM ARM (DDI0606 §2.10):
+
+  RZRMXS: PSTATE.C64 determines the current instruction set:
+            PSTATE.C64 = 0: A64 mode
+            PSTATE.C64 = 1: C64 mode
+  RZTMWK: PSTATE.C64 is updated by the Capability Value[0] of a
+            branch with a capability target.
+
+I.e., on BLR <Cd>, the new PSTATE.C64 = Cd.address & 1 (the low bit
+of the cap's address). This is analogous to ARM/Thumb interworking
+on AArch32 (the Thumb-mode bit on function pointers).
+
+HotSpot's `__ pc()` returns the raw, byte-aligned PC value with bit
+0 = 0. When `StubRoutines::_call_stub_entry` is assigned this value
+and later invoked via BLR (in JavaCalls::call_helper at the
+`StubRoutines::call_stub()(...)` call site), the BLR sees Cd's bit
+0 = 0 and sets PSTATE.C64 = 0 → CPU enters A64 mode. But the stub's
+emitted bytes are C64-format (e.g., cap-STP 0x62BF7BFD, cap-ADD
+0x020003FD, etc.). The CPU mis-interprets them in A64 mode and
+faults — observed as PROT_CHERI_TAG on ifetch at the very first
+stub byte.
+
+Diagnostic from the cap_runtime SIGPROT handler with bounds+flags
+dump confirmed this: `PCC flags=0` at fault time, where bit 0 of
+the cap flags reflects PSTATE.C64. flags=0 = A64 mode, exactly
+matching the BLR target's bit 0.
+
+Fix: in JavaCalls::call_helper, OR bit 0 into the call_stub cap
+address before invoking. Use __builtin_cheri_address_set to
+preserve the cap's tag/bounds/permissions/flags while changing
+just the address.
+
+Verified by the diagnostic: after the patch, the BLR target prints
+as 0x428b8139 (bit 0 = 1, C64 mode). The crash mode changes from
+PROT_CHERI_TAG (signal 34, exit 162) to SIGILL (signal 4, exit 132),
+meaning the CPU now enters C64 mode and successfully executes the
+cap-stp + cap-add prologue, but hits an illegal instruction farther
+into call_stub. That's the next layer (likely another emitter
+that's still emitting an integer-only encoding).
+
+Scope note: this is a SPOT FIX at the one call site. A proper fix
+would have the stub generator OR bit 0 into the address before
+storing into _call_stub_entry (and all other stub entry pointers).
+The spot fix unblocks the immediate path; the systematic fix lands
+in C-13.
+
+diff --git a/src/hotspot/share/runtime/javaCalls.cpp b/src/hotspot/share/runtime/javaCalls.cpp
+--- a/src/hotspot/share/runtime/javaCalls.cpp
++++ b/src/hotspot/share/runtime/javaCalls.cpp
+@@ -426,9 +426,27 @@
+       }
+ #endif
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #10: on Morello, BLR to a capability target sets
++      // PSTATE.C64 = target_cap.Value[0]. Our generated stubs are
++      // C64-mode code but the cap returned by StubRoutines::call_stub()
++      // has address 0x...8 (bit 0 = 0), so BLR enters A64 mode and
++      // misinterprets the C64 encoding → CAP_TAG fault on ifetch.
++      // (ARM ARM DDI0606 §2.10 RZTMWK + RZRMXS.) Fix: OR bit 0 into
++      // the cap address before invoking, preserving tag/bounds/perms.
++      StubRoutines::CallStub _cs = StubRoutines::call_stub();
++      void* _cs_v = (void*)_cs;
++      unsigned long _cs_addr = (unsigned long)__builtin_cheri_address_get(_cs_v);
++      _cs_v = __builtin_cheri_address_set(_cs_v, _cs_addr | 1);
++      ((StubRoutines::CallStub)_cs_v)(
++        (address)&link,
++#else
+       StubRoutines::call_stub()(
+         (address)&link,
++#endif
+         result_val_address,          // see NOTE above (compiler problem)
+         result_type,
+         method(),
