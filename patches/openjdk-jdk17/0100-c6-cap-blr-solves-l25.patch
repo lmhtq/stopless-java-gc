@@ -1,0 +1,468 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Fri, 29 May 2026 10:55:00 +0800
+Subject: [PATCH] Phase C-6 fix #26: cap-BLR unblocks the trampoline (L25 SOLVED)
+
+THE KEY INSIGHT: HotSpot's Assembler::blr emits the INTEGER `blr Xn`
+(0xd63f0000-family / branch_reg with opc=0b0001) which only updates
+PC within the CURRENT PCC bounds — it does NOT install a new PCC. So
+when a codecache stub (PCC bounds = [code_cache]) branches to a cap
+pointing into libjvm.so .text, the PC moves but PCC bounds stay at
+the codecache, and the very first instruction fetch at the new PC
+faults PROT_CHERI_BOUNDS. This is exactly why codecache-internal BLRs
+worked (PCC bounds happened to cover the target) but the trampoline
+BLR to libjvm.so failed.
+
+Fix: Morello capability BLR `blr Cn` (0xC2C23000 | Rn<<5, verified vs
+Morello clang) installs Cn as the NEW PCC and seals the return addr
+into CLR as a sentry. Added cap_blr/cap_br helpers in
+macroAssembler_aarch64.hpp and switched call_VM_leaf_base's CHERI
+path to cap_blr.
+
+RESULT: the trampoline now executes correctly. cap_trampoline_dispatch
+runs in libjvm.so (PCC = [0x4170d000, 0x421c6000]), looks up the
+runtime fn by id, and C++-calls it. We land inside
+MethodCounters::allocate_with_exception and execute dozens of real
+runtime instructions — crossing from codecache stub code into
+libjvm.so C++ runtime for the first time.
+
+Next fault is a DIFFERENT class entirely: a tag-propagation issue
+(PROT_CHERI_TAG) where a methodHandle's Method* field reads back
+tag-0. That's normal libjvm.so C++ execution debugging, not the
+codecache↔libjvm.so boundary problem L25 represented.
+
+L25 is SOLVED. The trampoline architecture (patch 0099) + cap-BLR
+(this) together bridge the codecache↔runtime boundary.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+index 7abb2205414..714eb56b941 100644
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+@@ -1513,6 +1513,10 @@ Address MacroAssembler::argument_address(RegisterOrConstant arg_slot,
+   }
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++extern int cap_trampoline_id_for(address fn);
++#endif
++
+ void MacroAssembler::call_VM_leaf_base(address entry_point,
+                                        int number_of_arguments,
+                                        Label *retaddr) {
+@@ -1520,8 +1524,39 @@ void MacroAssembler::call_VM_leaf_base(address entry_point,
+ 
+   stp(rscratch1, rmethod, Address(pre(sp, -2 * wordSize)));
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #25 (Option C): codecache PCC bounds cannot reach libjvm.so
++  // .text; route through cap_trampoline_dispatch (whose cap is seeded
++  // in Thread::_cap_trampoline_addr from C++ space).
++  // ABI: c0 = fn_id, c1..c5 = original a0..a4 (shifted up by 1).
++  guarantee(number_of_arguments <= 5, "trampoline supports at most 5 args + fn_id");
++  // Shift args c_rarg{N-1} → c_rarg{N}, ..., c_rarg0 → c_rarg1.
++  // Iterate from high to low so we don't clobber a not-yet-shifted reg.
++  for (int i = number_of_arguments - 1; i >= 0; i--) {
++    Register src = as_Register(i);     // c_rarg(i) = r(i)
++    Register dst = as_Register(i + 1); // c_rarg(i+1)
++    // cap-MOV preserves cap tags (per patch 0090).
++    mov(dst, src);
++  }
++  // Put fn_id (a small int) into w0. movw clears the upper bits, but the
++  // cap metadata on c0 is whatever was there before — for the trampoline's
++  // purposes only the integer x0/w0 matters since fn_id is `int`.
++  int fn_id = cap_trampoline_id_for(entry_point);
++  movw(as_Register(0), (unsigned)fn_id);
++  // Load the trampoline cap from rthread (which holds a wide cap to
++  // Thread*). cap-LDR preserves the loaded cap's tag/bounds/perms.
++  cap_ldr_imm(rscratch1, rthread,
++              in_bytes(Thread::cap_trampoline_addr_offset()));
++  // C-6 fix #26: MUST use cap-BLR. Integer `blr Xn` keeps the current
++  // PCC bounds (codecache) and only updates PC; jumping to libjvm.so
++  // .text then faults PROT_CHERI_BOUNDS on ifetch. cap-BLR installs
++  // rscratch1 as the new PCC (with libjvm.so bounds) and seals the
++  // return address into CLR as a sentry (RET unseals on return).
++  cap_blr(rscratch1);
++#else
+   mov(rscratch1, entry_point);
+   blr(rscratch1);
++#endif
+   if (retaddr)
+     bind(*retaddr);
+ 
+@@ -2775,7 +2810,8 @@ RegSet MacroAssembler::call_clobbered_registers() {
+ }
+ 
+ void MacroAssembler::push_call_clobbered_registers_except(RegSet exclude) {
+-  int step = 4 * wordSize;
++  // CHERI: SIMD T1D stride is 4 * 8B = 32B, not 4 * wordSize (would be 64 on purecap).
++  int step = 4 * BytesPerLong;
+   push(call_clobbered_registers() - exclude, sp);
+   sub(sp, sp, step);
+   mov(rscratch1, -step);
+@@ -2793,7 +2829,7 @@ void MacroAssembler::pop_call_clobbered_registers_except(RegSet exclude) {
+   for (int i = 0; i < 32; i += 4) {
+     if (i <= v7->encoding() || i >= v16->encoding())
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+-          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * wordSize)));
++          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * BytesPerLong)));
+   }
+ 
+   reinitialize_ptrue();
+@@ -2810,7 +2846,7 @@ void MacroAssembler::push_CPU_state(bool save_vectors, bool use_sve,
+       sve_str(as_FloatRegister(i), Address(sp, i));
+     }
+   } else {
+-    int step = (save_vectors ? 8 : 4) * wordSize;
++    int step = (save_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     mov(rscratch1, -step);
+     sub(sp, sp, step);
+     for (int i = 28; i >= 4; i -= 4) {
+@@ -2829,7 +2865,7 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, bool use_sve,
+     }
+     add(sp, sp, sve_vector_size_in_bytes * FloatRegisterImpl::number_of_registers);
+   } else {
+-    int step = (restore_vectors ? 8 : 4) * wordSize;
++    int step = (restore_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     for (int i = 0; i <= 28; i += 4)
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+           as_FloatRegister(i+3), restore_vectors ? T2D : T1D, Address(post(sp, step)));
+@@ -3942,10 +3978,18 @@ void MacroAssembler::resolve_weak_handle(Register rresult, Register rtmp) {
+ 
+ void MacroAssembler::load_mirror(Register dst, Register method, Register tmp) {
+   const int mirror_offset = in_bytes(Klass::java_mirror_offset());
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #22: chained pointer loads need cap-LDR to preserve tags.
++  cap_ldr_imm(dst, rmethod, in_bytes(Method::const_offset()));
++  cap_ldr_imm(dst, dst, in_bytes(ConstMethod::constants_offset()));
++  cap_ldr_imm(dst, dst, ConstantPool::pool_holder_offset_in_bytes());
++  cap_ldr_imm(dst, dst, mirror_offset);
++#else
+   ldr(dst, Address(rmethod, Method::const_offset()));
+   ldr(dst, Address(dst, ConstMethod::constants_offset()));
+   ldr(dst, Address(dst, ConstantPool::pool_holder_offset_in_bytes()));
+   ldr(dst, Address(dst, mirror_offset));
++#endif
+   resolve_oop_handle(dst, tmp);
+ }
+ 
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+index 9b1c0a93539..b98d9a252b3 100644
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+@@ -237,9 +237,43 @@ class MacroAssembler: public Assembler {
+     assert(Rd != r31_sp && Rn != r31_sp, "should be");
+     if (Rd == Rn) {
+     } else if (Rd == sp || Rn == sp) {
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #13: mov(Reg, sp) / mov(sp, Reg) — Assembler::add emits
++      // INTEGER ADD (0x91xxxxxx) which doesn't preserve cap tag. Emit
++      // Morello cap-ADD (0x02000000-family) directly. sp/csp encodes as
++      // register #31 in instructions.
++      unsigned rd_enc = (Rd == sp) ? 31u : (unsigned)Rd->encoding();
++      unsigned rn_enc = (Rn == sp) ? 31u : (unsigned)Rn->encoding();
++      emit_int32(0x02000000U | (rn_enc << 5) | rd_enc);
++#else
+       Assembler::add(Rd, Rn, 0U);
++#endif
++    } else if (Rd == zr || Rn == zr) {
++      // Either Rd is zr (write discarded, no-op) or Rn is zr (writing
++      // integer zero to Rd; the cap-tag-clearing is intended). Use
++      // the classic orr, which knows how to encode HotSpot's pseudo
++      // zr (#32) as the AArch64 ZR (#31) in the ORR instruction
++      // family. Cap-preserving move is not needed here.
++      orr(Rd, zr, Rn);
+     } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #8: emit the Morello MOV (Capability) instruction
++      // directly. Encoding: 0xC2C1D000 | (Rn << 5) | Rd, where Rd
++      // and Rn are 5-bit (0..30). Confirmed via Morello clang:
++      //   mov c0, c1  -> 0xC2C1D020
++      //   mov c19, c0 -> 0xC2C1D013
++      //   mov c2, c3  -> 0xC2C1D062
++      // Prior attempts (orr Rd, ZR, Rn — integer; add Rd, Rn, #0 —
++      // also integer ADD imm at opcode 0x91xxxxxx, NOT the cap-ADD
++      // at 0x02xxxxxx) both clear the cap tag. The MOV (Capability)
++      // instruction at 0xC2C1Dxxx is the canonical preserving form.
++      // Concrete symptom: forward_exception's `__ mov(r19, r0)`
++      // had been losing the tag of the exception handler address,
++      // so `__ br(r19)` SIGPROT'd at the tag-zero PC.
++      emit_int32(0xC2C1D000 | (Rn->encoding() << 5) | Rd->encoding());
++#else
+       orr(Rd, zr, Rn);
++#endif
+     }
+   }
+ 
+@@ -510,6 +544,14 @@ public:
+   inline void mov(Register dst, unsigned int imm64)       { mov_immediate64(dst, (uint64_t)imm64); }
+   inline void mov(Register dst, unsigned long imm64)      { mov_immediate64(dst, (uint64_t)imm64); }
+   inline void mov(Register dst, unsigned long long imm64) { mov_immediate64(dst, (uint64_t)imm64); }
++#ifdef __CHERI_PURE_CAPABILITY__
++  // On CHERI/Morello purecap, intptr_t is __intcap (a capability), which
++  // does not match any of the integer overloads above. Provide a dedicated
++  // overload so call sites like mov(dst, src.as_constant()) where
++  // as_constant() returns intptr_t do not suffer ambiguous-overload errors.
++  inline void mov(Register dst, intptr_t imm64)            { mov_immediate64(dst, (uint64_t)(uintptr_t)imm64); }
++  inline void mov(Register dst, uintptr_t imm64)           { mov_immediate64(dst, (uint64_t)imm64); }
++#endif
+ 
+   inline void movw(Register dst, uint32_t imm32)
+   {
+@@ -699,16 +741,111 @@ public:
+   // Alignment
+   void align(int modulus);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #12 helpers: emit Morello cap-STR and cap-STP directly.
++  // HotSpot's Assembler::str/stp emit integer encodings (0xf9xxxxxx /
++  // 0xa9xxxxxx) that are either illegal in C64 mode or silently drop
++  // cap tags. Cap variants: 0xC2 (STR), 0xA2 (STUR), 0x42 (STP).
++  // Verified vs Morello clang (see docs/27 + docs/28).
++  // Use these explicitly in stubs where the register holds a cap.
++
++  // str Ct, [Cn, #imm]   (cap, 16-byte, signed-offset)
++  inline void cap_str_imm(Register Ct, Register Cn, int imm) {
++    if (imm >= 0 && (imm % 16) == 0 && imm < 16 * 4096) {
++      // STR (immediate, unsigned offset): imm12 scaled by 16.
++      emit_int32(0xC2000000U | (((unsigned)imm / 16) << 10)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    } else {
++      // STUR (immediate, signed 9-bit unscaled).
++      emit_int32(0xA2000000U | (((unsigned)imm & 0x1FF) << 12)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    }
++  }
++  // stp Ct, Ct2, [Cn, #imm]   (cap-pair, 32 bytes total, signed-offset)
++  inline void cap_stp_imm(Register Ct, Register Ct2, Register Cn, int imm) {
++    // imm7 = imm/16 (signed 7-bit), scaled by 16.
++    emit_int32(0x42800000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | (Ct2->encoding() << 10) | (Cn->encoding() << 5)
++               | Ct->encoding());
++  }
++  // ldr Ct, [Cn, #imm]   (cap, 16-byte, signed-offset)
++  inline void cap_ldr_imm(Register Ct, Register Cn, int imm) {
++    if (imm >= 0 && (imm % 16) == 0 && imm < 16 * 4096) {
++      emit_int32(0xC2400000U | (((unsigned)imm / 16) << 10)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    } else {
++      emit_int32(0xA2400000U | (((unsigned)imm & 0x1FF) << 12)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    }
++  }
++  // ldp Ct, Ct2, [Cn, #imm]   (cap-pair, 32 bytes total, signed-offset)
++  inline void cap_ldp_imm(Register Ct, Register Ct2, Register Cn, int imm) {
++    emit_int32(0x42C00000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | (Ct2->encoding() << 10) | (Cn->encoding() << 5)
++               | Ct->encoding());
++  }
++  // sub Cd, Cn, #imm12   (cap-sub immediate)
++  inline void cap_sub_imm(Register Cd, Register Cn, unsigned imm12) {
++    unsigned rd_enc = (Cd == sp) ? 31u : (unsigned)Cd->encoding();
++    unsigned rn_enc = (Cn == sp) ? 31u : (unsigned)Cn->encoding();
++    emit_int32(0x02800000U | ((imm12 & 0xFFF) << 10) | (rn_enc << 5) | rd_enc);
++  }
++  // blr Cn   (Morello "Branch with Link to Capability"). UNLIKE the
++  // integer `blr Xn` (0xd63f0000-family) which only updates PC within
++  // the CURRENT PCC bounds, this installs Cn as the NEW PCC. Required
++  // for any call whose target lies OUTSIDE the caller's PCC bounds —
++  // e.g. a codecache stub calling into libjvm.so .text. Verified vs
++  // Morello clang: `blr c0` = 0xC2C23000, so `blr cN` = 0xC2C23000 |
++  // (Rn<<5). (Cf. `ret c30` = 0xC2C253C0 = 0xC2C25000 | (30<<5).)
++  inline void cap_blr(Register Cn) {
++    emit_int32(0xC2C23000U | ((unsigned)Cn->encoding() << 5));
++  }
++  // br Cn    (Morello cap branch, no link). `br c0` = 0xC2C21000.
++  inline void cap_br(Register Cn) {
++    emit_int32(0xC2C21000U | ((unsigned)Cn->encoding() << 5));
++  }
++#endif
++
+   // Stack frame creation/removal
+   void enter()
+   {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #9: emit Morello cap-stp + cap-mov in stack frame setup.
++    // The standard AArch64 STP (0xA9...) emitted by stp(Reg,Reg,Address)
++    // is INTEGER stp — it stores 8-byte pairs and clears the cap tag
++    // of rfp/lr in the destination memory. The Morello cap-STP
++    // (0x62800000-family) stores 16-byte cap pairs preserving tags.
++    // Encoding (cap-stp pre-imm): 0x62800000 | ((imm7) << 15)
++    //                              | (Rt2<<10) | (Rn<<5) | Rt
++    // where imm7 = byte_offset / 16 (signed 7-bit).
++    // For -2*wordSize = -32 bytes, imm7 = -2 = 0x7E (7-bit signed).
++    //   0x62800000 | (0x7E << 15) | (30<<10) | (31<<5) | 29 = 0x62BF7BFD
++    // Note: SP/CSP encodes as register #31 in instructions (not the
++    // pseudo #33 used as HotSpot's `sp` Register*).
++    emit_int32(0x62800000 | ((-32/16 & 0x7F) << 15) |
++               (30 << 10) | (31 << 5) | 29);
++    // mov(rfp, sp) — emit cap-add #0 from csp.
++    //   0x02000000 | (0<<22) | (0<<10) | (31<<5) | 29 = 0x020003FD
++    emit_int32(0x02000000 | (31 << 5) | 29);
++#else
+     stp(rfp, lr, Address(pre(sp, -2 * wordSize)));
+     mov(rfp, sp);
++#endif
+   }
+   void leave()
+   {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // mirror of enter(): cap-add sp,rfp,#0 then cap-ldp post-imm +32
++    //   0x02000000 | (29 << 5) | 31 = 0x020003BF (sp <- rfp + 0)
++    emit_int32(0x02000000 | (29 << 5) | 31);
++    // cap-ldp post-imm: 0x22C00000 | ((imm7) << 15) | (Rt2<<10) | (Rn<<5) | Rt
++    //   0x22C00000 | (2 << 15) | (30<<10) | (31<<5) | 29 = 0x22C17BFD
++    emit_int32(0x22C00000 | ((32/16 & 0x7F) << 15) |
++               (30 << 10) | (31 << 5) | 29);
++#else
+     mov(sp, rfp);
+     ldp(rfp, lr, Address(post(sp, 2 * wordSize)));
++#endif
+   }
+ 
+   // Support for getting the JavaThread pointer (i.e.; a reference to thread-local information)
+diff --git a/src/hotspot/share/runtime/thread.cpp b/src/hotspot/share/runtime/thread.cpp
+index fe4f555df2a..28c37c4dea7 100644
+--- a/src/hotspot/share/runtime/thread.cpp
++++ b/src/hotspot/share/runtime/thread.cpp
+@@ -231,6 +231,11 @@ void JavaThread::smr_delete() {
+ 
+ DEBUG_ONLY(Thread* Thread::_starting_thread = NULL;)
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++extern "C" intptr_t cap_trampoline_dispatch(int fn_id,
++    intptr_t a0, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4);
++#endif
++
+ Thread::Thread() {
+ 
+   DEBUG_ONLY(_run_state = PRE_CALL_RUN;)
+@@ -239,6 +244,11 @@ Thread::Thread() {
+   set_stack_base(NULL);
+   set_stack_size(0);
+   set_lgrp_id(-1);
++
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #25 (Option C): seed the cap trampoline cap.
++  _cap_trampoline_addr = (void*)&cap_trampoline_dispatch;
++#endif
+   DEBUG_ONLY(clear_suspendible_thread();)
+ 
+   // allocated data structures
+@@ -2675,21 +2685,32 @@ static void call_initPhase3(TRAPS) {
+ 
+ void Threads::initialize_java_lang_classes(JavaThread* main_thread, TRAPS) {
+   TraceTime timer("Initialize java.lang classes", TRACETIME_LOG(Info, startuptime));
++#define C6IJC(label) do { fprintf(stderr, "[C6IJC] " label "\n"); fflush(stderr); } while (0)
++  C6IJC("IJC enter");
+ 
+   if (EagerXrunInit && Arguments::init_libraries_at_startup()) {
+     create_vm_init_libraries();
+   }
+ 
++  C6IJC("before init_class String");
+   initialize_class(vmSymbols::java_lang_String(), CHECK);
++  C6IJC("after init_class String");
+ 
+   // Inject CompactStrings value after the static initializers for String ran.
+   java_lang_String::set_compact_strings(CompactStrings);
++  C6IJC("after set_compact_strings");
+ 
+   // Initialize java_lang.System (needed before creating the thread)
++  C6IJC("before init_class System");
+   initialize_class(vmSymbols::java_lang_System(), CHECK);
++  C6IJC("after init_class System");
+   // The VM creates & returns objects of this class. Make sure it's initialized.
++  C6IJC("before init_class Class");
+   initialize_class(vmSymbols::java_lang_Class(), CHECK);
++  C6IJC("after init_class Class");
++  C6IJC("before init_class ThreadGroup");
+   initialize_class(vmSymbols::java_lang_ThreadGroup(), CHECK);
++  C6IJC("after init_class ThreadGroup");
+   Handle thread_group = create_initial_thread_group(CHECK);
+   Universe::set_main_thread_group(thread_group());
+   initialize_class(vmSymbols::java_lang_Thread(), CHECK);
+@@ -2908,6 +2929,7 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+     *canTryAgain = false; // don't let caller call JNI_CreateJavaVM again
+     return status;
+   }
++  fprintf(stderr, "[C6T] after init_globals\n"); fflush(stderr);
+ 
+   JFR_ONLY(Jfr::on_create_vm_1();)
+ 
+@@ -2923,26 +2945,32 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   JvmtiExport::transition_pending_onload_raw_monitors();
+ 
+   // Create the VMThread
++  fprintf(stderr, "[C6T] before VMThread::create\n"); fflush(stderr);
+   { TraceTime timer("Start VMThread", TRACETIME_LOG(Info, startuptime));
+ 
+     VMThread::create();
++    fprintf(stderr, "[C6T] after VMThread::create\n"); fflush(stderr);
+     Thread* vmthread = VMThread::vm_thread();
+ 
+     if (!os::create_thread(vmthread, os::vm_thread)) {
+       vm_exit_during_initialization("Cannot create VM thread. "
+                                     "Out of system resources.");
+     }
++    fprintf(stderr, "[C6T] after os::create_thread(vmthread)\n"); fflush(stderr);
+ 
+     // Wait for the VM thread to become ready, and VMThread::run to initialize
+     // Monitors can have spurious returns, must always check another state flag
+     {
+       MonitorLocker ml(Notify_lock);
+       os::start_thread(vmthread);
++      fprintf(stderr, "[C6T] after os::start_thread(vmthread); now waiting for active_handles\n"); fflush(stderr);
+       while (vmthread->active_handles() == NULL) {
+         ml.wait();
+       }
++      fprintf(stderr, "[C6T] vmthread active_handles ready\n"); fflush(stderr);
+     }
+   }
++  fprintf(stderr, "[C6T] VMThread fully started\n"); fflush(stderr);
+ 
+   assert(Universe::is_fully_initialized(), "not initialized");
+   if (VerifyDuringStartup) {
+@@ -2969,9 +2997,12 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   // Notify JVMTI agents that VM has started (JNI is up) - nop if no agents.
+   JvmtiExport::post_early_vm_start();
+ 
++  fprintf(stderr, "[C6T] before initialize_java_lang_classes\n"); fflush(stderr);
+   initialize_java_lang_classes(main_thread, CHECK_JNI_ERR);
++  fprintf(stderr, "[C6T] after initialize_java_lang_classes\n"); fflush(stderr);
+ 
+   quicken_jni_functions();
++  fprintf(stderr, "[C6T] after quicken_jni_functions\n"); fflush(stderr);
+ 
+   // No more stub generation allowed after that point.
+   StubCodeDesc::freeze();
+diff --git a/src/hotspot/share/runtime/thread.hpp b/src/hotspot/share/runtime/thread.hpp
+index 42ac37a601f..87f850d8837 100644
+--- a/src/hotspot/share/runtime/thread.hpp
++++ b/src/hotspot/share/runtime/thread.hpp
+@@ -555,6 +555,15 @@ protected:
+   size_t           _stack_size;
+   int              _lgrp_id;
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #25 (Option C): valid cap to cap_trampoline_dispatch, used by
++  // stub-emitted call_VM_leaf_base to BLR into libjvm.so .text whose
++  // address range is OUTSIDE codecache PCC bounds. Loaded once at Thread
++  // construction from C++ space (where the function pointer has wide
++  // bounds via the linker).
++  void*            _cap_trampoline_addr;
++#endif
++
+  public:
+   // Stack overflow support
+   address stack_base() const           { assert(_stack_base != NULL,"Sanity check"); return _stack_base; }
+@@ -612,6 +621,9 @@ protected:
+ 
+   static ByteSize stack_base_offset()            { return byte_offset_of(Thread, _stack_base); }
+   static ByteSize stack_size_offset()            { return byte_offset_of(Thread, _stack_size); }
++#ifdef __CHERI_PURE_CAPABILITY__
++  static ByteSize cap_trampoline_addr_offset()   { return byte_offset_of(Thread, _cap_trampoline_addr); }
++#endif
+ 
+   static ByteSize tlab_start_offset()            { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::start_offset(); }
+   static ByteSize tlab_end_offset()              { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::end_offset(); }
