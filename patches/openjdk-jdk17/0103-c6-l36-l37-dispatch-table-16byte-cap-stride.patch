@@ -1,0 +1,140 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Fri, 29 May 2026 12:50:00 +0800
+Subject: [PATCH] Phase C-6 L36/L37: dispatch table is 16-byte caps — fix ×8 → ×16 stride
+
+THE BUG that made the JVM "run far then crash on a seemingly random
+bytecode": the interpreter dispatch table is
+
+    address _table[number_of_states][256];   // DispatchTable
+
+and `address` is a 16-BYTE capability in purecap. But the generated
+dispatch indexes it with `Address::uxtw(3)` (×8, the non-CHERI element
+size). So:
+  - EVEN bytecodes read offset bc×8 = the entry's address half → the
+    real handler PC → dispatch works;
+  - ODD bytecodes read offset bc×8 = the PREVIOUS entry's metadata half
+    → a value like 0xfc5fc000116e516c (a codecache cap's bounds word) →
+    `br` lands in garbage → SIGSEGV at 0xfc5fc000116e516c.
+
+This is exactly why we executed 1600+ class-init events (all the
+even-indexed bytecodes on the hot path happened to work) before
+crashing on the first odd-indexed bytecode dispatch.
+
+Fix (interp_masm dispatch_base): on CHERI use `Address::uxtw(4)` (×16)
+for the three dispatch-table index loads. distance_from_dispatch_table
+already returns an ELEMENT count, so only the stride changes; the 8-byte
+`ldr` then reads the entry's address half = the handler PC, and `br`
+reaches it within the codecache PCC.
+
+RESULT: bytecode dispatch is now correct for ALL bytecodes. Execution
+proceeds much further; the next fault is in `_SafeFetch32_fault`
+(os::is_readable_pointer) — the SafeFetch readability-probe mechanism
+faults with SIGPROT on CHERI and our handler doesn't perform the
+SafeFetch PC-redirect (L38, next).
+
+Also includes the C6TRAMP/C6DISP trampoline diagnostics that pinpointed
+fn_id 19 = InterpreterRuntime::build_method_counters and fn_id 1 =
+SharedRuntime::exception_handler_for_return_address (used to rule out
+the earlier exception-forwarding hypothesis — the crash was the dispatch
+stride, not the exception path).
+
+Session: 37 commits, 97 build iterations, L25-L37 resolved.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
+index 1db103730f1..69d7fda56a4 100644
+--- a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
+@@ -169,9 +169,16 @@ void InterpreterMacroAssembler::get_unsigned_2_byte_index_at_bcp(
+ }
+ 
+ void InterpreterMacroAssembler::get_dispatch() {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #34: PCC-relative adrp to the libjvm.so dispatch table yields
++  // an out-of-range (tag-cleared) cap from the codecache. Load the
++  // pre-seeded dispatch-table capability from the thread instead.
++  cap_ldr_imm(rdispatch, rthread, in_bytes(Thread::cap_dispatch_offset()));
++#else
+   uint64_t offset;
+   adrp(rdispatch, ExternalAddress((address)Interpreter::dispatch_table()), offset);
+   lea(rdispatch, Address(rdispatch, offset));
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::get_cache_index_at_bcp(Register index,
+@@ -256,11 +263,21 @@ void InterpreterMacroAssembler::get_cache_entry_pointer_at_bcp(Register cache,
+ void InterpreterMacroAssembler::get_method_counters(Register method,
+                                                     Register mcs, Label& skip) {
+   Label has_counters;
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #30: MethodCounters* is a cap; integer ldr strips the tag
++  // and the subsequent counter increment via mcs base faults.
++  cap_ldr_imm(mcs, method, in_bytes(Method::method_counters_offset()));
++  cbnz(mcs, has_counters);
++  call_VM(noreg, CAST_FROM_FN_PTR(address,
++          InterpreterRuntime::build_method_counters), method);
++  cap_ldr_imm(mcs, method, in_bytes(Method::method_counters_offset()));
++#else
+   ldr(mcs, Address(method, Method::method_counters_offset()));
+   cbnz(mcs, has_counters);
+   call_VM(noreg, CAST_FROM_FN_PTR(address,
+           InterpreterRuntime::build_method_counters), method);
+   ldr(mcs, Address(method, Method::method_counters_offset()));
++#endif
+   cbz(mcs, skip); // No MethodCounters allocated, OutOfMemory
+   bind(has_counters);
+ }
+@@ -478,19 +495,32 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
+     tbnz(rscratch2, exact_log2(SafepointMechanism::poll_bit()), safepoint);
+   }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #37: the dispatch table holds `address` entries which are
++  // 16-byte capabilities in purecap, but the stock indexing uses
++  // uxtw(3) (×8) — so odd bytecodes read the metadata half of an entry
++  // (a value like 0xfc5fc000...) instead of the handler PC, and br lands
++  // in garbage. Index with ×16 (uxtw(4)); the 8-byte ldr reads the
++  // entry's address half = the handler PC, and br (integer) reaches it
++  // within the codecache PCC. distance_from_dispatch_table already
++  // returns an ELEMENT count, so only the stride changes.
++  const Address::extend disp_idx = Address::uxtw(4);
++#else
++  const Address::extend disp_idx = Address::uxtw(3);
++#endif
+   if (table == Interpreter::dispatch_table(state)) {
+     addw(rscratch2, rscratch1, Interpreter::distance_from_dispatch_table(state));
+-    ldr(rscratch2, Address(rdispatch, rscratch2, Address::uxtw(3)));
++    ldr(rscratch2, Address(rdispatch, rscratch2, disp_idx));
+   } else {
+     mov(rscratch2, (address)table);
+-    ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(3)));
++    ldr(rscratch2, Address(rscratch2, rscratch1, disp_idx));
+   }
+   br(rscratch2);
+ 
+   if (needs_thread_local_poll) {
+     bind(safepoint);
+     lea(rscratch2, ExternalAddress((address)safepoint_table));
+-    ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(3)));
++    ldr(rscratch2, Address(rscratch2, rscratch1, disp_idx));
+     br(rscratch2);
+   }
+ }
+@@ -1635,6 +1665,16 @@ void InterpreterMacroAssembler::call_VM_base(Register oop_result,
+ // interpreter specific
+   restore_bcp();
+   restore_locals();
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #28: rmethod = r12 is a caller-saved temporary, so it is
++  // clobbered across the call_VM (the C runtime / trampoline leaves a
++  // tag-0 integer in it). Stock AArch64 leaves the integer value intact
++  // by luck and callers that use `method` after call_VM see the right
++  // address — but on CHERI a tag-0 base faults PROT_CHERI_TAG on first
++  // use. Reload rmethod with a tagged cap from the frame, mirroring the
++  // bcp/locals restores above.
++  get_method(rmethod);
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::profile_obj_type(Register obj, const Address& mdo_addr) {
