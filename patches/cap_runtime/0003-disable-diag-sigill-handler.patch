@@ -1,0 +1,123 @@
+diff --git a/src/cap_runtime/stopless_gc/handler.c b/src/cap_runtime/stopless_gc/handler.c
+index 0dc5a27..bca5150 100644
+--- a/src/cap_runtime/stopless_gc/handler.c
++++ b/src/cap_runtime/stopless_gc/handler.c
+@@ -25,8 +25,10 @@
+ #include <signal.h>
+ #include <stdio.h>
+ #include <stdint.h>
++#include <errno.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <unistd.h>
+ #include <ucontext.h>
+ #include <cheriintrin.h>
+ 
+@@ -40,6 +42,28 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
+ {
+     ucontext_t *ctx = (ucontext_t *)ctx_;
+ 
++    /* C-6 L32 diag: unconditionally report the first few faults with PC,
++       then abort — so we can locate a deeper unforwarded fault without
++       the handler looping (retry-without-advance) forever. */
++    {
++        static int diag_count = 0;
++        unsigned long pc = (unsigned long)ctx->uc_mcontext.mc_capregs.cap_elr;
++        fprintf(stderr, "[stopless DIAG] SIGPROT #%d pc=0x%lx si_code=%d si_addr=%p\n",
++                diag_count, pc, si->si_code, si->si_addr);
++        fflush(stderr);
++        if (++diag_count >= 3) {
++            fprintf(stderr, "[stopless DIAG] 3rd fault — aborting to avoid loop\n");
++            fflush(stderr);
++            signal(sig, SIG_DFL);
++            /* abort via default action on the SAME signal */
++            struct sigaction da; memset(&da, 0, sizeof(da));
++            da.sa_handler = SIG_DFL; sigemptyset(&da.sa_mask);
++            sigaction(sig, &da, NULL);
++            raise(sig);
++            _exit(42);
++        }
++    }
++
+     /* PROT_CHERI_TAG ⇒ caller tried to load/store via tag-zero cap. */
+     if (si->si_code != /*PROT_CHERI_TAG=*/2) {
+         if (prev_sa.sa_sigaction) {
+@@ -79,6 +103,34 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
+         fprintf(stderr, "[stopless] unforwarded fault: si_addr=%p si_code=%d "
+                 "pc=0x%lx fwd_size=%zu (no tag-zero cap in regs matched)\n",
+                 si->si_addr, si->si_code, pc, forward_table_size());
++        /* C-6 layer 10 diag: full cap state including bounds. */
++        fprintf(stderr, "[stopless] CRITICAL caps:\n");
++        __uintcap_t csp_v = (__uintcap_t)ctx->uc_mcontext.mc_capregs.cap_sp;
++        __uintcap_t celr_v = (__uintcap_t)ctx->uc_mcontext.mc_capregs.cap_elr;
++        __uintcap_t clr_v = (__uintcap_t)ctx->uc_mcontext.mc_capregs.cap_lr;
++        fprintf(stderr, "  csp:  tag=%d addr=%#lx base=%#lx top=%#lx perms=%#lx flags=%d\n",
++                (int)cheri_tag_get((void *)csp_v),
++                (unsigned long)cheri_address_get((void *)csp_v),
++                (unsigned long)cheri_base_get((void *)csp_v),
++                (unsigned long)(cheri_base_get((void *)csp_v) + cheri_length_get((void *)csp_v)),
++                (unsigned long)cheri_perms_get((void *)csp_v),
++                (int)cheri_flags_get((void *)csp_v));
++        fprintf(stderr, "  PCC:  tag=%d addr=%#lx base=%#lx top=%#lx perms=%#lx flags=%d\n",
++                (int)cheri_tag_get((void *)celr_v),
++                (unsigned long)cheri_address_get((void *)celr_v),
++                (unsigned long)cheri_base_get((void *)celr_v),
++                (unsigned long)(cheri_base_get((void *)celr_v) + cheri_length_get((void *)celr_v)),
++                (unsigned long)cheri_perms_get((void *)celr_v),
++                (int)cheri_flags_get((void *)celr_v));
++        fprintf(stderr, "  clr:  tag=%d addr=%#lx base=%#lx top=%#lx perms=%#lx flags=%d\n",
++                (int)cheri_tag_get((void *)clr_v),
++                (unsigned long)cheri_address_get((void *)clr_v),
++                (unsigned long)cheri_base_get((void *)clr_v),
++                (unsigned long)(cheri_base_get((void *)clr_v) + cheri_length_get((void *)clr_v)),
++                (unsigned long)cheri_perms_get((void *)clr_v),
++                (int)cheri_flags_get((void *)clr_v));
++        fprintf(stderr, "  -- cheri_flags: bit0=C64-mode (1=C64, 0=A64) --\n");
++        fflush(stderr);
+         signal(sig, SIG_DFL);
+         raise(sig);
+         return;
+@@ -137,6 +189,28 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
+ 
+ __thread volatile void **stopless_v1_pending_slot;
+ 
++/* C-6 fix #11 diag: also catch SIGILL so we see WHERE the illegal
++   instruction faults inside call_stub. */
++static void
++sigill_handler(int sig, siginfo_t *si, void *ctx_)
++{
++    ucontext_t *ctx = (ucontext_t *)ctx_;
++    __uintcap_t celr = (__uintcap_t)ctx->uc_mcontext.mc_capregs.cap_elr;
++    void *pc_cap = (void *)celr;
++    unsigned long pc = (unsigned long)cheri_address_get(pc_cap);
++    fprintf(stderr, "[stopless] SIGILL: si_addr=%p pc=0x%lx flags=%d\n",
++            si->si_addr, pc, (int)cheri_flags_get(pc_cap));
++    /* Print 4 instructions around the faulting PC. */
++    uint32_t* insn = (uint32_t*)pc_cap;
++    for (int i = -1; i <= 2; i++) {
++        fprintf(stderr, "  pc%+d (0x%lx): 0x%08x\n",
++                i, pc + i*4, insn[i]);
++    }
++    fflush(stderr);
++    signal(sig, SIG_DFL);
++    raise(sig);
++}
++
+ int
+ stopless_handler_install(void)
+ {
+@@ -151,6 +225,14 @@ stopless_handler_install(void)
+         perror("stopless_handler_install: sigaction(SIGPROT)");
+         return -1;
+     }
++    /* C-6 L36: the diagnostic SIGILL/SIGSEGV handlers (which read raw
++       instruction bytes around the faulting PC) themselves take nested
++       capability faults on CHERI and obscure the real fault. Leave SIGILL
++       and SIGSEGV to default handling so the original fault surfaces
++       cleanly (and gdb can catch it at the true PC). The
++       sigill_handler function is retained but no longer installed. */
++    (void)sigill_handler;
++    fflush(stderr);
+     return 0;
+ }
+ 
