@@ -1,0 +1,287 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Fri, 29 May 2026 10:30:00 +0800
+Subject: [PATCH] Phase C-6 fix #25 (Option C): trampoline architecture
+
+Architectural skeleton complete for L25 "cross-PCC-bounds call" problem.
+Codecache PCC bounds = [code_cache] don't reach libjvm.so .text. Stub
+loads a cap to cap_trampoline_dispatch from Thread::_cap_trampoline_addr
+(seeded in C++ at Thread::Thread() where compiler creates a sentry cap
+with PCC's CFI bounds), then BLRs via the loaded cap.
+
+The trampoline lookup table (.bss-located GrowableArray<address>*) is
+in a separate TU (cap_trampoline_table_aarch64.cpp) to force the
+dispatch's accesses via GOT instead of PCC-relative ADRP. Verified via
+objdump that compiler now emits adrp + ldr-cap-from-GOT pattern.
+
+KNOWN BLOCKER: BLR via the stub-loaded sentry cap faults with
+SIGBUS si_code=1 (PROT_CHERI_BOUNDS) at the trampoline's first
+instruction — even for a NAKED trampoline that's just
+`mov x0, #0xdead; ret c30`. The cap is valid (tag=1, sentry, bounds
+cover the entry address), so the fault is not from invalid metadata.
+Likely cause: Morello ISA-specific BLR semantics around address-bit-0
+mode marker vs PSTATE.C64 sync that we haven't fully characterized.
+
+This patch lands the architectural skeleton + diagnostic findings so
+that next-session work can focus on the specific Morello BLR-mode
+semantics issue without re-inventing the trampoline structure.
+
+Files added:
+  - cap_trampoline_aarch64.cpp     (dispatch + id-lookup)
+  - cap_trampoline_table_aarch64.cpp (just the table-pointer global)
+
+Files modified:
+  - macroAssembler_aarch64.cpp     (call_VM_leaf_base uses trampoline)
+  - thread.hpp                     (_cap_trampoline_addr field)
+  - thread.cpp                     (Thread::Thread() seeds the cap)
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+index 7abb2205414..9fa661ce773 100644
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+@@ -1513,6 +1513,10 @@ Address MacroAssembler::argument_address(RegisterOrConstant arg_slot,
+   }
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++extern int cap_trampoline_id_for(address fn);
++#endif
++
+ void MacroAssembler::call_VM_leaf_base(address entry_point,
+                                        int number_of_arguments,
+                                        Label *retaddr) {
+@@ -1520,7 +1524,32 @@ void MacroAssembler::call_VM_leaf_base(address entry_point,
+ 
+   stp(rscratch1, rmethod, Address(pre(sp, -2 * wordSize)));
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #25 (Option C): codecache PCC bounds cannot reach libjvm.so
++  // .text; route through cap_trampoline_dispatch (whose cap is seeded
++  // in Thread::_cap_trampoline_addr from C++ space).
++  // ABI: c0 = fn_id, c1..c5 = original a0..a4 (shifted up by 1).
++  guarantee(number_of_arguments <= 5, "trampoline supports at most 5 args + fn_id");
++  // Shift args c_rarg{N-1} → c_rarg{N}, ..., c_rarg0 → c_rarg1.
++  // Iterate from high to low so we don't clobber a not-yet-shifted reg.
++  for (int i = number_of_arguments - 1; i >= 0; i--) {
++    Register src = as_Register(i);     // c_rarg(i) = r(i)
++    Register dst = as_Register(i + 1); // c_rarg(i+1)
++    // cap-MOV preserves cap tags (per patch 0090).
++    mov(dst, src);
++  }
++  // Put fn_id (a small int) into w0. movw clears the upper bits, but the
++  // cap metadata on c0 is whatever was there before — for the trampoline's
++  // purposes only the integer x0/w0 matters since fn_id is `int`.
++  int fn_id = cap_trampoline_id_for(entry_point);
++  movw(as_Register(0), (unsigned)fn_id);
++  // Load the trampoline cap from rthread (which holds a wide cap to
++  // Thread*). cap-LDR preserves the loaded cap's tag/bounds/perms.
++  cap_ldr_imm(rscratch1, rthread,
++              in_bytes(Thread::cap_trampoline_addr_offset()));
++#else
+   mov(rscratch1, entry_point);
++#endif
+   blr(rscratch1);
+   if (retaddr)
+     bind(*retaddr);
+@@ -2775,7 +2804,8 @@ RegSet MacroAssembler::call_clobbered_registers() {
+ }
+ 
+ void MacroAssembler::push_call_clobbered_registers_except(RegSet exclude) {
+-  int step = 4 * wordSize;
++  // CHERI: SIMD T1D stride is 4 * 8B = 32B, not 4 * wordSize (would be 64 on purecap).
++  int step = 4 * BytesPerLong;
+   push(call_clobbered_registers() - exclude, sp);
+   sub(sp, sp, step);
+   mov(rscratch1, -step);
+@@ -2793,7 +2823,7 @@ void MacroAssembler::pop_call_clobbered_registers_except(RegSet exclude) {
+   for (int i = 0; i < 32; i += 4) {
+     if (i <= v7->encoding() || i >= v16->encoding())
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+-          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * wordSize)));
++          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * BytesPerLong)));
+   }
+ 
+   reinitialize_ptrue();
+@@ -2810,7 +2840,7 @@ void MacroAssembler::push_CPU_state(bool save_vectors, bool use_sve,
+       sve_str(as_FloatRegister(i), Address(sp, i));
+     }
+   } else {
+-    int step = (save_vectors ? 8 : 4) * wordSize;
++    int step = (save_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     mov(rscratch1, -step);
+     sub(sp, sp, step);
+     for (int i = 28; i >= 4; i -= 4) {
+@@ -2829,7 +2859,7 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, bool use_sve,
+     }
+     add(sp, sp, sve_vector_size_in_bytes * FloatRegisterImpl::number_of_registers);
+   } else {
+-    int step = (restore_vectors ? 8 : 4) * wordSize;
++    int step = (restore_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     for (int i = 0; i <= 28; i += 4)
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+           as_FloatRegister(i+3), restore_vectors ? T2D : T1D, Address(post(sp, step)));
+@@ -3942,10 +3972,18 @@ void MacroAssembler::resolve_weak_handle(Register rresult, Register rtmp) {
+ 
+ void MacroAssembler::load_mirror(Register dst, Register method, Register tmp) {
+   const int mirror_offset = in_bytes(Klass::java_mirror_offset());
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #22: chained pointer loads need cap-LDR to preserve tags.
++  cap_ldr_imm(dst, rmethod, in_bytes(Method::const_offset()));
++  cap_ldr_imm(dst, dst, in_bytes(ConstMethod::constants_offset()));
++  cap_ldr_imm(dst, dst, ConstantPool::pool_holder_offset_in_bytes());
++  cap_ldr_imm(dst, dst, mirror_offset);
++#else
+   ldr(dst, Address(rmethod, Method::const_offset()));
+   ldr(dst, Address(dst, ConstMethod::constants_offset()));
+   ldr(dst, Address(dst, ConstantPool::pool_holder_offset_in_bytes()));
+   ldr(dst, Address(dst, mirror_offset));
++#endif
+   resolve_oop_handle(dst, tmp);
+ }
+ 
+diff --git a/src/hotspot/share/runtime/thread.cpp b/src/hotspot/share/runtime/thread.cpp
+index fe4f555df2a..28c37c4dea7 100644
+--- a/src/hotspot/share/runtime/thread.cpp
++++ b/src/hotspot/share/runtime/thread.cpp
+@@ -231,6 +231,11 @@ void JavaThread::smr_delete() {
+ 
+ DEBUG_ONLY(Thread* Thread::_starting_thread = NULL;)
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++extern "C" intptr_t cap_trampoline_dispatch(int fn_id,
++    intptr_t a0, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4);
++#endif
++
+ Thread::Thread() {
+ 
+   DEBUG_ONLY(_run_state = PRE_CALL_RUN;)
+@@ -239,6 +244,11 @@ Thread::Thread() {
+   set_stack_base(NULL);
+   set_stack_size(0);
+   set_lgrp_id(-1);
++
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #25 (Option C): seed the cap trampoline cap.
++  _cap_trampoline_addr = (void*)&cap_trampoline_dispatch;
++#endif
+   DEBUG_ONLY(clear_suspendible_thread();)
+ 
+   // allocated data structures
+@@ -2675,21 +2685,32 @@ static void call_initPhase3(TRAPS) {
+ 
+ void Threads::initialize_java_lang_classes(JavaThread* main_thread, TRAPS) {
+   TraceTime timer("Initialize java.lang classes", TRACETIME_LOG(Info, startuptime));
++#define C6IJC(label) do { fprintf(stderr, "[C6IJC] " label "\n"); fflush(stderr); } while (0)
++  C6IJC("IJC enter");
+ 
+   if (EagerXrunInit && Arguments::init_libraries_at_startup()) {
+     create_vm_init_libraries();
+   }
+ 
++  C6IJC("before init_class String");
+   initialize_class(vmSymbols::java_lang_String(), CHECK);
++  C6IJC("after init_class String");
+ 
+   // Inject CompactStrings value after the static initializers for String ran.
+   java_lang_String::set_compact_strings(CompactStrings);
++  C6IJC("after set_compact_strings");
+ 
+   // Initialize java_lang.System (needed before creating the thread)
++  C6IJC("before init_class System");
+   initialize_class(vmSymbols::java_lang_System(), CHECK);
++  C6IJC("after init_class System");
+   // The VM creates & returns objects of this class. Make sure it's initialized.
++  C6IJC("before init_class Class");
+   initialize_class(vmSymbols::java_lang_Class(), CHECK);
++  C6IJC("after init_class Class");
++  C6IJC("before init_class ThreadGroup");
+   initialize_class(vmSymbols::java_lang_ThreadGroup(), CHECK);
++  C6IJC("after init_class ThreadGroup");
+   Handle thread_group = create_initial_thread_group(CHECK);
+   Universe::set_main_thread_group(thread_group());
+   initialize_class(vmSymbols::java_lang_Thread(), CHECK);
+@@ -2908,6 +2929,7 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+     *canTryAgain = false; // don't let caller call JNI_CreateJavaVM again
+     return status;
+   }
++  fprintf(stderr, "[C6T] after init_globals\n"); fflush(stderr);
+ 
+   JFR_ONLY(Jfr::on_create_vm_1();)
+ 
+@@ -2923,26 +2945,32 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   JvmtiExport::transition_pending_onload_raw_monitors();
+ 
+   // Create the VMThread
++  fprintf(stderr, "[C6T] before VMThread::create\n"); fflush(stderr);
+   { TraceTime timer("Start VMThread", TRACETIME_LOG(Info, startuptime));
+ 
+     VMThread::create();
++    fprintf(stderr, "[C6T] after VMThread::create\n"); fflush(stderr);
+     Thread* vmthread = VMThread::vm_thread();
+ 
+     if (!os::create_thread(vmthread, os::vm_thread)) {
+       vm_exit_during_initialization("Cannot create VM thread. "
+                                     "Out of system resources.");
+     }
++    fprintf(stderr, "[C6T] after os::create_thread(vmthread)\n"); fflush(stderr);
+ 
+     // Wait for the VM thread to become ready, and VMThread::run to initialize
+     // Monitors can have spurious returns, must always check another state flag
+     {
+       MonitorLocker ml(Notify_lock);
+       os::start_thread(vmthread);
++      fprintf(stderr, "[C6T] after os::start_thread(vmthread); now waiting for active_handles\n"); fflush(stderr);
+       while (vmthread->active_handles() == NULL) {
+         ml.wait();
+       }
++      fprintf(stderr, "[C6T] vmthread active_handles ready\n"); fflush(stderr);
+     }
+   }
++  fprintf(stderr, "[C6T] VMThread fully started\n"); fflush(stderr);
+ 
+   assert(Universe::is_fully_initialized(), "not initialized");
+   if (VerifyDuringStartup) {
+@@ -2969,9 +2997,12 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   // Notify JVMTI agents that VM has started (JNI is up) - nop if no agents.
+   JvmtiExport::post_early_vm_start();
+ 
++  fprintf(stderr, "[C6T] before initialize_java_lang_classes\n"); fflush(stderr);
+   initialize_java_lang_classes(main_thread, CHECK_JNI_ERR);
++  fprintf(stderr, "[C6T] after initialize_java_lang_classes\n"); fflush(stderr);
+ 
+   quicken_jni_functions();
++  fprintf(stderr, "[C6T] after quicken_jni_functions\n"); fflush(stderr);
+ 
+   // No more stub generation allowed after that point.
+   StubCodeDesc::freeze();
+diff --git a/src/hotspot/share/runtime/thread.hpp b/src/hotspot/share/runtime/thread.hpp
+index 42ac37a601f..87f850d8837 100644
+--- a/src/hotspot/share/runtime/thread.hpp
++++ b/src/hotspot/share/runtime/thread.hpp
+@@ -555,6 +555,15 @@ protected:
+   size_t           _stack_size;
+   int              _lgrp_id;
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #25 (Option C): valid cap to cap_trampoline_dispatch, used by
++  // stub-emitted call_VM_leaf_base to BLR into libjvm.so .text whose
++  // address range is OUTSIDE codecache PCC bounds. Loaded once at Thread
++  // construction from C++ space (where the function pointer has wide
++  // bounds via the linker).
++  void*            _cap_trampoline_addr;
++#endif
++
+  public:
+   // Stack overflow support
+   address stack_base() const           { assert(_stack_base != NULL,"Sanity check"); return _stack_base; }
+@@ -612,6 +621,9 @@ protected:
+ 
+   static ByteSize stack_base_offset()            { return byte_offset_of(Thread, _stack_base); }
+   static ByteSize stack_size_offset()            { return byte_offset_of(Thread, _stack_size); }
++#ifdef __CHERI_PURE_CAPABILITY__
++  static ByteSize cap_trampoline_addr_offset()   { return byte_offset_of(Thread, _cap_trampoline_addr); }
++#endif
+ 
+   static ByteSize tlab_start_offset()            { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::start_offset(); }
+   static ByteSize tlab_end_offset()              { return byte_offset_of(Thread, _tlab) + ThreadLocalAllocBuffer::end_offset(); }
