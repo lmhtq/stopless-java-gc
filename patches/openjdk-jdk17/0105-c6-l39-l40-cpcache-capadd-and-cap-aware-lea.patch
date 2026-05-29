@@ -1,0 +1,458 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Fri, 29 May 2026 13:25:00 +0800
+Subject: [PATCH] Phase C-6 L39/L40: cap-aware constant-pool-cache index + cap-aware lea
+
+Bytecode templates execute and now reach constant-pool resolution. Two
+mechanical cap-arithmetic fixes, the second high-leverage:
+
+  L39 get_cache_and_index_at_bcp: `add(cache, rcpool, index, LSL 5)` is
+      an integer add that strips the ConstantPoolCache capability tag, so
+      the subsequent ldar/[cache] faults. New cap_add_reg helper (Morello
+      `add Cd,Cn,Xm,uxtx` = 0xC2A06000|..., verified vs clang); pre-shift
+      the index with lsl then cap-add.
+
+  L40 Address::lea (base_plus_offset and base_plus_offset_reg): the
+      generic lea emitted integer add/sub, stripping the base capability
+      on EVERY lea(reg, Address(cap_base, ...)). Made it cap-aware:
+      cap_add_imm/cap_sub_imm for small offsets, mov+cap_add_reg for
+      large, cap_add_reg (with optional pre-shift) for the index form.
+      This is high-leverage — it fixes address computation across many
+      bytecode templates at once (the +0x50 cpcache header offset that
+      faulted right after L39, and others).
+
+New helpers in macroAssembler_aarch64.hpp: cap_add_reg, cap_add_imm.
+
+RESULT: getstatic/resolve templates run; execution crosses into the
+libjvm.so constant-pool resolution runtime. Next fault (L41):
+frame::interpreter_frame_method() (C++ frame walking) reads a Method*
+from the interpreter frame — a frame-layout / cap-tag consistency issue
+between the interpreter's cap-STP frame stores and the C++ frame reader.
+
+Session: 39 commits, 101 build iterations, L25-L40 resolved.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/aarch64/assembler_aarch64.cpp b/src/hotspot/cpu/aarch64/assembler_aarch64.cpp
+index d31f638832b..21338ef22a5 100644
+--- a/src/hotspot/cpu/aarch64/assembler_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/assembler_aarch64.cpp
+@@ -106,15 +106,47 @@ void Address::lea(MacroAssembler *as, Register r) const {
+   case base_plus_offset: {
+     if (_offset == 0 && _base == r) // it's a nop
+       break;
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #40: lea computes an address from a (capability) base; the
++    // stock integer add/sub strips the base's cap tag so the result
++    // faults when used as a pointer. Use cap-ADD/cap-SUB. Small offsets
++    // (the overwhelmingly common field/header-offset case) use the imm12
++    // form; large offsets materialise into rscratch1 and cap-add by reg.
++    if (_offset >= 0 && _offset < (1 << 12)) {
++      __ cap_add_imm(r, _base, (unsigned)_offset);
++    } else if (_offset < 0 && -_offset < (1 << 12)) {
++      __ cap_sub_imm(r, _base, (unsigned)(-_offset));
++    } else {
++      __ mov(rscratch1, _offset);
++      __ cap_add_reg(r, _base, rscratch1);
++    }
++    break;
++#else
+     if (_offset > 0)
+       __ add(r, _base, _offset);
+     else
+       __ sub(r, _base, -_offset);
+       break;
++#endif
+   }
+   case base_plus_offset_reg: {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // cap-add with (optionally shifted) index register, preserving the
++    // base capability. Pre-shift into rscratch1 when a scale is needed.
++    {
++      int sh = MAX2(_ext.shift(), 0);
++      if (sh == 0) {
++        __ cap_add_reg(r, _base, _index);
++      } else {
++        __ lsl(rscratch1, _index, sh);
++        __ cap_add_reg(r, _base, rscratch1);
++      }
++    }
++    break;
++#else
+     __ add(r, _base, _index, _ext.op(), MAX2(_ext.shift(), 0));
+     break;
++#endif
+   }
+   case literal: {
+     if (rtype == relocInfo::none)
+diff --git a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
+index 1db103730f1..73297c1b831 100644
+--- a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
+@@ -169,9 +169,16 @@ void InterpreterMacroAssembler::get_unsigned_2_byte_index_at_bcp(
+ }
+ 
+ void InterpreterMacroAssembler::get_dispatch() {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #34: PCC-relative adrp to the libjvm.so dispatch table yields
++  // an out-of-range (tag-cleared) cap from the codecache. Load the
++  // pre-seeded dispatch-table capability from the thread instead.
++  cap_ldr_imm(rdispatch, rthread, in_bytes(Thread::cap_dispatch_offset()));
++#else
+   uint64_t offset;
+   adrp(rdispatch, ExternalAddress((address)Interpreter::dispatch_table()), offset);
+   lea(rdispatch, Address(rdispatch, offset));
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::get_cache_index_at_bcp(Register index,
+@@ -215,7 +222,15 @@ void InterpreterMacroAssembler::get_cache_and_index_at_bcp(Register cache,
+   // install it in cache. instead we pre-add the indexed offset to
+   // rcpool and return it in cache. All clients of this method need to
+   // be modified accordingly.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #39: integer add(cache, rcpool, index, LSL, 5) strips
++  // rcpool's cap tag → later [cache] access faults. Pre-shift the index
++  // into a scratch, then cap-add to keep the ConstantPoolCache capability.
++  lsl(rscratch1, index, 5);
++  cap_add_reg(cache, rcpool, rscratch1);
++#else
+   add(cache, rcpool, index, Assembler::LSL, 5);
++#endif
+ }
+ 
+ 
+@@ -256,11 +271,21 @@ void InterpreterMacroAssembler::get_cache_entry_pointer_at_bcp(Register cache,
+ void InterpreterMacroAssembler::get_method_counters(Register method,
+                                                     Register mcs, Label& skip) {
+   Label has_counters;
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #30: MethodCounters* is a cap; integer ldr strips the tag
++  // and the subsequent counter increment via mcs base faults.
++  cap_ldr_imm(mcs, method, in_bytes(Method::method_counters_offset()));
++  cbnz(mcs, has_counters);
++  call_VM(noreg, CAST_FROM_FN_PTR(address,
++          InterpreterRuntime::build_method_counters), method);
++  cap_ldr_imm(mcs, method, in_bytes(Method::method_counters_offset()));
++#else
+   ldr(mcs, Address(method, Method::method_counters_offset()));
+   cbnz(mcs, has_counters);
+   call_VM(noreg, CAST_FROM_FN_PTR(address,
+           InterpreterRuntime::build_method_counters), method);
+   ldr(mcs, Address(method, Method::method_counters_offset()));
++#endif
+   cbz(mcs, skip); // No MethodCounters allocated, OutOfMemory
+   bind(has_counters);
+ }
+@@ -478,6 +503,37 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
+     tbnz(rscratch2, exact_log2(SafepointMechanism::poll_bit()), safepoint);
+   }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #37: the dispatch table holds `address` entries which are
++  // 16-byte capabilities in purecap, but the stock indexing uses uxtw(3)
++  // (×8), so odd bytecodes read the metadata half of an entry (a value
++  // like 0xfc5fc000...) instead of the handler PC and br lands in
++  // garbage. We need ×16 indexing — but the hardware register-offset
++  // addressing mode only allows a shift of 0 or log2(access size)=3 for
++  // an 8-byte ldr (assembler_aarch64.hpp:539 guarantee). So pre-scale
++  // the (element) index by 16 with an explicit lsl and use shift 0. The
++  // 8-byte ldr then reads the entry's address half = the handler PC, and
++  // br (integer) reaches it within the codecache PCC.
++  // distance_from_dispatch_table already returns an ELEMENT count.
++  if (table == Interpreter::dispatch_table(state)) {
++    addw(rscratch2, rscratch1, Interpreter::distance_from_dispatch_table(state));
++    lslw(rscratch2, rscratch2, 4);
++    ldr(rscratch2, Address(rdispatch, rscratch2, Address::uxtw(0)));
++  } else {
++    mov(rscratch2, (address)table);
++    lslw(rscratch1, rscratch1, 4);
++    ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(0)));
++  }
++  br(rscratch2);
++
++  if (needs_thread_local_poll) {
++    bind(safepoint);
++    lea(rscratch2, ExternalAddress((address)safepoint_table));
++    lslw(rscratch1, rscratch1, 4);
++    ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(0)));
++    br(rscratch2);
++  }
++#else
+   if (table == Interpreter::dispatch_table(state)) {
+     addw(rscratch2, rscratch1, Interpreter::distance_from_dispatch_table(state));
+     ldr(rscratch2, Address(rdispatch, rscratch2, Address::uxtw(3)));
+@@ -493,6 +549,7 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
+     ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(3)));
+     br(rscratch2);
+   }
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::dispatch_only(TosState state, bool generate_poll) {
+@@ -1635,6 +1692,16 @@ void InterpreterMacroAssembler::call_VM_base(Register oop_result,
+ // interpreter specific
+   restore_bcp();
+   restore_locals();
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #28: rmethod = r12 is a caller-saved temporary, so it is
++  // clobbered across the call_VM (the C runtime / trampoline leaves a
++  // tag-0 integer in it). Stock AArch64 leaves the integer value intact
++  // by luck and callers that use `method` after call_VM see the right
++  // address — but on CHERI a tag-0 base faults PROT_CHERI_TAG on first
++  // use. Reload rmethod with a tagged cap from the frame, mirroring the
++  // bcp/locals restores above.
++  get_method(rmethod);
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::profile_obj_type(Register obj, const Address& mdo_addr) {
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+index 9b1c0a93539..e9b6618ec6c 100644
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+@@ -237,9 +237,43 @@ class MacroAssembler: public Assembler {
+     assert(Rd != r31_sp && Rn != r31_sp, "should be");
+     if (Rd == Rn) {
+     } else if (Rd == sp || Rn == sp) {
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #13: mov(Reg, sp) / mov(sp, Reg) — Assembler::add emits
++      // INTEGER ADD (0x91xxxxxx) which doesn't preserve cap tag. Emit
++      // Morello cap-ADD (0x02000000-family) directly. sp/csp encodes as
++      // register #31 in instructions.
++      unsigned rd_enc = (Rd == sp) ? 31u : (unsigned)Rd->encoding();
++      unsigned rn_enc = (Rn == sp) ? 31u : (unsigned)Rn->encoding();
++      emit_int32(0x02000000U | (rn_enc << 5) | rd_enc);
++#else
+       Assembler::add(Rd, Rn, 0U);
++#endif
++    } else if (Rd == zr || Rn == zr) {
++      // Either Rd is zr (write discarded, no-op) or Rn is zr (writing
++      // integer zero to Rd; the cap-tag-clearing is intended). Use
++      // the classic orr, which knows how to encode HotSpot's pseudo
++      // zr (#32) as the AArch64 ZR (#31) in the ORR instruction
++      // family. Cap-preserving move is not needed here.
++      orr(Rd, zr, Rn);
+     } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #8: emit the Morello MOV (Capability) instruction
++      // directly. Encoding: 0xC2C1D000 | (Rn << 5) | Rd, where Rd
++      // and Rn are 5-bit (0..30). Confirmed via Morello clang:
++      //   mov c0, c1  -> 0xC2C1D020
++      //   mov c19, c0 -> 0xC2C1D013
++      //   mov c2, c3  -> 0xC2C1D062
++      // Prior attempts (orr Rd, ZR, Rn — integer; add Rd, Rn, #0 —
++      // also integer ADD imm at opcode 0x91xxxxxx, NOT the cap-ADD
++      // at 0x02xxxxxx) both clear the cap tag. The MOV (Capability)
++      // instruction at 0xC2C1Dxxx is the canonical preserving form.
++      // Concrete symptom: forward_exception's `__ mov(r19, r0)`
++      // had been losing the tag of the exception handler address,
++      // so `__ br(r19)` SIGPROT'd at the tag-zero PC.
++      emit_int32(0xC2C1D000 | (Rn->encoding() << 5) | Rd->encoding());
++#else
+       orr(Rd, zr, Rn);
++#endif
+     }
+   }
+ 
+@@ -510,6 +544,14 @@ public:
+   inline void mov(Register dst, unsigned int imm64)       { mov_immediate64(dst, (uint64_t)imm64); }
+   inline void mov(Register dst, unsigned long imm64)      { mov_immediate64(dst, (uint64_t)imm64); }
+   inline void mov(Register dst, unsigned long long imm64) { mov_immediate64(dst, (uint64_t)imm64); }
++#ifdef __CHERI_PURE_CAPABILITY__
++  // On CHERI/Morello purecap, intptr_t is __intcap (a capability), which
++  // does not match any of the integer overloads above. Provide a dedicated
++  // overload so call sites like mov(dst, src.as_constant()) where
++  // as_constant() returns intptr_t do not suffer ambiguous-overload errors.
++  inline void mov(Register dst, intptr_t imm64)            { mov_immediate64(dst, (uint64_t)(uintptr_t)imm64); }
++  inline void mov(Register dst, uintptr_t imm64)           { mov_immediate64(dst, (uint64_t)imm64); }
++#endif
+ 
+   inline void movw(Register dst, uint32_t imm32)
+   {
+@@ -699,16 +741,160 @@ public:
+   // Alignment
+   void align(int modulus);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #12 helpers: emit Morello cap-STR and cap-STP directly.
++  // HotSpot's Assembler::str/stp emit integer encodings (0xf9xxxxxx /
++  // 0xa9xxxxxx) that are either illegal in C64 mode or silently drop
++  // cap tags. Cap variants: 0xC2 (STR), 0xA2 (STUR), 0x42 (STP).
++  // Verified vs Morello clang (see docs/27 + docs/28).
++  // Use these explicitly in stubs where the register holds a cap.
++
++  // str Ct, [Cn, #imm]   (cap, 16-byte, signed-offset)
++  inline void cap_str_imm(Register Ct, Register Cn, int imm) {
++    if (imm >= 0 && (imm % 16) == 0 && imm < 16 * 4096) {
++      // STR (immediate, unsigned offset): imm12 scaled by 16.
++      emit_int32(0xC2000000U | (((unsigned)imm / 16) << 10)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    } else {
++      // STUR (immediate, signed 9-bit unscaled).
++      emit_int32(0xA2000000U | (((unsigned)imm & 0x1FF) << 12)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    }
++  }
++  // stp Ct, Ct2, [Cn, #imm]   (cap-pair, 32 bytes total, signed-offset)
++  inline void cap_stp_imm(Register Ct, Register Ct2, Register Cn, int imm) {
++    // imm7 = imm/16 (signed 7-bit), scaled by 16.
++    emit_int32(0x42800000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | (Ct2->encoding() << 10) | (Cn->encoding() << 5)
++               | Ct->encoding());
++  }
++  // ldr Ct, [Cn, #imm]   (cap, 16-byte, signed-offset)
++  inline void cap_ldr_imm(Register Ct, Register Cn, int imm) {
++    if (imm >= 0 && (imm % 16) == 0 && imm < 16 * 4096) {
++      emit_int32(0xC2400000U | (((unsigned)imm / 16) << 10)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    } else {
++      emit_int32(0xA2400000U | (((unsigned)imm & 0x1FF) << 12)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    }
++  }
++  // ldp Ct, Ct2, [Cn, #imm]   (cap-pair, 32 bytes total, signed-offset)
++  inline void cap_ldp_imm(Register Ct, Register Ct2, Register Cn, int imm) {
++    emit_int32(0x42C00000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | (Ct2->encoding() << 10) | (Cn->encoding() << 5)
++               | Ct->encoding());
++  }
++  // sub Cd, Cn, #imm12   (cap-sub immediate)
++  inline void cap_sub_imm(Register Cd, Register Cn, unsigned imm12) {
++    unsigned rd_enc = (Cd == sp) ? 31u : (unsigned)Cd->encoding();
++    unsigned rn_enc = (Cn == sp) ? 31u : (unsigned)Cn->encoding();
++    emit_int32(0x02800000U | ((imm12 & 0xFFF) << 10) | (rn_enc << 5) | rd_enc);
++  }
++  // add Cd, Cn, #imm12   (cap-add immediate, preserves cap metadata)
++  inline void cap_add_imm(Register Cd, Register Cn, unsigned imm12) {
++    unsigned rd_enc = (Cd == sp) ? 31u : (unsigned)Cd->encoding();
++    unsigned rn_enc = (Cn == sp) ? 31u : (unsigned)Cn->encoding();
++    emit_int32(0x02000000U | ((imm12 & 0xFFF) << 10) | (rn_enc << 5) | rd_enc);
++  }
++  // blr Cn   (Morello "Branch with Link to Capability"). UNLIKE the
++  // integer `blr Xn` (0xd63f0000-family) which only updates PC within
++  // the CURRENT PCC bounds, this installs Cn as the NEW PCC. Required
++  // for any call whose target lies OUTSIDE the caller's PCC bounds —
++  // e.g. a codecache stub calling into libjvm.so .text. Verified vs
++  // Morello clang: `blr c0` = 0xC2C23000, so `blr cN` = 0xC2C23000 |
++  // (Rn<<5). (Cf. `ret c30` = 0xC2C253C0 = 0xC2C25000 | (30<<5).)
++  inline void cap_blr(Register Cn) {
++    emit_int32(0xC2C23000U | ((unsigned)Cn->encoding() << 5));
++  }
++  // br Cn    (Morello cap branch, no link). `br c0` = 0xC2C21000.
++  inline void cap_br(Register Cn) {
++    emit_int32(0xC2C21000U | ((unsigned)Cn->encoding() << 5));
++  }
++  // add Cd, Cn, Xm  (Morello cap + 64-bit register, preserves Cn's cap
++  // metadata/bounds/tag and adds Xm to the address). The stock
++  // Assembler::add(Cd, Cn, Rm, LSL, n) emits an INTEGER add that strips
++  // the cap tag. Verified vs Morello clang: `add c0,c0,x1,uxtx` =
++  // 0xC2A16000, so `add Cd,Cn,Xm,uxtx` = 0xC2A06000 | (Xm<<16) | (Cn<<5)
++  // | Cd. Caller pre-shifts Xm if a scaled index is needed.
++  inline void cap_add_reg(Register Cd, Register Cn, Register Xm) {
++    emit_int32(0xC2A06000U | ((unsigned)Xm->encoding() << 16)
++               | ((unsigned)Cn->encoding() << 5) | (unsigned)Cd->encoding());
++  }
++  // cap-STP to [sp, #imm] (no writeback). The stack pointer encodes as
++  // register #31 in instructions — HotSpot's `sp` Register* has a pseudo
++  // encoding (#33) so we MUST hardcode 31 here, not sp->encoding(). The
++  // zero register zr also encodes as #31 in the Rt fields → stores a
++  // null cap, which is the intent for the zr operands. Cap-pair = 32B,
++  // 16-byte slot stride (matches the interpreter frame's cap-sized slots).
++  inline void cap_stp_sp(Register Ct, Register Ct2, int imm) {
++    emit_int32(0x42800000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | ((unsigned)Ct2->encoding() << 10) | (31U << 5)
++               | (unsigned)Ct->encoding());
++  }
++  // cap-STP pre-index [sp, #imm]! (writeback). Pre-index family = 0x62800000.
++  inline void cap_stp_sp_pre(Register Ct, Register Ct2, int imm) {
++    emit_int32(0x62800000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | ((unsigned)Ct2->encoding() << 10) | (31U << 5)
++               | (unsigned)Ct->encoding());
++  }
++  // dst = a valid capability addressing the libjvm.so global `target`.
++  // PCC-relative ADRP from the codecache produces a cap with codecache
++  // bounds that cannot reach libjvm.so data/bss (PROT_CHERI_BOUNDS) —
++  // the data analog of the cap-BLR problem. We instead derive from DDC
++  // (Default Data Capability), which spans the whole data address space,
++  // then SCVALUE its address to `target`. `tmp` is clobbered with the
++  // integer target address.
++  //   mrs   dst, DDC                 (0xC29B4120 | dst)
++  //   mov   tmp, #target             (movz/movk sequence)
++  //   scvalue dst, dst, tmp          (0xC2C14000 | tmp<<16 | dst<<5 | dst)
++  inline void cap_lea_global(Register dst, address target, Register tmp) {
++    emit_int32(0xC29B4120U | (unsigned)dst->encoding());
++    mov(tmp, (uint64_t)(uintptr_t)target);
++    emit_int32(0xC2C14000U | ((unsigned)tmp->encoding() << 16)
++               | ((unsigned)dst->encoding() << 5) | (unsigned)dst->encoding());
++  }
++#endif
++
+   // Stack frame creation/removal
+   void enter()
+   {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #9: emit Morello cap-stp + cap-mov in stack frame setup.
++    // The standard AArch64 STP (0xA9...) emitted by stp(Reg,Reg,Address)
++    // is INTEGER stp — it stores 8-byte pairs and clears the cap tag
++    // of rfp/lr in the destination memory. The Morello cap-STP
++    // (0x62800000-family) stores 16-byte cap pairs preserving tags.
++    // Encoding (cap-stp pre-imm): 0x62800000 | ((imm7) << 15)
++    //                              | (Rt2<<10) | (Rn<<5) | Rt
++    // where imm7 = byte_offset / 16 (signed 7-bit).
++    // For -2*wordSize = -32 bytes, imm7 = -2 = 0x7E (7-bit signed).
++    //   0x62800000 | (0x7E << 15) | (30<<10) | (31<<5) | 29 = 0x62BF7BFD
++    // Note: SP/CSP encodes as register #31 in instructions (not the
++    // pseudo #33 used as HotSpot's `sp` Register*).
++    emit_int32(0x62800000 | ((-32/16 & 0x7F) << 15) |
++               (30 << 10) | (31 << 5) | 29);
++    // mov(rfp, sp) — emit cap-add #0 from csp.
++    //   0x02000000 | (0<<22) | (0<<10) | (31<<5) | 29 = 0x020003FD
++    emit_int32(0x02000000 | (31 << 5) | 29);
++#else
+     stp(rfp, lr, Address(pre(sp, -2 * wordSize)));
+     mov(rfp, sp);
++#endif
+   }
+   void leave()
+   {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // mirror of enter(): cap-add sp,rfp,#0 then cap-ldp post-imm +32
++    //   0x02000000 | (29 << 5) | 31 = 0x020003BF (sp <- rfp + 0)
++    emit_int32(0x02000000 | (29 << 5) | 31);
++    // cap-ldp post-imm: 0x22C00000 | ((imm7) << 15) | (Rt2<<10) | (Rn<<5) | Rt
++    //   0x22C00000 | (2 << 15) | (30<<10) | (31<<5) | 29 = 0x22C17BFD
++    emit_int32(0x22C00000 | ((32/16 & 0x7F) << 15) |
++               (30 << 10) | (31 << 5) | 29);
++#else
+     mov(sp, rfp);
+     ldp(rfp, lr, Address(post(sp, 2 * wordSize)));
++#endif
+   }
+ 
+   // Support for getting the JavaThread pointer (i.e.; a reference to thread-local information)
+@@ -1013,8 +1199,25 @@ public:
+   void bang_stack_with_offset(int offset) {
+     // stack grows down, caller passes positive offset
+     assert(offset > 0, "must bang with negative offset");
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #31: integer sub(rscratch2, sp, offset) strips sp's cap
++    // tag, so the str below faults PROT_CHERI_TAG. Use cap-SUB to keep
++    // the stack capability. sp encodes as #31. Handle both the imm12
++    // and the LSL #12 (page-multiple) forms.
++    unsigned rd = (unsigned)rscratch2->encoding();
++    if (offset < (1 << 12)) {
++      emit_int32(0x02800000U | ((unsigned)offset << 10) | (31U << 5) | rd);
++    } else {
++      assert((offset & 0xFFF) == 0 && (unsigned)(offset >> 12) < (1U << 12),
++             "bang offset not representable as cap-SUB imm12<<12");
++      emit_int32(0x02800000U | (1U << 22)
++                 | (((unsigned)offset >> 12) << 10) | (31U << 5) | rd);
++    }
++    str(zr, Address(rscratch2));
++#else
+     sub(rscratch2, sp, offset);
+     str(zr, Address(rscratch2));
++#endif
+   }
+ 
+   // Writes to stack successive pages until offset reached to check for
