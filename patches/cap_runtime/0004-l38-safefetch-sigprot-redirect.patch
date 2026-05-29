@@ -1,0 +1,50 @@
+diff --git a/src/cap_runtime/stopless_gc/handler.c b/src/cap_runtime/stopless_gc/handler.c
+index bca5150..41f9ace 100644
+--- a/src/cap_runtime/stopless_gc/handler.c
++++ b/src/cap_runtime/stopless_gc/handler.c
+@@ -37,11 +37,45 @@ unsigned long long stopless_handler_self_heals = 0;
+ 
+ static struct sigaction prev_sa;
+ 
++/* C-6 L38: HotSpot's SafeFetch probes (os::is_readable_pointer etc.)
++   deliberately load through a possibly-bad pointer and rely on the signal
++   handler to redirect the PC to a continuation that returns a default.
++   The stock handle_safefetch only recognises SIGSEGV/SIGBUS, but on CHERI
++   the bad load faults with SIGPROT (PROT_CHERI_TAG/BOUNDS). These labels
++   are defined in libjvm.so's safefetch_bsd_aarch64.S; cap_runtime is
++   linked into the same DSO so the references resolve at link time. */
++extern char _SafeFetch32_fault[];
++extern char _SafeFetch32_continuation[];
++extern char _SafeFetchN_fault[];
++extern char _SafeFetchN_continuation[];
++
+ static void
+ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
+ {
+     ucontext_t *ctx = (ucontext_t *)ctx_;
+ 
++    /* C-6 L38: SafeFetch redirect FIRST (before any diag/abort) — these
++       faults are expected and frequent. If the faulting PC is a SafeFetch
++       load, advance PCC to the matching continuation (which returns the
++       caller-supplied default) and resume. Preserve PCC bounds/tag via
++       cheri_address_set. */
++    {
++        __uintcap_t elr = (__uintcap_t)ctx->uc_mcontext.mc_capregs.cap_elr;
++        uintptr_t pc = (uintptr_t)cheri_address_get((void *)elr);
++        if (pc == (uintptr_t)(void *)_SafeFetch32_fault) {
++            void *cont = cheri_address_set((void *)elr,
++                            (uintptr_t)(void *)_SafeFetch32_continuation);
++            ctx->uc_mcontext.mc_capregs.cap_elr = (__uintcap_t)cont;
++            return;
++        }
++        if (pc == (uintptr_t)(void *)_SafeFetchN_fault) {
++            void *cont = cheri_address_set((void *)elr,
++                            (uintptr_t)(void *)_SafeFetchN_continuation);
++            ctx->uc_mcontext.mc_capregs.cap_elr = (__uintcap_t)cont;
++            return;
++        }
++    }
++
+     /* C-6 L32 diag: unconditionally report the first few faults with PC,
+        then abort — so we can locate a deeper unforwarded fault without
+        the handler looping (retry-without-advance) forever. */
