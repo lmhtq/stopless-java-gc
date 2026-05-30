@@ -1,0 +1,208 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Sat, 30 May 2026 09:30:00 +0800
+Subject: [PATCH] Phase C-6 L42 RESOLVED: cpcache entry stride is x64 on CHERI, not x32
+
+Correcting the L42 analysis from docs/36: ConstantPoolCacheEntry is
+ALREADY a power of two (64 bytes) on CHERI — no padding needed. The
+reason: `intx` is `intptr_t` which is `__intcap` = 16 bytes in purecap.
+Verified with a standalone test (sizeof(intptr_t)=16, sizeof(entry)=64,
+offsets _indices@0 _f1@16 _f2@32 _flags@48). My earlier "48 bytes"
+estimate wrongly assumed intx stayed 8 bytes.
+
+So the entry is 4×16 = 64, and the ONLY bug is the interpreter's
+hardcoded ×32 (lsl #5) entry stride — it must be log2(64) = 6. Fixed
+get_cache_and_index_at_bcp and get_cache_entry_pointer_at_bcp to derive
+the shift from exact_log2(size_in_bytes()), so it tracks the struct.
+get_cache_entry_pointer_at_bcp also needed cap-LDR for the cpcache
+pointer and cap-ADD for the header + index*stride (it had three integer
+ops stripping the cap).
+
+For cpcache index 0 the old ×32 worked (idx×anything=0), which is why we
+ran 1600+ class-inits before the first index!=0 access read the wrong
+entry, got a NULL _f1, and faulted dereferencing the java_mirror.
+
+RESULT: getstatic/putstatic now address the correct cpcache entry; the
+resolved field holder (java_mirror oop) loads correctly and the template
+reaches the actual field store. Next fault (L43): the oop load barrier
+(BarrierSetAssembler::load_at for the mirror) uses integer ldr, so the
+mirror oop comes back tag-0 — a high-leverage barrier-set fix that
+affects every oop load/store.
+
+Session: 42 commits, 106 build iterations, L25-L42 resolved.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
+index 1db103730f1..343c48364af 100644
+--- a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
+@@ -169,9 +169,16 @@ void InterpreterMacroAssembler::get_unsigned_2_byte_index_at_bcp(
+ }
+ 
+ void InterpreterMacroAssembler::get_dispatch() {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #34: PCC-relative adrp to the libjvm.so dispatch table yields
++  // an out-of-range (tag-cleared) cap from the codecache. Load the
++  // pre-seeded dispatch-table capability from the thread instead.
++  cap_ldr_imm(rdispatch, rthread, in_bytes(Thread::cap_dispatch_offset()));
++#else
+   uint64_t offset;
+   adrp(rdispatch, ExternalAddress((address)Interpreter::dispatch_table()), offset);
+   lea(rdispatch, Address(rdispatch, offset));
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::get_cache_index_at_bcp(Register index,
+@@ -209,13 +216,26 @@ void InterpreterMacroAssembler::get_cache_and_index_at_bcp(Register cache,
+   assert_different_registers(cache, index);
+   assert_different_registers(cache, rcpool);
+   get_cache_index_at_bcp(index, bcp_offset, index_size);
++#ifndef __CHERI_PURE_CAPABILITY__
+   assert(sizeof(ConstantPoolCacheEntry) == 4 * wordSize, "adjust code below");
++#endif
+   // convert from field index to ConstantPoolCacheEntry
+   // aarch64 already has the cache in rcpool so there is no need to
+   // install it in cache. instead we pre-add the indexed offset to
+   // rcpool and return it in cache. All clients of this method need to
+   // be modified accordingly.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #39/#42: integer add(cache, rcpool, index, LSL, 5) strips
++  // rcpool's cap tag → cap-add instead. AND the entry stride is NOT 32
++  // on CHERI: ConstantPoolCacheEntry is padded to 64 bytes (power-of-2,
++  // because _f1 is a 16-byte cap) so the shift is log2(64)=6, not 5.
++  // Derive it from size_in_bytes() so it tracks the struct.
++  const int cpce_log = exact_log2(in_bytes(ConstantPoolCacheEntry::size_in_bytes()));
++  lsl(rscratch1, index, cpce_log);
++  cap_add_reg(cache, rcpool, rscratch1);
++#else
+   add(cache, rcpool, index, Assembler::LSL, 5);
++#endif
+ }
+ 
+ 
+@@ -243,6 +263,17 @@ void InterpreterMacroAssembler::get_cache_entry_pointer_at_bcp(Register cache,
+                                                                size_t index_size) {
+   assert(cache != tmp, "must use different register");
+   get_cache_index_at_bcp(tmp, bcp_offset, index_size);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #42: the cpcache pointer is a capability and the entry stride
++  // is the (padded) 64-byte size (shift = log2(size)), not 32. Use
++  // cap-LDR to read rcpool from the frame, then cap-ADD the header and
++  // the index*stride so the resulting entry pointer keeps its cap tag.
++  const int cpce_log = exact_log2(in_bytes(ConstantPoolCacheEntry::size_in_bytes()));
++  cap_ldr_imm(cache, rfp, frame::interpreter_frame_cache_offset * wordSize);
++  cap_add_imm(cache, cache, in_bytes(ConstantPoolCache::base_offset()));
++  lsl(tmp, tmp, cpce_log);
++  cap_add_reg(cache, cache, tmp);
++#else
+   assert(sizeof(ConstantPoolCacheEntry) == 4 * wordSize, "adjust code below");
+   // convert from field index to ConstantPoolCacheEntry index
+   // and from word offset to byte offset
+@@ -251,16 +282,27 @@ void InterpreterMacroAssembler::get_cache_entry_pointer_at_bcp(Register cache,
+   // skip past the header
+   add(cache, cache, in_bytes(ConstantPoolCache::base_offset()));
+   add(cache, cache, tmp, Assembler::LSL, 2 + LogBytesPerWord);  // construct pointer to cache entry
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::get_method_counters(Register method,
+                                                     Register mcs, Label& skip) {
+   Label has_counters;
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #30: MethodCounters* is a cap; integer ldr strips the tag
++  // and the subsequent counter increment via mcs base faults.
++  cap_ldr_imm(mcs, method, in_bytes(Method::method_counters_offset()));
++  cbnz(mcs, has_counters);
++  call_VM(noreg, CAST_FROM_FN_PTR(address,
++          InterpreterRuntime::build_method_counters), method);
++  cap_ldr_imm(mcs, method, in_bytes(Method::method_counters_offset()));
++#else
+   ldr(mcs, Address(method, Method::method_counters_offset()));
+   cbnz(mcs, has_counters);
+   call_VM(noreg, CAST_FROM_FN_PTR(address,
+           InterpreterRuntime::build_method_counters), method);
+   ldr(mcs, Address(method, Method::method_counters_offset()));
++#endif
+   cbz(mcs, skip); // No MethodCounters allocated, OutOfMemory
+   bind(has_counters);
+ }
+@@ -478,6 +520,37 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
+     tbnz(rscratch2, exact_log2(SafepointMechanism::poll_bit()), safepoint);
+   }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #37: the dispatch table holds `address` entries which are
++  // 16-byte capabilities in purecap, but the stock indexing uses uxtw(3)
++  // (×8), so odd bytecodes read the metadata half of an entry (a value
++  // like 0xfc5fc000...) instead of the handler PC and br lands in
++  // garbage. We need ×16 indexing — but the hardware register-offset
++  // addressing mode only allows a shift of 0 or log2(access size)=3 for
++  // an 8-byte ldr (assembler_aarch64.hpp:539 guarantee). So pre-scale
++  // the (element) index by 16 with an explicit lsl and use shift 0. The
++  // 8-byte ldr then reads the entry's address half = the handler PC, and
++  // br (integer) reaches it within the codecache PCC.
++  // distance_from_dispatch_table already returns an ELEMENT count.
++  if (table == Interpreter::dispatch_table(state)) {
++    addw(rscratch2, rscratch1, Interpreter::distance_from_dispatch_table(state));
++    lslw(rscratch2, rscratch2, 4);
++    ldr(rscratch2, Address(rdispatch, rscratch2, Address::uxtw(0)));
++  } else {
++    mov(rscratch2, (address)table);
++    lslw(rscratch1, rscratch1, 4);
++    ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(0)));
++  }
++  br(rscratch2);
++
++  if (needs_thread_local_poll) {
++    bind(safepoint);
++    lea(rscratch2, ExternalAddress((address)safepoint_table));
++    lslw(rscratch1, rscratch1, 4);
++    ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(0)));
++    br(rscratch2);
++  }
++#else
+   if (table == Interpreter::dispatch_table(state)) {
+     addw(rscratch2, rscratch1, Interpreter::distance_from_dispatch_table(state));
+     ldr(rscratch2, Address(rdispatch, rscratch2, Address::uxtw(3)));
+@@ -493,6 +566,7 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
+     ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(3)));
+     br(rscratch2);
+   }
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::dispatch_only(TosState state, bool generate_poll) {
+@@ -1635,6 +1709,16 @@ void InterpreterMacroAssembler::call_VM_base(Register oop_result,
+ // interpreter specific
+   restore_bcp();
+   restore_locals();
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #28: rmethod = r12 is a caller-saved temporary, so it is
++  // clobbered across the call_VM (the C runtime / trampoline leaves a
++  // tag-0 integer in it). Stock AArch64 leaves the integer value intact
++  // by luck and callers that use `method` after call_VM see the right
++  // address — but on CHERI a tag-0 base faults PROT_CHERI_TAG on first
++  // use. Reload rmethod with a tagged cap from the frame, mirroring the
++  // bcp/locals restores above.
++  get_method(rmethod);
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::profile_obj_type(Register obj, const Address& mdo_addr) {
+diff --git a/src/hotspot/share/oops/cpCache.hpp b/src/hotspot/share/oops/cpCache.hpp
+index 233608bc7b1..7fa2cbc3468 100644
+--- a/src/hotspot/share/oops/cpCache.hpp
++++ b/src/hotspot/share/oops/cpCache.hpp
+@@ -142,6 +142,12 @@ class ConstantPoolCacheEntry {
+   Metadata* volatile   _f1;       // entry specific metadata field
+   volatile intx        _f2;       // entry specific int/metadata field
+   volatile intx     _flags;    // flags
++  // C-6 fix #42 note: on CHERI purecap `intx` (= intptr_t = __intcap) is
++  // already 16 bytes, so this struct is 4×16 = 64 bytes — a power of two,
++  // no padding needed. The interpreter's hardcoded ×32 (lsl #5) entry
++  // stride is the bug; it must be log2(sizeof) = 6. Fixed in
++  // get_cache_and_index_at_bcp / get_cache_entry_pointer_at_bcp by
++  // deriving the shift from size_in_bytes().
+ 
+ 
+   void set_bytecode_1(Bytecodes::Code code);
