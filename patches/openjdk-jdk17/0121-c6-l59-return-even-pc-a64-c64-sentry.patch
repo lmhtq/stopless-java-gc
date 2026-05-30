@@ -1,0 +1,629 @@
+Subject: [PATCH] Phase C-6 L59: return the top interpreted frame to an even PC (A64/C64 sentry)
+
+The JavaCalls call_stub runs in C64 mode (fix #10 sets its entry cap bit0=1
+so the C++ indirect call enters C64 cleanly). It reaches the interpreter
+entry with `blr x4`; on this Morello, BLR to an even target keeps C64 and
+lands on an even PC (so leaving entry_point bit0=0, fix #17b, is correct —
+setting bit0=1 lands the PC on an odd address and faults at the entry's
+first instruction). BUT the `blr x4` bakes PSTATE.C64 (=1) into the return
+sentry's address bit0, and RET sets PC = sentry.address WITHOUT clearing
+bit0 — so when the interpreted method finally `ret`s, PC lands on the odd
+sentry address (0x...c1) and instruction fetch faults SIGBUS / BUS_ADRALN.
+
+Fix: in TemplateTable::_return, clear bit0 of lr (new MacroAssembler
+helper cap_clear_bit0: andr the address with ~1, then SCVALUE it back into
+the capability preserving tag/bounds) just before `ret`. This is a no-op
+for returns to interpreted callers (their return-entry addresses are
+adr-computed and already even); it only matters for the top frame that
+returns to the call_stub.
+
+RESULT: the top <clinit> returns to the call_stub at an even PC; runtime
+class loading advances from java/lang/RuntimeException all the way to
+java/lang/String$CaseInsensitiveComparator (many JavaCalls cycles). Next
+fault is in the call_stub's own epilogue return to libjvm (L60).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+index 9b1c0a93539..ed8fed931ff 100644
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
+@@ -237,9 +237,43 @@ class MacroAssembler: public Assembler {
+     assert(Rd != r31_sp && Rn != r31_sp, "should be");
+     if (Rd == Rn) {
+     } else if (Rd == sp || Rn == sp) {
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #13: mov(Reg, sp) / mov(sp, Reg) — Assembler::add emits
++      // INTEGER ADD (0x91xxxxxx) which doesn't preserve cap tag. Emit
++      // Morello cap-ADD (0x02000000-family) directly. sp/csp encodes as
++      // register #31 in instructions.
++      unsigned rd_enc = (Rd == sp) ? 31u : (unsigned)Rd->encoding();
++      unsigned rn_enc = (Rn == sp) ? 31u : (unsigned)Rn->encoding();
++      emit_int32(0x02000000U | (rn_enc << 5) | rd_enc);
++#else
+       Assembler::add(Rd, Rn, 0U);
++#endif
++    } else if (Rd == zr || Rn == zr) {
++      // Either Rd is zr (write discarded, no-op) or Rn is zr (writing
++      // integer zero to Rd; the cap-tag-clearing is intended). Use
++      // the classic orr, which knows how to encode HotSpot's pseudo
++      // zr (#32) as the AArch64 ZR (#31) in the ORR instruction
++      // family. Cap-preserving move is not needed here.
++      orr(Rd, zr, Rn);
+     } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #8: emit the Morello MOV (Capability) instruction
++      // directly. Encoding: 0xC2C1D000 | (Rn << 5) | Rd, where Rd
++      // and Rn are 5-bit (0..30). Confirmed via Morello clang:
++      //   mov c0, c1  -> 0xC2C1D020
++      //   mov c19, c0 -> 0xC2C1D013
++      //   mov c2, c3  -> 0xC2C1D062
++      // Prior attempts (orr Rd, ZR, Rn — integer; add Rd, Rn, #0 —
++      // also integer ADD imm at opcode 0x91xxxxxx, NOT the cap-ADD
++      // at 0x02xxxxxx) both clear the cap tag. The MOV (Capability)
++      // instruction at 0xC2C1Dxxx is the canonical preserving form.
++      // Concrete symptom: forward_exception's `__ mov(r19, r0)`
++      // had been losing the tag of the exception handler address,
++      // so `__ br(r19)` SIGPROT'd at the tag-zero PC.
++      emit_int32(0xC2C1D000 | (Rn->encoding() << 5) | Rd->encoding());
++#else
+       orr(Rd, zr, Rn);
++#endif
+     }
+   }
+ 
+@@ -510,6 +544,14 @@ public:
+   inline void mov(Register dst, unsigned int imm64)       { mov_immediate64(dst, (uint64_t)imm64); }
+   inline void mov(Register dst, unsigned long imm64)      { mov_immediate64(dst, (uint64_t)imm64); }
+   inline void mov(Register dst, unsigned long long imm64) { mov_immediate64(dst, (uint64_t)imm64); }
++#ifdef __CHERI_PURE_CAPABILITY__
++  // On CHERI/Morello purecap, intptr_t is __intcap (a capability), which
++  // does not match any of the integer overloads above. Provide a dedicated
++  // overload so call sites like mov(dst, src.as_constant()) where
++  // as_constant() returns intptr_t do not suffer ambiguous-overload errors.
++  inline void mov(Register dst, intptr_t imm64)            { mov_immediate64(dst, (uint64_t)(uintptr_t)imm64); }
++  inline void mov(Register dst, uintptr_t imm64)           { mov_immediate64(dst, (uint64_t)imm64); }
++#endif
+ 
+   inline void movw(Register dst, uint32_t imm32)
+   {
+@@ -699,16 +741,208 @@ public:
+   // Alignment
+   void align(int modulus);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #12 helpers: emit Morello cap-STR and cap-STP directly.
++  // HotSpot's Assembler::str/stp emit integer encodings (0xf9xxxxxx /
++  // 0xa9xxxxxx) that are either illegal in C64 mode or silently drop
++  // cap tags. Cap variants: 0xC2 (STR), 0xA2 (STUR), 0x42 (STP).
++  // Verified vs Morello clang (see docs/27 + docs/28).
++  // Use these explicitly in stubs where the register holds a cap.
++
++  // str Ct, [Cn, #imm]   (cap, 16-byte, signed-offset)
++  inline void cap_str_imm(Register Ct, Register Cn, int imm) {
++    if (imm >= 0 && (imm % 16) == 0 && imm < 16 * 4096) {
++      // STR (immediate, unsigned offset): imm12 scaled by 16.
++      emit_int32(0xC2000000U | (((unsigned)imm / 16) << 10)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    } else {
++      // STUR (immediate, signed 9-bit unscaled).
++      emit_int32(0xA2000000U | (((unsigned)imm & 0x1FF) << 12)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    }
++  }
++  // stp Ct, Ct2, [Cn, #imm]   (cap-pair, 32 bytes total, signed-offset)
++  inline void cap_stp_imm(Register Ct, Register Ct2, Register Cn, int imm) {
++    // imm7 = imm/16 (signed 7-bit), scaled by 16.
++    emit_int32(0x42800000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | (Ct2->encoding() << 10) | (Cn->encoding() << 5)
++               | Ct->encoding());
++  }
++  // ldr Ct, [Cn, #imm]   (cap, 16-byte, signed-offset)
++  inline void cap_ldr_imm(Register Ct, Register Cn, int imm) {
++    if (imm >= 0 && (imm % 16) == 0 && imm < 16 * 4096) {
++      emit_int32(0xC2400000U | (((unsigned)imm / 16) << 10)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    } else {
++      emit_int32(0xA2400000U | (((unsigned)imm & 0x1FF) << 12)
++                 | (Cn->encoding() << 5) | Ct->encoding());
++    }
++  }
++  // ldp Ct, Ct2, [Cn, #imm]   (cap-pair, 32 bytes total, signed-offset)
++  inline void cap_ldp_imm(Register Ct, Register Ct2, Register Cn, int imm) {
++    emit_int32(0x42C00000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | (Ct2->encoding() << 10) | (Cn->encoding() << 5)
++               | Ct->encoding());
++  }
++  // sub Cd, Cn, #imm12   (cap-sub immediate)
++  inline void cap_sub_imm(Register Cd, Register Cn, unsigned imm12) {
++    unsigned rd_enc = (Cd == sp) ? 31u : (unsigned)Cd->encoding();
++    unsigned rn_enc = (Cn == sp) ? 31u : (unsigned)Cn->encoding();
++    emit_int32(0x02800000U | ((imm12 & 0xFFF) << 10) | (rn_enc << 5) | rd_enc);
++  }
++  // add Cd, Cn, #imm12   (cap-add immediate, preserves cap metadata)
++  inline void cap_add_imm(Register Cd, Register Cn, unsigned imm12) {
++    unsigned rd_enc = (Cd == sp) ? 31u : (unsigned)Cd->encoding();
++    unsigned rn_enc = (Cn == sp) ? 31u : (unsigned)Cn->encoding();
++    emit_int32(0x02000000U | ((imm12 & 0xFFF) << 10) | (rn_enc << 5) | rd_enc);
++  }
++  // blr Cn   (Morello "Branch with Link to Capability"). UNLIKE the
++  // integer `blr Xn` (0xd63f0000-family) which only updates PC within
++  // the CURRENT PCC bounds, this installs Cn as the NEW PCC. Required
++  // for any call whose target lies OUTSIDE the caller's PCC bounds —
++  // e.g. a codecache stub calling into libjvm.so .text. Verified vs
++  // Morello clang: `blr c0` = 0xC2C23000, so `blr cN` = 0xC2C23000 |
++  // (Rn<<5). (Cf. `ret c30` = 0xC2C253C0 = 0xC2C25000 | (30<<5).)
++  inline void cap_blr(Register Cn) {
++    emit_int32(0xC2C23000U | ((unsigned)Cn->encoding() << 5));
++  }
++  // br Cn    (Morello cap branch, no link). `br c0` = 0xC2C21000.
++  inline void cap_br(Register Cn) {
++    emit_int32(0xC2C21000U | ((unsigned)Cn->encoding() << 5));
++  }
++  // Capability load/store dispatching on the Address mode — for oop
++  // (16-byte capability) access in the GC barrier set. base_plus_offset
++  // uses the imm form; base_plus_offset_reg uses the scaled register
++  // form `ldr/str Ct, [Cn, Xm, lsl #4]` (×16 = cap element size, correct
++  // for uncompressed-oop arrays). Verified vs Morello clang:
++  //   ldr c0,[c0,x1,lsl#4] = 0xA2617800 → 0xA2607800 | Xm<<16 | Cn<<5 | Ct
++  //   str c2,[c0,x1,lsl#4] = 0xA2217802 → 0xA2207800 | Xm<<16 | Cn<<5 | Ct
++  // S (bit 12) selects scaled (lsl #log2(16), for oop array elements,
++  //   ldr c,[c,x,lsl#4]=0xA2617800) vs unscaled (uxtx, for byte-offset
++  //   field access, ldr c,[c,x]=0xA2616800). S = (index_shift() > 0).
++  inline void cap_ldr(Register dst, const Address& a) {
++    if (a.getMode() == Address::base_plus_offset) {
++      cap_ldr_imm(dst, a.base(), (int)a.offset());
++    } else {
++      unsigned S = (a.index_shift() > 0) ? 1u : 0u;
++      emit_int32(0xA2606800U | (S << 12) | ((unsigned)a.index()->encoding() << 16)
++                 | ((unsigned)a.base()->encoding() << 5) | (unsigned)dst->encoding());
++    }
++  }
++  inline void cap_str(Register src, const Address& a) {
++    if (a.getMode() == Address::base_plus_offset) {
++      cap_str_imm(src, a.base(), (int)a.offset());
++    } else {
++      unsigned S = (a.index_shift() > 0) ? 1u : 0u;
++      emit_int32(0xA2206800U | (S << 12) | ((unsigned)a.index()->encoding() << 16)
++                 | ((unsigned)a.base()->encoding() << 5) | (unsigned)src->encoding());
++    }
++  }
++  // Load into `dst` a valid capability addressing the libjvm.so global
++  // `global` (a .data/.bss table/flag the codecache PCC can't reach).
++  // Goes through the cap_data_table seeded in Thread::_cap_data_base; the
++  // cap comes from C++ (where &global is valid). Defined out-of-line in
++  // macroAssembler_aarch64.cpp because it calls cap_data_id_for at codegen.
++  void lea_libjvm_global(Register dst, address global);
++
++  // add Cd, Cn, Xm  (Morello cap + 64-bit register, preserves Cn's cap
++  // metadata/bounds/tag and adds Xm to the address). The stock
++  // Assembler::add(Cd, Cn, Rm, LSL, n) emits an INTEGER add that strips
++  // the cap tag. Verified vs Morello clang: `add c0,c0,x1,uxtx` =
++  // 0xC2A16000, so `add Cd,Cn,Xm,uxtx` = 0xC2A06000 | (Xm<<16) | (Cn<<5)
++  // | Cd. Caller pre-shifts Xm if a scaled index is needed.
++  inline void cap_add_reg(Register Cd, Register Cn, Register Xm) {
++    emit_int32(0xC2A06000U | ((unsigned)Xm->encoding() << 16)
++               | ((unsigned)Cn->encoding() << 5) | (unsigned)Cd->encoding());
++  }
++  // cap-STP to [sp, #imm] (no writeback). The stack pointer encodes as
++  // register #31 in instructions — HotSpot's `sp` Register* has a pseudo
++  // encoding (#33) so we MUST hardcode 31 here, not sp->encoding(). The
++  // zero register zr also encodes as #31 in the Rt fields → stores a
++  // null cap, which is the intent for the zr operands. Cap-pair = 32B,
++  // 16-byte slot stride (matches the interpreter frame's cap-sized slots).
++  inline void cap_stp_sp(Register Ct, Register Ct2, int imm) {
++    emit_int32(0x42800000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | ((unsigned)Ct2->encoding() << 10) | (31U << 5)
++               | (unsigned)Ct->encoding());
++  }
++  // cap-STP pre-index [sp, #imm]! (writeback). Pre-index family = 0x62800000.
++  inline void cap_stp_sp_pre(Register Ct, Register Ct2, int imm) {
++    emit_int32(0x62800000U | ((((unsigned)imm / 16) & 0x7F) << 15)
++               | ((unsigned)Ct2->encoding() << 10) | (31U << 5)
++               | (unsigned)Ct->encoding());
++  }
++  // dst = a valid capability addressing the libjvm.so global `target`.
++  // PCC-relative ADRP from the codecache produces a cap with codecache
++  // bounds that cannot reach libjvm.so data/bss (PROT_CHERI_BOUNDS) —
++  // the data analog of the cap-BLR problem. We instead derive from DDC
++  // (Default Data Capability), which spans the whole data address space,
++  // then SCVALUE its address to `target`. `tmp` is clobbered with the
++  // integer target address.
++  //   mrs   dst, DDC                 (0xC29B4120 | dst)
++  //   mov   tmp, #target             (movz/movk sequence)
++  //   scvalue dst, dst, tmp          (0xC2C14000 | tmp<<16 | dst<<5 | dst)
++  inline void cap_lea_global(Register dst, address target, Register tmp) {
++    emit_int32(0xC29B4120U | (unsigned)dst->encoding());
++    mov(tmp, (uint64_t)(uintptr_t)target);
++    emit_int32(0xC2C14000U | ((unsigned)tmp->encoding() << 16)
++               | ((unsigned)dst->encoding() << 5) | (unsigned)dst->encoding());
++  }
++  // C-6 L59: clear bit0 of a capability's ADDRESS, preserving tag/bounds/perms.
++  // On this Morello, BLR bakes PSTATE.C64 (=1 in the C64 codecache) into the
++  // return sentry's address bit0, and RET sets PC = sentry.address WITHOUT
++  // clearing bit0 -> an odd PC -> ifetch SIGBUS. Used on the interpreter return
++  // address (lr) before `ret` so the method returns to an even PC. No-op on an
++  // already-even address (invoke return-entries are adr-computed, bit0=0).
++  //   andr   tmp, Cn, ~1            (read Cn.address as Xn, clear bit0)
++  //   scvalue Cn, Cn, tmp          (0xC2C14000 | tmp<<16 | Cn<<5 | Cn)
++  inline void cap_clear_bit0(Register Cn, Register tmp) {
++    andr(tmp, Cn, (uint64_t)~(uint64_t)1);
++    emit_int32(0xC2C14000U | ((unsigned)tmp->encoding() << 16)
++               | ((unsigned)Cn->encoding() << 5) | (unsigned)Cn->encoding());
++  }
++#endif
++
+   // Stack frame creation/removal
+   void enter()
+   {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #9: emit Morello cap-stp + cap-mov in stack frame setup.
++    // The standard AArch64 STP (0xA9...) emitted by stp(Reg,Reg,Address)
++    // is INTEGER stp — it stores 8-byte pairs and clears the cap tag
++    // of rfp/lr in the destination memory. The Morello cap-STP
++    // (0x62800000-family) stores 16-byte cap pairs preserving tags.
++    // Encoding (cap-stp pre-imm): 0x62800000 | ((imm7) << 15)
++    //                              | (Rt2<<10) | (Rn<<5) | Rt
++    // where imm7 = byte_offset / 16 (signed 7-bit).
++    // For -2*wordSize = -32 bytes, imm7 = -2 = 0x7E (7-bit signed).
++    //   0x62800000 | (0x7E << 15) | (30<<10) | (31<<5) | 29 = 0x62BF7BFD
++    // Note: SP/CSP encodes as register #31 in instructions (not the
++    // pseudo #33 used as HotSpot's `sp` Register*).
++    emit_int32(0x62800000 | ((-32/16 & 0x7F) << 15) |
++               (30 << 10) | (31 << 5) | 29);
++    // mov(rfp, sp) — emit cap-add #0 from csp.
++    //   0x02000000 | (0<<22) | (0<<10) | (31<<5) | 29 = 0x020003FD
++    emit_int32(0x02000000 | (31 << 5) | 29);
++#else
+     stp(rfp, lr, Address(pre(sp, -2 * wordSize)));
+     mov(rfp, sp);
++#endif
+   }
+   void leave()
+   {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // mirror of enter(): cap-add sp,rfp,#0 then cap-ldp post-imm +32
++    //   0x02000000 | (29 << 5) | 31 = 0x020003BF (sp <- rfp + 0)
++    emit_int32(0x02000000 | (29 << 5) | 31);
++    // cap-ldp post-imm: 0x22C00000 | ((imm7) << 15) | (Rt2<<10) | (Rn<<5) | Rt
++    //   0x22C00000 | (2 << 15) | (30<<10) | (31<<5) | 29 = 0x22C17BFD
++    emit_int32(0x22C00000 | ((32/16 & 0x7F) << 15) |
++               (30 << 10) | (31 << 5) | 29);
++#else
+     mov(sp, rfp);
+     ldp(rfp, lr, Address(post(sp, 2 * wordSize)));
++#endif
+   }
+ 
+   // Support for getting the JavaThread pointer (i.e.; a reference to thread-local information)
+@@ -1013,8 +1247,25 @@ public:
+   void bang_stack_with_offset(int offset) {
+     // stack grows down, caller passes positive offset
+     assert(offset > 0, "must bang with negative offset");
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #31: integer sub(rscratch2, sp, offset) strips sp's cap
++    // tag, so the str below faults PROT_CHERI_TAG. Use cap-SUB to keep
++    // the stack capability. sp encodes as #31. Handle both the imm12
++    // and the LSL #12 (page-multiple) forms.
++    unsigned rd = (unsigned)rscratch2->encoding();
++    if (offset < (1 << 12)) {
++      emit_int32(0x02800000U | ((unsigned)offset << 10) | (31U << 5) | rd);
++    } else {
++      assert((offset & 0xFFF) == 0 && (unsigned)(offset >> 12) < (1U << 12),
++             "bang offset not representable as cap-SUB imm12<<12");
++      emit_int32(0x02800000U | (1U << 22)
++                 | (((unsigned)offset >> 12) << 10) | (31U << 5) | rd);
++    }
++    str(zr, Address(rscratch2));
++#else
+     sub(rscratch2, sp, offset);
+     str(zr, Address(rscratch2));
++#endif
+   }
+ 
+   // Writes to stack successive pages until offset reached to check for
+diff --git a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
+index 4666b42b933..4a0a06e4651 100644
+--- a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
+@@ -70,11 +70,20 @@ static inline Address aaddress(int n) {
+ }
+ 
+ static inline Address iaddress(Register r) {
++  // C-6 L47b: locals slots are 16 bytes on purecap, so this SHOULD scale
++  // by logStackElementSize (4). But the Address is consumed by an 8-byte
++  // ldr/str whose addressing mode only permits shift 0 or 3 — it cannot
++  // scale by 16 in one instruction. Fixing requires pre-computing the
++  // slot address (lea) at every variable-index local use site. Left at 3
++  // (consistent with laddress below) to keep the build running; tracked
++  // as L47b (variable-index int/float/oop locals are still ×8).
+   return Address(rlocals, r, Address::lsl(3));
+ }
+ 
+ static inline Address laddress(Register r, Register scratch,
+                                InterpreterMacroAssembler* _masm) {
++  // Kept at ×8 to stay CONSISTENT with iaddress() above (same local index
++  // must map to the same address from both). L47b will move both to ×16.
+   __ lea(scratch, Address(rlocals, r, Address::lsl(3)));
+   return Address(scratch, Interpreter::local_offset_in_bytes(1));
+ }
+@@ -578,6 +587,14 @@ void TemplateTable::locals_index(Register reg, int offset)
+ {
+   __ ldrb(reg, at_bcp(offset));
+   __ neg(reg, reg);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #47b: locals slots are 16 bytes (logStackElementSize=4) but
++  // iaddress() addresses them with an 8-byte-scaled (lsl#3) load, whose
++  // addressing mode cannot scale by 16. Pre-multiply the (negated) index
++  // by 2 so lsl#3 yields the 16-byte stride:
++  //   reg = -index*2  →  [rlocals + reg<<3] = rlocals - index*16.
++  __ lsl(reg, reg, Interpreter::logStackElementSize - LogBytesPerWord);
++#endif
+ }
+ 
+ void TemplateTable::iload() {
+@@ -652,7 +669,7 @@ void TemplateTable::lload()
+ {
+   transition(vtos, ltos);
+   __ ldrb(r1, at_bcp(1));
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
+   __ ldr(r0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -669,7 +686,7 @@ void TemplateTable::dload()
+ {
+   transition(vtos, dtos);
+   __ ldrb(r1, at_bcp(1));
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
+   __ ldrd(v0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -677,13 +694,27 @@ void TemplateTable::aload()
+ {
+   transition(vtos, atos);
+   locals_index(r1);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #53: a reference local is a 16-byte oop capability; an 8-byte
++  // ldr drops the tag. The variable-index Address can't be scaled by 16
++  // in a single cap-LDR (addressing-mode limit), so compute the slot
++  // address via the (cap-aware) lea, then cap-LDR at offset 0.
++  __ lea(rscratch1, iaddress(r1));
++  __ cap_ldr_imm(r0, rscratch1, 0);
++#else
+   __ ldr(r0, iaddress(r1));
++#endif
+ }
+ 
+ void TemplateTable::locals_index_wide(Register reg) {
+   __ ldrh(reg, at_bcp(2));
+   __ rev16w(reg, reg);
+   __ neg(reg, reg);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #47b: see locals_index — pre-multiply the negated index by 2
++  // so the lsl#3 addressing in iaddress() yields the 16-byte slot stride.
++  __ lsl(reg, reg, Interpreter::logStackElementSize - LogBytesPerWord);
++#endif
+ }
+ 
+ void TemplateTable::wide_iload() {
+@@ -697,7 +728,7 @@ void TemplateTable::wide_lload()
+   transition(vtos, ltos);
+   __ ldrh(r1, at_bcp(2));
+   __ rev16w(r1, r1);
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
+   __ ldr(r0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -715,7 +746,7 @@ void TemplateTable::wide_dload()
+   transition(vtos, dtos);
+   __ ldrh(r1, at_bcp(2));
+   __ rev16w(r1, r1);
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
+   __ ldrd(v0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -894,7 +925,13 @@ void TemplateTable::dload(int n)
+ void TemplateTable::aload(int n)
+ {
+   transition(vtos, atos);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #53: a reference local is a 16-byte oop cap; cap-LDR it (the
++  // constant-index Address is base+offset, so cap_ldr → cap_ldr_imm).
++  __ cap_ldr(r0, iaddress(n));
++#else
+   __ ldr(r0, iaddress(n));
++#endif
+ }
+ 
+ void TemplateTable::aload_0() {
+@@ -1238,8 +1275,19 @@ void TemplateTable::pop2()
+ void TemplateTable::dup()
+ {
+   transition(vtos, vtos);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #48: dup is type-agnostic and a slot may hold a 16-byte oop
++  // capability; an 8-byte ldr/str copy drops the tag/high bits, so the
++  // duplicated oop becomes a tag-0 value that faults when used (e.g. the
++  // invokespecial receiver in the new/dup/<init> idiom). Copy the FULL
++  // 16-byte slot with cap-LDR/cap-STR, decrementing esp by one slot.
++  __ cap_ldr(r0, Address(esp, 0));
++  __ cap_sub_imm(esp, esp, (unsigned)wordSize);
++  __ cap_str(r0, Address(esp, 0));
++#else
+   __ ldr(r0, Address(esp, 0));
+   __ push(r0);
++#endif
+   // stack: ..., a, a
+ }
+ 
+@@ -2180,7 +2228,9 @@ void TemplateTable::_return(TosState state)
+   if (_desc->bytecode() == Bytecodes::_return_register_finalizer) {
+     assert(state == vtos, "only valid state");
+ 
+-    __ ldr(c_rarg1, aaddress(0));
++    // C-6 L54: receiver `this` from local 0 is an oop; load as a capability
++    // so its tag survives for the load_klass below.
++    __ cap_ldr(c_rarg1, aaddress(0));
+     __ load_klass(r3, c_rarg1);
+     __ ldrw(r3, Address(r3, Klass::access_flags_offset()));
+     Label skip_register_finalizer;
+@@ -2205,6 +2255,14 @@ void TemplateTable::_return(TosState state)
+   }
+ 
+   __ remove_activation(state);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L59: the JavaCalls call_stub entered the top interpreted frame via
++  // `blr x4` running in C64, which baked PSTATE.C64 (bit0=1) into the return
++  // sentry now in lr. RET sets PC = lr.address without clearing bit0, so the
++  // return lands on an odd PC -> ifetch SIGBUS. Clear bit0 (no-op for returns
++  // to interpreted callers, whose return-entry addresses are already even).
++  __ cap_clear_bit0(lr, rscratch1);
++#endif
+   __ ret(lr);
+ }
+ 
+@@ -2299,10 +2357,18 @@ void TemplateTable::load_field_cp_cache_entry(Register obj,
+ 
+   // klass overwrite register
+   if (is_static) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #42: f1 (holder Klass*) and the java_mirror are caps;
++    // integer ldr strips the tag and the following deref faults.
++    __ cap_ldr_imm(obj, cache, in_bytes(cp_base_offset +
++                                        ConstantPoolCacheEntry::f1_offset()));
++    __ cap_ldr_imm(obj, obj, in_bytes(Klass::java_mirror_offset()));
++#else
+     __ ldr(obj, Address(cache, in_bytes(cp_base_offset +
+                                         ConstantPoolCacheEntry::f1_offset())));
+     const int mirror_offset = in_bytes(Klass::java_mirror_offset());
+     __ ldr(obj, Address(obj, mirror_offset));
++#endif
+     __ resolve_oop_handle(obj);
+   }
+ }
+@@ -2336,9 +2402,17 @@ void TemplateTable::load_invoke_cp_cache_entry(int byte_no,
+ 
+   size_t index_size = (is_invokedynamic ? sizeof(u4) : sizeof(u2));
+   resolve_cache_and_index(byte_no, cache, index, index_size);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #42: the resolved Method* (f1, or f2 for invokevirtual) is a
++  // cap; integer ldr strips the tag and dispatch faults.
++  __ cap_ldr_imm(method, cache, method_offset);
++#else
+   __ ldr(method, Address(cache, method_offset));
++#endif
+ 
+   if (itable_index != noreg) {
++    // itable_index comes from f2: a plain integer index (vtable/itable
++    // slot) for the virtual/interface case — an integer load is correct.
+     __ ldr(itable_index, Address(cache, index_offset));
+   }
+   __ ldrw(flags, Address(cache, flags_offset));
+@@ -3176,8 +3250,23 @@ void TemplateTable::prepare_invoke(int byte_no,
+     // const int receiver_is_at_end      = -1;  // back off one slot to get receiver
+     // Address recv_addr = __ argument_address(recv, no_return_pc_pushed_yet + receiver_is_at_end);
+     // __ movptr(recv, recv_addr);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #45/#47: integer add strips esp's cap tag → cap-add. And
++    // the expression-stack slot is stackElementSize (16) bytes on purecap,
++    // so the shift is logStackElementSize (4), not the hardcoded 3.
++    __ lsl(rscratch2, recv, Interpreter::logStackElementSize);
++    __ cap_add_reg(rscratch1, esp, rscratch2);
++#else
+     __ add(rscratch1, esp, recv, ext::uxtx, 3); // FIXME: uxtb here?
++#endif
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #48: the receiver is a 16-byte oop capability on the
++    // expression stack; an 8-byte ldr drops the tag → the receiver
++    // null-check (and the call) faults. cap-LDR the full oop.
++    __ cap_ldr(recv, Address(rscratch1, -Interpreter::expr_offset_in_bytes(1)));
++#else
+     __ ldr(recv, Address(rscratch1, -Interpreter::expr_offset_in_bytes(1)));
++#endif
+     __ verify_oop(recv);
+   }
+ 
+@@ -3188,8 +3277,18 @@ void TemplateTable::prepare_invoke(int byte_no,
+   // load return address
+   {
+     const address table_addr = (address) Interpreter::invoke_return_entry_table_for(code);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #46: the return-entry table is a libjvm.so .data global of
++    // 16-byte capability entries. (1) reach it via the data-cap table
++    // (codecache PCC can't address libjvm.so .data); (2) index with ×16
++    // (cap stride), not ×8; (3) cap-LDR the entry so lr is a valid
++    // return capability (the post-call interpreter continuation).
++    __ lea_libjvm_global(rscratch1, table_addr);
++    __ cap_ldr(lr, Address(rscratch1, rscratch2, Address::lsl(4)));
++#else
+     __ mov(rscratch1, table_addr);
+     __ ldr(lr, Address(rscratch1, rscratch2, Address::lsl(3)));
++#endif
+   }
+ }
+ 
+diff --git a/src/hotspot/share/runtime/javaCalls.cpp b/src/hotspot/share/runtime/javaCalls.cpp
+index 798cee7a6f8..b69312b6a2d 100644
+--- a/src/hotspot/share/runtime/javaCalls.cpp
++++ b/src/hotspot/share/runtime/javaCalls.cpp
+@@ -426,13 +426,56 @@ void JavaCalls::call_helper(JavaValue* result, const methodHandle& method, JavaC
+         }
+       }
+ #endif
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-6 fix #10: on Morello, BLR to a capability target sets
++      // PSTATE.C64 = target_cap.Value[0]. Our generated stubs are
++      // C64-mode code but the cap returned by StubRoutines::call_stub()
++      // has address 0x...8 (bit 0 = 0), so BLR enters A64 mode and
++      // misinterprets the C64 encoding → CAP_TAG fault on ifetch.
++      // (ARM ARM DDI0606 §2.10 RZTMWK + RZRMXS.) Fix: OR bit 0 into
++      // the cap address before invoking. Uses cheri_address_set to
++      // preserve cap tag/bounds/perms.
++      StubRoutines::CallStub _cs = StubRoutines::call_stub();
++      void* _cs_v = (void*)_cs;
++      unsigned long _cs_addr = (unsigned long)__builtin_cheri_address_get(_cs_v);
++      _cs_v = __builtin_cheri_address_set(_cs_v, _cs_addr | 1);
++      // C-6 fix #17 (new strategy): also flip entry_point bit 0 HERE, via
++      // cheri_address_set rather than via cap-ADD #1 in the stub. The
++      // earlier stub-emit approach (patch 0095) made c4.address odd, but
++      // BLR-cap on Morello (per actual hw behaviour observed via gdb at
++      // PC=0x428bc2c1 → SIGBUS alignment) did NOT auto-clear bit 0 for
++      // ifetch. cheri_address_set + |1 sets bit 0 the same way it works
++      // for call_stub itself (verified entering C64 cleanly).
++      void* _ep = (void*)entry_point;
++      unsigned long _ep_addr = (unsigned long)__builtin_cheri_address_get(_ep);
++      // C-6 fix #17b / L59: keep entry_point bit0=0. On this Morello, BLR to a
++      // cap does NOT auto-clear bit0 for ifetch (setting bit0=1 lands the PC on
++      // an odd address -> SIGBUS at the entry's first instruction). The
++      // call_stub already runs C64 (fix #10), and BLR to an even target keeps
++      // C64, so the interpreter runs C64 with an even PC. The remaining issue
++      // (the call_stub's `blr x4` bakes bit0=1 into the return sentry, so the
++      // method's final `ret` lands on an odd PC) is fixed on the interpreter
++      // return side, not here.
++      _ep = __builtin_cheri_address_set(_ep, _ep_addr);  // no | 1
++      address entry_point_c64 = (address)_ep;
++      fprintf(stderr, "[C6CSMODE] BLR target now %#p ; entry_point %#p (orig %#lx)\n",
++              _cs_v, _ep, _ep_addr);
++      fflush(stderr);
++      ((StubRoutines::CallStub)_cs_v)(
++        (address)&link,
++#else
+       StubRoutines::call_stub()(
+         (address)&link,
++#endif
+         // (intptr_t*)&(result->_value), // see NOTE above (compiler problem)
+         result_val_address,          // see NOTE above (compiler problem)
+         result_type,
+         method(),
++#ifdef __CHERI_PURE_CAPABILITY__
++        entry_point_c64,
++#else
+         entry_point,
++#endif
+         parameter_address,
+         args->size_of_parameters(),
+         CHECK
