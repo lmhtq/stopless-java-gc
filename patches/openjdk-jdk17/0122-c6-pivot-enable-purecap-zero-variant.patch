@@ -1,0 +1,370 @@
+Subject: [PATCH] C-6 pivot: enable a purecap Zero (C++ interpreter) build variant
+
+Strategic pivot probe (per user direction): instead of hand-fixing each
+cap-strip bug in HotSpot's runtime-emitted template interpreter (the
+L0-L60 cascade), build the Zero variant, whose bytecode interpreter is
+plain C++ (share/interpreter/zero/bytecodeInterpreter.cpp, ~3400 lines)
+compiled by the Morello clang -> cap-correct by construction. Every oop
+load becomes a clang-emitted capability load, so the CHERI load barrier
+is automatic.
+
+Changes to make a purecap Zero link & boot:
+- os_cpu/bsd_zero/atomic_bsd_zero.hpp: Zero's per-size Atomic
+  specializations stop at 8 bytes; add the 16-byte (capability-sized)
+  PlatformCmpxchg/Xchg/Load/Store/Add used for oop CAS/xchg/load/store/
+  bump on purecap (oop/Klass* are 16-byte caps). clang lowers __atomic_*
+  on a 16-byte capability to the Morello cap atomics, preserving the tag.
+- share/runtime/init.cpp, thread.cpp: guard the template-interpreter-only
+  cap seeding (_cap_dispatch = Interpreter::dispatch_table(), the aarch64
+  cap_data_table_base()) with !defined(ZERO) — ZeroInterpreter has no
+  dispatch_table and the aarch64 cap_data/trampoline TUs aren't built for
+  zero; null those fields in the zero branch.
+- Build dep: Zero needs libffi; a purecap libffi (pkg64c libffi-3.4.4) was
+  staged into the morello sysroot (sysroot side-artifact, not in this patch).
+
+RESULT (java -version, Zero, -UseEpsilonGC -UseCompressed{Oops,ClassPointers}):
+boots through init_globals, management, bytecodes, classLoader, codeCache,
+VM_Version, stubRoutines, **Genesis (universe_init)**, gc_barrier_stubs,
+interpreter_init_stub, accessFlags, InterfaceSupport, VMRegImpl::set_regName
+-- i.e. it sails past the entire template-interpreter cascade that took
+this session's L54-L60. Next fault is a SIGPROT in SharedRuntime::
+generate_stubs (a far shorter, different list than the interpreter).
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/os_cpu/bsd_zero/atomic_bsd_zero.hpp b/src/hotspot/os_cpu/bsd_zero/atomic_bsd_zero.hpp
+index b9ee395bc30..4dab6e4c24c 100644
+--- a/src/hotspot/os_cpu/bsd_zero/atomic_bsd_zero.hpp
++++ b/src/hotspot/os_cpu/bsd_zero/atomic_bsd_zero.hpp
+@@ -203,6 +203,21 @@ inline D Atomic::PlatformAdd<8>::add_and_fetch(D volatile* dest, I add_value,
+   return res;
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: cap-sized (16-byte) atomic add — e.g. an atomically bumped
++// pointer/counter declared as intptr_t/__uintcap_t. clang's __atomic_add_fetch
++// on a capability adds to its address while preserving tag/bounds.
++template<>
++template<typename D, typename I>
++inline D Atomic::PlatformAdd<16>::add_and_fetch(D volatile* dest, I add_value,
++                                                atomic_memory_order order) const {
++  STATIC_ASSERT(16 == sizeof(D));
++  D res = __atomic_add_fetch(dest, add_value, __ATOMIC_RELEASE);
++  FULL_MEM_BARRIER;
++  return res;
++}
++#endif // __CHERI_PURE_CAPABILITY__
++
+ template<>
+ template<typename T>
+ inline T Atomic::PlatformXchg<4>::operator()(T volatile* dest,
+@@ -302,4 +317,55 @@ inline void Atomic::PlatformStore<8>::operator()(T volatile* dest,
+   os::atomic_copy64(reinterpret_cast<const volatile int64_t*>(&store_value), reinterpret_cast<volatile int64_t*>(dest));
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: oop / Klass* are 16-byte capabilities, so the GC needs
++// cap-sized (16-byte) atomics. Zero's per-size specializations stop at 8;
++// add the 16-byte forms. clang lowers __atomic_* on a 16-byte capability
++// type to the Morello capability atomic instructions, preserving the tag.
++template<>
++template<typename T>
++inline T Atomic::PlatformCmpxchg<16>::operator()(T volatile* dest,
++                                                 T compare_value,
++                                                 T exchange_value,
++                                                 atomic_memory_order order) const {
++  STATIC_ASSERT(16 == sizeof(T));
++  T value = compare_value;
++  FULL_MEM_BARRIER;
++  __atomic_compare_exchange(dest, &value, &exchange_value, /*weak*/false,
++                            __ATOMIC_RELAXED, __ATOMIC_RELAXED);
++  FULL_MEM_BARRIER;
++  return value;
++}
++
++template<>
++template<typename T>
++inline T Atomic::PlatformXchg<16>::operator()(T volatile* dest,
++                                              T exchange_value,
++                                              atomic_memory_order order) const {
++  STATIC_ASSERT(16 == sizeof(T));
++  T result;
++  FULL_MEM_BARRIER;
++  __atomic_exchange(dest, &exchange_value, &result, __ATOMIC_RELAXED);
++  FULL_MEM_BARRIER;
++  return result;
++}
++
++template<>
++template<typename T>
++inline T Atomic::PlatformLoad<16>::operator()(T const volatile* src) const {
++  STATIC_ASSERT(16 == sizeof(T));
++  T value;
++  __atomic_load(const_cast<T*>(src), &value, __ATOMIC_RELAXED);
++  return value;
++}
++
++template<>
++template<typename T>
++inline void Atomic::PlatformStore<16>::operator()(T volatile* dest,
++                                                  T store_value) const {
++  STATIC_ASSERT(16 == sizeof(T));
++  __atomic_store(dest, &store_value, __ATOMIC_RELAXED);
++}
++#endif // __CHERI_PURE_CAPABILITY__
++
+ #endif // OS_CPU_BSD_ZERO_ATOMIC_BSD_ZERO_HPP
+diff --git a/src/hotspot/share/runtime/init.cpp b/src/hotspot/share/runtime/init.cpp
+index 06974b89e42..8effaff6cdf 100644
+--- a/src/hotspot/share/runtime/init.cpp
++++ b/src/hotspot/share/runtime/init.cpp
+@@ -32,6 +32,8 @@
+ #include "jvmci/jvmci.hpp"
+ #endif
+ #include "interpreter/bytecodes.hpp"
++#include "interpreter/interpreter.hpp"
++#include "runtime/thread.inline.hpp"
+ #include "logging/log.hpp"
+ #include "logging/logAsyncWriter.hpp"
+ #include "logging/logTag.hpp"
+@@ -110,45 +112,70 @@ void vm_init_globals() {
+ }
+ 
+ 
++// C-6 instrument: breadcrumbs to localize post-Genesis shift=64 crash.
++// Remove once root-caused.
++#define C6_BREAD(label) do { \
++  fprintf(stderr, "[C6] " label "\n"); \
++  fflush(stderr); \
++} while (0)
++
+ jint init_globals() {
+-  management_init();
+-  JvmtiExport::initialize_oop_storage();
+-  bytecodes_init();
+-  classLoader_init1();
+-  compilationPolicy_init();
+-  codeCache_init();
+-  VM_Version_init();              // depends on codeCache_init for emitting code
+-  stubRoutines_init1();
++  C6_BREAD("init_globals: enter");
++  management_init();                C6_BREAD("after management_init");
++  JvmtiExport::initialize_oop_storage(); C6_BREAD("after JvmtiExport::initialize_oop_storage");
++  bytecodes_init();                 C6_BREAD("after bytecodes_init");
++  classLoader_init1();              C6_BREAD("after classLoader_init1");
++  compilationPolicy_init();         C6_BREAD("after compilationPolicy_init");
++  codeCache_init();                 C6_BREAD("after codeCache_init");
++  VM_Version_init();                C6_BREAD("after VM_Version_init"); // depends on codeCache_init for emitting code
++  stubRoutines_init1();             C6_BREAD("after stubRoutines_init1");
+   jint status = universe_init();  // dependent on codeCache_init and
+                                   // stubRoutines_init1 and metaspace_init.
++  C6_BREAD("after universe_init (Genesis)");
+   if (status != JNI_OK)
+     return status;
+ 
+-  AsyncLogWriter::initialize();
+-  gc_barrier_stubs_init();  // depends on universe_init, must be before interpreter_init
+-  interpreter_init_stub();  // before methods get loaded
+-  accessFlags_init();
+-  InterfaceSupport_init();
+-  VMRegImpl::set_regName(); // need this before generate_stubs (for printing oop maps).
+-  SharedRuntime::generate_stubs();
+-  universe2_init();  // dependent on codeCache_init and stubRoutines_init1
+-  javaClasses_init();// must happen after vtable initialization, before referenceProcessor_init
+-  interpreter_init_code();  // after javaClasses_init and before any method gets linked
+-  referenceProcessor_init();
+-  jni_handles_init();
++  AsyncLogWriter::initialize();     C6_BREAD("after AsyncLogWriter::initialize");
++  gc_barrier_stubs_init();          C6_BREAD("after gc_barrier_stubs_init"); // depends on universe_init, must be before interpreter_init
++  interpreter_init_stub();          C6_BREAD("after interpreter_init_stub"); // before methods get loaded
++  accessFlags_init();               C6_BREAD("after accessFlags_init");
++  InterfaceSupport_init();          C6_BREAD("after InterfaceSupport_init");
++  VMRegImpl::set_regName();         C6_BREAD("after VMRegImpl::set_regName"); // need this before generate_stubs
++  SharedRuntime::generate_stubs();  C6_BREAD("after SharedRuntime::generate_stubs");
++  universe2_init();                 C6_BREAD("after universe2_init"); // dependent on codeCache_init and stubRoutines_init1
++  javaClasses_init();               C6_BREAD("after javaClasses_init"); // must happen after vtable init, before refProcessor
++  interpreter_init_code();          C6_BREAD("after interpreter_init_code"); // after javaClasses_init and before any method gets linked
++#if defined(__CHERI_PURE_CAPABILITY__) && !defined(ZERO)
++  // C-6 fix #34: the main thread was constructed before interpreter_init,
++  // so its _cap_dispatch is stale (null). Now that the dispatch table
++  // exists, re-seed the current (main) thread with a valid cap so its
++  // interpreter get_dispatch can load a tagged dispatch-table capability.
++  // (Template-interpreter only: ZeroInterpreter has no dispatch_table and
++  // the aarch64 cap_data_table is not built for the zero variant.)
++  if (Thread::current_or_null() != NULL) {
++    Thread::current()->set_cap_dispatch((void*)Interpreter::dispatch_table());
++    // C-6 fix #46: re-seed the libjvm.so-data cap-table base now that all
++    // interpreter globals have been registered during code generation.
++    extern address cap_data_table_base();
++    Thread::current()->set_cap_data_base((void*)cap_data_table_base());
++  }
++#endif
++  referenceProcessor_init();        C6_BREAD("after referenceProcessor_init");
++  jni_handles_init();               C6_BREAD("after jni_handles_init");
+ #if INCLUDE_VM_STRUCTS
+-  vmStructs_init();
++  vmStructs_init();                 C6_BREAD("after vmStructs_init");
+ #endif // INCLUDE_VM_STRUCTS
+ 
+-  vtableStubs_init();
+-  InlineCacheBuffer_init();
+-  compilerOracle_init();
+-  dependencyContext_init();
+-  dependencies_init();
++  vtableStubs_init();               C6_BREAD("after vtableStubs_init");
++  InlineCacheBuffer_init();         C6_BREAD("after InlineCacheBuffer_init");
++  compilerOracle_init();            C6_BREAD("after compilerOracle_init");
++  dependencyContext_init();         C6_BREAD("after dependencyContext_init");
++  dependencies_init();              C6_BREAD("after dependencies_init");
+ 
+   if (!compileBroker_init()) {
+     return JNI_EINVAL;
+   }
++  C6_BREAD("after compileBroker_init");
+ #if INCLUDE_JVMCI
+   if (EnableJVMCI) {
+     JVMCI::initialize_globals();
+@@ -158,8 +185,9 @@ jint init_globals() {
+   if (!universe_post_init()) {
+     return JNI_ERR;
+   }
+-  stubRoutines_init2(); // note: StubRoutines need 2-phase init
+-  MethodHandles::generate_adapters();
++  C6_BREAD("after universe_post_init");
++  stubRoutines_init2();             C6_BREAD("after stubRoutines_init2"); // note: StubRoutines need 2-phase init
++  MethodHandles::generate_adapters(); C6_BREAD("after MethodHandles::generate_adapters");
+ 
+   // All the flags that get adjusted by VM_Version_init and os::init_2
+   // have been set so dump the flags now.
+diff --git a/src/hotspot/share/runtime/thread.cpp b/src/hotspot/share/runtime/thread.cpp
+index fe4f555df2a..99693c14c97 100644
+--- a/src/hotspot/share/runtime/thread.cpp
++++ b/src/hotspot/share/runtime/thread.cpp
+@@ -231,6 +231,11 @@ void JavaThread::smr_delete() {
+ 
+ DEBUG_ONLY(Thread* Thread::_starting_thread = NULL;)
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++extern "C" intptr_t cap_trampoline_dispatch(int fn_id,
++    intptr_t a0, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4);
++#endif
++
+ Thread::Thread() {
+ 
+   DEBUG_ONLY(_run_state = PRE_CALL_RUN;)
+@@ -239,6 +244,28 @@ Thread::Thread() {
+   set_stack_base(NULL);
+   set_stack_size(0);
+   set_lgrp_id(-1);
++
++#if defined(__CHERI_PURE_CAPABILITY__) && !defined(ZERO)
++  // C-6 fix #25 (Option C): seed the cap trampoline cap.
++  _cap_trampoline_addr = (void*)&cap_trampoline_dispatch;
++  // C-6 fix #34: seed the dispatch-table cap. For threads created after
++  // interpreter_init this is the real table; for the main thread (created
++  // earlier) it is null here and re-seeded in init_globals().
++  _cap_dispatch = (void*)Interpreter::dispatch_table();
++  // C-6 fix #46: seed the libjvm.so-data cap-table base (same timing
++  // caveat as _cap_dispatch; re-seeded for the main thread in init_globals).
++  {
++    extern address cap_data_table_base();
++    _cap_data_base = (void*)cap_data_table_base();
++  }
++#elif defined(__CHERI_PURE_CAPABILITY__)
++  // Zero variant: the C++ interpreter needs no codecache trampoline,
++  // dispatch-table, or data-cap-table mechanism (clang emits cap-correct
++  // loads directly). Those aarch64-only symbols aren't built here.
++  _cap_trampoline_addr = NULL;
++  _cap_dispatch = NULL;
++  _cap_data_base = NULL;
++#endif
+   DEBUG_ONLY(clear_suspendible_thread();)
+ 
+   // allocated data structures
+@@ -2675,21 +2702,32 @@ static void call_initPhase3(TRAPS) {
+ 
+ void Threads::initialize_java_lang_classes(JavaThread* main_thread, TRAPS) {
+   TraceTime timer("Initialize java.lang classes", TRACETIME_LOG(Info, startuptime));
++#define C6IJC(label) do { fprintf(stderr, "[C6IJC] " label "\n"); fflush(stderr); } while (0)
++  C6IJC("IJC enter");
+ 
+   if (EagerXrunInit && Arguments::init_libraries_at_startup()) {
+     create_vm_init_libraries();
+   }
+ 
++  C6IJC("before init_class String");
+   initialize_class(vmSymbols::java_lang_String(), CHECK);
++  C6IJC("after init_class String");
+ 
+   // Inject CompactStrings value after the static initializers for String ran.
+   java_lang_String::set_compact_strings(CompactStrings);
++  C6IJC("after set_compact_strings");
+ 
+   // Initialize java_lang.System (needed before creating the thread)
++  C6IJC("before init_class System");
+   initialize_class(vmSymbols::java_lang_System(), CHECK);
++  C6IJC("after init_class System");
+   // The VM creates & returns objects of this class. Make sure it's initialized.
++  C6IJC("before init_class Class");
+   initialize_class(vmSymbols::java_lang_Class(), CHECK);
++  C6IJC("after init_class Class");
++  C6IJC("before init_class ThreadGroup");
+   initialize_class(vmSymbols::java_lang_ThreadGroup(), CHECK);
++  C6IJC("after init_class ThreadGroup");
+   Handle thread_group = create_initial_thread_group(CHECK);
+   Universe::set_main_thread_group(thread_group());
+   initialize_class(vmSymbols::java_lang_Thread(), CHECK);
+@@ -2908,6 +2946,7 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+     *canTryAgain = false; // don't let caller call JNI_CreateJavaVM again
+     return status;
+   }
++  fprintf(stderr, "[C6T] after init_globals\n"); fflush(stderr);
+ 
+   JFR_ONLY(Jfr::on_create_vm_1();)
+ 
+@@ -2923,26 +2962,32 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   JvmtiExport::transition_pending_onload_raw_monitors();
+ 
+   // Create the VMThread
++  fprintf(stderr, "[C6T] before VMThread::create\n"); fflush(stderr);
+   { TraceTime timer("Start VMThread", TRACETIME_LOG(Info, startuptime));
+ 
+     VMThread::create();
++    fprintf(stderr, "[C6T] after VMThread::create\n"); fflush(stderr);
+     Thread* vmthread = VMThread::vm_thread();
+ 
+     if (!os::create_thread(vmthread, os::vm_thread)) {
+       vm_exit_during_initialization("Cannot create VM thread. "
+                                     "Out of system resources.");
+     }
++    fprintf(stderr, "[C6T] after os::create_thread(vmthread)\n"); fflush(stderr);
+ 
+     // Wait for the VM thread to become ready, and VMThread::run to initialize
+     // Monitors can have spurious returns, must always check another state flag
+     {
+       MonitorLocker ml(Notify_lock);
+       os::start_thread(vmthread);
++      fprintf(stderr, "[C6T] after os::start_thread(vmthread); now waiting for active_handles\n"); fflush(stderr);
+       while (vmthread->active_handles() == NULL) {
+         ml.wait();
+       }
++      fprintf(stderr, "[C6T] vmthread active_handles ready\n"); fflush(stderr);
+     }
+   }
++  fprintf(stderr, "[C6T] VMThread fully started\n"); fflush(stderr);
+ 
+   assert(Universe::is_fully_initialized(), "not initialized");
+   if (VerifyDuringStartup) {
+@@ -2969,9 +3014,12 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   // Notify JVMTI agents that VM has started (JNI is up) - nop if no agents.
+   JvmtiExport::post_early_vm_start();
+ 
++  fprintf(stderr, "[C6T] before initialize_java_lang_classes\n"); fflush(stderr);
+   initialize_java_lang_classes(main_thread, CHECK_JNI_ERR);
++  fprintf(stderr, "[C6T] after initialize_java_lang_classes\n"); fflush(stderr);
+ 
+   quicken_jni_functions();
++  fprintf(stderr, "[C6T] after quicken_jni_functions\n"); fflush(stderr);
+ 
+   // No more stub generation allowed after that point.
+   StubCodeDesc::freeze();
