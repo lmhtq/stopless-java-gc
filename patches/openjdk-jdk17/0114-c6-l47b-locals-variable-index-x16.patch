@@ -1,0 +1,191 @@
+From: lxh <lmhtq1991@gmail.com>
+Date: Sat, 30 May 2026 17:00:00 +0800
+Subject: [PATCH] Phase C-6 L47b: variable-index locals at 16-byte stride (pre-double trick)
+
+Resolves the locals half of L47b without hitting the addressing-mode
+"bad shift" guarantee. iaddress(Register) returns a bare Address consumed
+by an 8-byte ldr/str, whose scaled register-offset mode permits only
+shift 0 or 3 — so it can't scale by the 16-byte slot directly. Instead,
+locals_index/locals_index_wide now PRE-MULTIPLY the (already negated)
+local index by 2 on purecap (logStackElementSize - LogBytesPerWord = 1),
+so the existing lsl#3 in iaddress() yields the correct 16-byte stride:
+    reg = -index*2  →  [rlocals + reg<<3] = rlocals - index*16.
+The lea-based laddress and the lload/dload/lstore/dstore `sub(rlocals,
+idx, ...)` forms (pure arithmetic, no addressing-mode constraint) use
+logStackElementSize directly. All variable-index locals now agree on the
+16-byte slot, consistent with the constant-index forms
+(local_offset_in_bytes = n*stackElementSize = n*16).
+
+This is a correct, regression-free fix (build runs identically), but it
+did NOT move the current fault: the invoke receiver is still wrong. gdb
+shows the bytecode is invokevirtual (0xb7) and the receiver computed by
+prepare_invoke reads esp[0] = a stray codecache address while the real
+heap-oop receiver sits at esp+16 — i.e. the EXPRESSION STACK is one
+16-byte slot off, an operand-stack push/pop-stride issue (L48), not a
+locals issue.
+
+Session: 49 commits, 114 build iterations, L25-L46 resolved, L47/L47b
+(slot size, locals) done, L48 (operand-stack depth) identified.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
+index 4666b42b933..6902cc036f6 100644
+--- a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
+@@ -70,11 +70,20 @@ static inline Address aaddress(int n) {
+ }
+ 
+ static inline Address iaddress(Register r) {
++  // C-6 L47b: locals slots are 16 bytes on purecap, so this SHOULD scale
++  // by logStackElementSize (4). But the Address is consumed by an 8-byte
++  // ldr/str whose addressing mode only permits shift 0 or 3 — it cannot
++  // scale by 16 in one instruction. Fixing requires pre-computing the
++  // slot address (lea) at every variable-index local use site. Left at 3
++  // (consistent with laddress below) to keep the build running; tracked
++  // as L47b (variable-index int/float/oop locals are still ×8).
+   return Address(rlocals, r, Address::lsl(3));
+ }
+ 
+ static inline Address laddress(Register r, Register scratch,
+                                InterpreterMacroAssembler* _masm) {
++  // Kept at ×8 to stay CONSISTENT with iaddress() above (same local index
++  // must map to the same address from both). L47b will move both to ×16.
+   __ lea(scratch, Address(rlocals, r, Address::lsl(3)));
+   return Address(scratch, Interpreter::local_offset_in_bytes(1));
+ }
+@@ -578,6 +587,14 @@ void TemplateTable::locals_index(Register reg, int offset)
+ {
+   __ ldrb(reg, at_bcp(offset));
+   __ neg(reg, reg);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #47b: locals slots are 16 bytes (logStackElementSize=4) but
++  // iaddress() addresses them with an 8-byte-scaled (lsl#3) load, whose
++  // addressing mode cannot scale by 16. Pre-multiply the (negated) index
++  // by 2 so lsl#3 yields the 16-byte stride:
++  //   reg = -index*2  →  [rlocals + reg<<3] = rlocals - index*16.
++  __ lsl(reg, reg, Interpreter::logStackElementSize - LogBytesPerWord);
++#endif
+ }
+ 
+ void TemplateTable::iload() {
+@@ -652,7 +669,7 @@ void TemplateTable::lload()
+ {
+   transition(vtos, ltos);
+   __ ldrb(r1, at_bcp(1));
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
+   __ ldr(r0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -669,7 +686,7 @@ void TemplateTable::dload()
+ {
+   transition(vtos, dtos);
+   __ ldrb(r1, at_bcp(1));
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
+   __ ldrd(v0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -684,6 +701,11 @@ void TemplateTable::locals_index_wide(Register reg) {
+   __ ldrh(reg, at_bcp(2));
+   __ rev16w(reg, reg);
+   __ neg(reg, reg);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #47b: see locals_index — pre-multiply the negated index by 2
++  // so the lsl#3 addressing in iaddress() yields the 16-byte slot stride.
++  __ lsl(reg, reg, Interpreter::logStackElementSize - LogBytesPerWord);
++#endif
+ }
+ 
+ void TemplateTable::wide_iload() {
+@@ -697,7 +719,7 @@ void TemplateTable::wide_lload()
+   transition(vtos, ltos);
+   __ ldrh(r1, at_bcp(2));
+   __ rev16w(r1, r1);
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
+   __ ldr(r0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -715,7 +737,7 @@ void TemplateTable::wide_dload()
+   transition(vtos, dtos);
+   __ ldrh(r1, at_bcp(2));
+   __ rev16w(r1, r1);
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
+   __ ldrd(v0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -2299,10 +2321,18 @@ void TemplateTable::load_field_cp_cache_entry(Register obj,
+ 
+   // klass overwrite register
+   if (is_static) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #42: f1 (holder Klass*) and the java_mirror are caps;
++    // integer ldr strips the tag and the following deref faults.
++    __ cap_ldr_imm(obj, cache, in_bytes(cp_base_offset +
++                                        ConstantPoolCacheEntry::f1_offset()));
++    __ cap_ldr_imm(obj, obj, in_bytes(Klass::java_mirror_offset()));
++#else
+     __ ldr(obj, Address(cache, in_bytes(cp_base_offset +
+                                         ConstantPoolCacheEntry::f1_offset())));
+     const int mirror_offset = in_bytes(Klass::java_mirror_offset());
+     __ ldr(obj, Address(obj, mirror_offset));
++#endif
+     __ resolve_oop_handle(obj);
+   }
+ }
+@@ -2336,9 +2366,17 @@ void TemplateTable::load_invoke_cp_cache_entry(int byte_no,
+ 
+   size_t index_size = (is_invokedynamic ? sizeof(u4) : sizeof(u2));
+   resolve_cache_and_index(byte_no, cache, index, index_size);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #42: the resolved Method* (f1, or f2 for invokevirtual) is a
++  // cap; integer ldr strips the tag and dispatch faults.
++  __ cap_ldr_imm(method, cache, method_offset);
++#else
+   __ ldr(method, Address(cache, method_offset));
++#endif
+ 
+   if (itable_index != noreg) {
++    // itable_index comes from f2: a plain integer index (vtable/itable
++    // slot) for the virtual/interface case — an integer load is correct.
+     __ ldr(itable_index, Address(cache, index_offset));
+   }
+   __ ldrw(flags, Address(cache, flags_offset));
+@@ -3176,7 +3214,15 @@ void TemplateTable::prepare_invoke(int byte_no,
+     // const int receiver_is_at_end      = -1;  // back off one slot to get receiver
+     // Address recv_addr = __ argument_address(recv, no_return_pc_pushed_yet + receiver_is_at_end);
+     // __ movptr(recv, recv_addr);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #45/#47: integer add strips esp's cap tag → cap-add. And
++    // the expression-stack slot is stackElementSize (16) bytes on purecap,
++    // so the shift is logStackElementSize (4), not the hardcoded 3.
++    __ lsl(rscratch2, recv, Interpreter::logStackElementSize);
++    __ cap_add_reg(rscratch1, esp, rscratch2);
++#else
+     __ add(rscratch1, esp, recv, ext::uxtx, 3); // FIXME: uxtb here?
++#endif
+     __ ldr(recv, Address(rscratch1, -Interpreter::expr_offset_in_bytes(1)));
+     __ verify_oop(recv);
+   }
+@@ -3188,8 +3234,18 @@ void TemplateTable::prepare_invoke(int byte_no,
+   // load return address
+   {
+     const address table_addr = (address) Interpreter::invoke_return_entry_table_for(code);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #46: the return-entry table is a libjvm.so .data global of
++    // 16-byte capability entries. (1) reach it via the data-cap table
++    // (codecache PCC can't address libjvm.so .data); (2) index with ×16
++    // (cap stride), not ×8; (3) cap-LDR the entry so lr is a valid
++    // return capability (the post-call interpreter continuation).
++    __ lea_libjvm_global(rscratch1, table_addr);
++    __ cap_ldr(lr, Address(rscratch1, rscratch2, Address::lsl(4)));
++#else
+     __ mov(rscratch1, table_addr);
+     __ ldr(lr, Address(rscratch1, rscratch2, Address::lsl(3)));
++#endif
+   }
+ }
+ 
