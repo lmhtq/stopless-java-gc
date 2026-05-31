@@ -1,0 +1,19 @@
+Subject: [PATCH] C-9 handler V2 (decode base reg) + MinMove minimal repro
+
+handler.c: V2 self-heal — decode the faulting load/store at cap_elr and heal the
+EXACT base register (Rn = insn bits[9:5]) instead of guessing "first tag-zero reg
+that forwards" (the V1 stub, which corrupts a live Method/istate cap after a
+revoke clears many register tags). V1 register-scan kept as a fallback.
+
+RESULT: V2 did NOT fix the in-JVM hang. New minimal repro tests/integration/
+MinMove.java (1 object, one int field, no oop passed to any method): after
+System.gc() moves+revokes the local-rooted object, a plain `n.id` getfield deref
+hangs — identically with FIXUP (fixed_roots=1) and NO_FIXUP, no handler fault
+output. So reading a moved+revoked object FROM the Zero interpreter (gc called
+from interpreted code) does not succeed; the move/forward/revoke machinery itself
+is sound (NO_FIXUP+NO_REVOKE = ALL-OK). Root cause now suspected in the
+interpreter-frame local slot addressing at a native-call safepoint and/or the
+register-only self-heal not advancing. Needs live gdb single-stepping.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
