@@ -72,6 +72,49 @@ forward_table_insert(uintptr_t from_addr, void *new_cap)
     /* Table full — V1 just drops; V2 will resize. */
 }
 
+/* C-9/C-10: multi-writer insert-or-get. Collector and mutators (assisted
+   evacuation) race to install a forwarding for the SAME from_addr; exactly
+   one wins and its new_cap becomes authoritative. Returns the winning cap
+   (== new_cap if we won, else the other writer's cap). Single linearization
+   point for the CI invariant (docs/40 §3.2). */
+void *
+forward_table_cas_insert(uintptr_t from_addr, void *new_cap)
+{
+    if (g_table == NULL) forward_table_init();
+    size_t mask = g_capacity - 1;
+    size_t i = mix(from_addr) & mask;
+    for (size_t probe = 0; probe < g_capacity; probe++) {
+        uintptr_t k = atomic_load_explicit(&g_table[i].from_addr,
+                                           memory_order_acquire);
+        if (k == from_addr) {
+            void *w;
+            while ((w = atomic_load_explicit(&g_table[i].new_cap,
+                                             memory_order_acquire)) == NULL) {}
+            return w;
+        }
+        if (k == 0) {
+            uintptr_t expected = 0;
+            if (atomic_compare_exchange_strong_explicit(
+                    &g_table[i].from_addr, &expected, from_addr,
+                    memory_order_acq_rel, memory_order_acquire)) {
+                atomic_store_explicit(&g_table[i].new_cap, new_cap,
+                                      memory_order_release);
+                atomic_fetch_add(&g_size, 1);
+                return new_cap;
+            }
+            if (expected == from_addr) {
+                void *w;
+                while ((w = atomic_load_explicit(&g_table[i].new_cap,
+                                                 memory_order_acquire)) == NULL) {}
+                return w;
+            }
+            /* slot taken by a different key — keep probing */
+        }
+        i = (i + 1) & mask;
+    }
+    return NULL;  /* table full (V1 fixed-size) */
+}
+
 void *
 forward_table_lookup(uintptr_t from_addr)
 {

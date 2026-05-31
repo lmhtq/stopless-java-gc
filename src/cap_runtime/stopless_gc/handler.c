@@ -35,6 +35,17 @@
 unsigned long long stopless_handler_faults = 0;
 unsigned long long stopless_handler_self_heals = 0;
 
+/* C-9/C-10: mutator-assisted evacuation hook. When a tag-0 cap faults whose
+   address is NOT yet in the forwarding table, the handler calls this (if
+   registered) to evacuate the object on the spot: copy it, cas_insert the
+   forwarding, and return the new cap (or NULL if the address is not a live
+   GC object = a genuine fault). Lets a mutator make progress without waiting
+   on the collector (NS invariant). */
+typedef void *(*stopless_evacuate_fn)(uintptr_t from_addr);
+static stopless_evacuate_fn g_evacuate_cb = NULL;
+void stopless_set_evacuate_cb(stopless_evacuate_fn cb) { g_evacuate_cb = cb; }
+unsigned long long stopless_handler_assists = 0;
+
 static struct sigaction prev_sa;
 
 /* C-6 L38: HotSpot's SafeFetch probes (os::is_readable_pointer etc.)
@@ -100,6 +111,14 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
         if (cheri_tag_get((void *)c)) continue;  /* not the culprit */
         uintptr_t addr = (uintptr_t)cheri_address_get((void *)c);
         void *fwd = forward_table_lookup(addr);
+        if (fwd == NULL && g_evacuate_cb != NULL) {
+            /* C-9/C-10: not yet forwarded — assist by evacuating now. The cb
+               copies the object + cas_inserts the forwarding (one winner) and
+               returns the authoritative new cap, or NULL if addr isn't a live
+               GC object (then this is a genuine fault, handled below). */
+            fwd = g_evacuate_cb(addr);
+            if (fwd != NULL) stopless_handler_assists++;
+        }
         if (fwd != NULL) {
             new_cap = fwd;
             fault_addr = addr;

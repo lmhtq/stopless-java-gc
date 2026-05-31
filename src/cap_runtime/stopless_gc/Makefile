@@ -26,7 +26,7 @@ CFLAGS += -std=c11
 OBJS = revoke.o forward_table.o handler.o allocator.o
 LIB  = libstopless_gc.a
 
-TESTS = test_basic test_multi test_alloc test_alloc_concurrent
+TESTS = test_basic test_multi test_alloc test_alloc_concurrent test_concurrent_move
 
 .PHONY: all clean
 
@@ -48,6 +48,9 @@ test_alloc: tests/test_alloc.c $(LIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -L. -lstopless_gc -lcheri_caprevoke
 
 test_alloc_concurrent: tests/test_alloc_concurrent.c $(LIB)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -L. -lstopless_gc -lcheri_caprevoke -lpthread
+
+test_concurrent_move: tests/test_concurrent_move.c $(LIB)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -L. -lstopless_gc -lcheri_caprevoke -lpthread
 
 clean:
