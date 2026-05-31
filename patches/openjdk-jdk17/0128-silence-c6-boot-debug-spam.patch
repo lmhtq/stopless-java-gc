@@ -1,0 +1,964 @@
+Subject: [PATCH] silence C-6 boot debug spam (unblocks usable runs + C-11 timing)
+
+The C-6 purecap-boot bring-up left ~80 fprintf(stderr,"[C6...") breadcrumbs plus
+the C6_BREAD init macro across the class-loading path (javaClasses, classLoader,
+klassFactory, classFileParser, constantPool, systemDictionary, vmClasses,
+thread, universe, sharedRuntime, init). They fire per class / per field and
+flood ~45k lines per run, making the Zero interpreter crawl (a 200-array test
+couldn't finish in minutes; the slowdown also masked itself as "hangs" that were
+really orphaned java processes from timed-out runs).
+
+Now that boot works (C-5/C-6 done), gate them: C6_BREAD becomes a no-op and each
+"[C6...]" fprintf is prefixed with `if (0)` (dead-code-eliminated; reversible).
+Verified safe: every gated print that precedes an `else` is inside a braced block
+(no dangling-else). HelloGC (+System.gc -> C-9 STW move) now runs in ~9s, exit=0,
+vs minutes before. Required before C-11 microbench (the spam would dominate any
+timing). NOTE: per-file snapshot patch — these files also carry accumulated
+earlier C-6 changes.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/share/classfile/classFileParser.cpp b/src/hotspot/share/classfile/classFileParser.cpp
+index 052d013368a..60ed924338a 100644
+--- a/src/hotspot/share/classfile/classFileParser.cpp
++++ b/src/hotspot/share/classfile/classFileParser.cpp
+@@ -1371,6 +1371,8 @@ enum FieldAllocationType {
+   NONSTATIC_SHORT,
+   NONSTATIC_WORD,
+   NONSTATIC_DOUBLE,
++  STATIC_ADDRESS,       /* CHERI: T_ADDRESS, sized sizeof(intptr_t) */
++  NONSTATIC_ADDRESS,
+   MAX_FIELD_ALLOCATION_TYPE,
+   BAD_ALLOCATION_TYPE = -1
+ };
+@@ -1391,7 +1393,7 @@ static FieldAllocationType _basic_type_to_atype[2 * (T_CONFLICT + 1)] = {
+   NONSTATIC_OOP,       // T_OBJECT      = 12,
+   NONSTATIC_OOP,       // T_ARRAY       = 13,
+   BAD_ALLOCATION_TYPE, // T_VOID        = 14,
+-  BAD_ALLOCATION_TYPE, // T_ADDRESS     = 15,
++  NONSTATIC_ADDRESS,   // T_ADDRESS     = 15,  /* CHERI cap-typed field */
+   BAD_ALLOCATION_TYPE, // T_NARROWOOP   = 16,
+   BAD_ALLOCATION_TYPE, // T_METADATA    = 17,
+   BAD_ALLOCATION_TYPE, // T_NARROWKLASS = 18,
+@@ -1411,7 +1413,7 @@ static FieldAllocationType _basic_type_to_atype[2 * (T_CONFLICT + 1)] = {
+   STATIC_OOP,          // T_OBJECT      = 12,
+   STATIC_OOP,          // T_ARRAY       = 13,
+   BAD_ALLOCATION_TYPE, // T_VOID        = 14,
+-  BAD_ALLOCATION_TYPE, // T_ADDRESS     = 15,
++  STATIC_ADDRESS,      // T_ADDRESS     = 15,  /* CHERI cap-typed static field */
+   BAD_ALLOCATION_TYPE, // T_NARROWOOP   = 16,
+   BAD_ALLOCATION_TYPE, // T_METADATA    = 17,
+   BAD_ALLOCATION_TYPE, // T_NARROWKLASS = 18,
+@@ -1419,7 +1421,8 @@ static FieldAllocationType _basic_type_to_atype[2 * (T_CONFLICT + 1)] = {
+ };
+ 
+ static FieldAllocationType basic_type_to_atype(bool is_static, BasicType type) {
+-  assert(type >= T_BOOLEAN && type < T_VOID, "only allowable values");
++  /* CHERI: T_ADDRESS now a valid field type for cap-sized injected fields. */
++  assert((type >= T_BOOLEAN && type < T_VOID) || type == T_ADDRESS, "only allowable values");
+   FieldAllocationType result = _basic_type_to_atype[type + (is_static ? (T_CONFLICT + 1) : 0)];
+   assert(result != BAD_ALLOCATION_TYPE, "bad type");
+   return result;
+@@ -4874,6 +4877,7 @@ const char* ClassFileParser::skip_over_field_signature(const char* signature,
+     case JVM_SIGNATURE_FLOAT:
+     case JVM_SIGNATURE_LONG:
+     case JVM_SIGNATURE_DOUBLE:
++    case JVM_SIGNATURE_ADDRESS:  /* CHERI: T_ADDRESS field signature */
+       return signature + 1;
+     case JVM_SIGNATURE_CLASS: {
+       if (_major_version < JAVA_1_5_VERSION) {
+@@ -5222,33 +5226,45 @@ static void check_methods_for_intrinsics(const InstanceKlass* ik,
+ InstanceKlass* ClassFileParser::create_instance_klass(bool changed_by_loadhook,
+                                                       const ClassInstanceInfo& cl_inst_info,
+                                                       TRAPS) {
++  const char* nm = _class_name != NULL ? _class_name->as_C_string() : "<null>";
++  if (0) fprintf(stderr, "[C6CIK] create_instance_klass(%s) enter\n", nm); fflush(stderr);
+   if (_klass != NULL) {
++    if (0) fprintf(stderr, "[C6CIK] create_instance_klass(%s) early return _klass\n", nm); fflush(stderr);
+     return _klass;
+   }
+ 
++  if (0) fprintf(stderr, "[C6CIK] before allocate_instance_klass(%s)\n", nm); fflush(stderr);
+   InstanceKlass* const ik =
+     InstanceKlass::allocate_instance_klass(*this, CHECK_NULL);
++  if (0) fprintf(stderr, "[C6CIK] after allocate_instance_klass(%s) ik=%p\n", nm, (void*)ik); fflush(stderr);
+ 
+   if (is_hidden()) {
+     mangle_hidden_class_name(ik);
+   }
+ 
++  if (0) fprintf(stderr, "[C6CIK] before fill_instance_klass(%s)\n", nm); fflush(stderr);
+   fill_instance_klass(ik, changed_by_loadhook, cl_inst_info, CHECK_NULL);
++  if (0) fprintf(stderr, "[C6CIK] after fill_instance_klass(%s)\n", nm); fflush(stderr);
+ 
+   assert(_klass == ik, "invariant");
+ 
+   return ik;
+ }
+ 
++#define C6FIK(label) do { if (0) fprintf(stderr, "[C6FIK %s] " label "\n", \
++        _class_name ? _class_name->as_C_string() : "?"); fflush(stderr); } while (0)
++
+ void ClassFileParser::fill_instance_klass(InstanceKlass* ik,
+                                           bool changed_by_loadhook,
+                                           const ClassInstanceInfo& cl_inst_info,
+                                           TRAPS) {
+   assert(ik != NULL, "invariant");
++  C6FIK("FIK enter");
+ 
+   // Set name and CLD before adding to CLD
+   ik->set_class_loader_data(_loader_data);
+   ik->set_name(_class_name);
++  C6FIK("after set_class_loader_data + set_name");
+ 
+   // Add all classes to our internal class loader list here,
+   // including classes in the bootstrap (NULL) class loader.
+@@ -5277,7 +5293,9 @@ void ClassFileParser::fill_instance_klass(InstanceKlass* ik,
+ 
+   // this transfers ownership of a lot of arrays from
+   // the parser onto the InstanceKlass*
++  C6FIK("before apply_parsed_class_metadata");
+   apply_parsed_class_metadata(ik, _java_fields_count);
++  C6FIK("after apply_parsed_class_metadata");
+ 
+   // can only set dynamic nest-host after static nest information is set
+   if (cl_inst_info.dynamic_nest_host() != NULL) {
+@@ -5357,20 +5375,26 @@ void ClassFileParser::fill_instance_klass(InstanceKlass* ik,
+   }
+ 
+   // Fill in information needed to compute superclasses.
++  C6FIK("before initialize_supers");
+   ik->initialize_supers(const_cast<InstanceKlass*>(_super_klass), _transitive_interfaces, CHECK);
++  C6FIK("after initialize_supers");
+   ik->set_transitive_interfaces(_transitive_interfaces);
+   ik->set_local_interfaces(_local_interfaces);
+   _transitive_interfaces = NULL;
+   _local_interfaces = NULL;
+ 
+   // Initialize itable offset tables
++  C6FIK("before klassItable::setup_itable_offset_table");
+   klassItable::setup_itable_offset_table(ik);
++  C6FIK("after setup_itable_offset_table");
+ 
+   // Compute transitive closure of interfaces this class implements
+   // Do final class setup
+   OopMapBlocksBuilder* oop_map_blocks = _field_info->oop_map_blocks;
+   if (oop_map_blocks->_nonstatic_oop_map_count > 0) {
++    C6FIK("before oop_map_blocks->copy");
+     oop_map_blocks->copy(ik->start_of_nonstatic_oop_maps());
++    C6FIK("after oop_map_blocks->copy");
+   }
+ 
+   if (_has_contended_fields || _parsed_annotations->is_contended() ||
+@@ -5379,7 +5403,9 @@ void ClassFileParser::fill_instance_klass(InstanceKlass* ik,
+   }
+ 
+   // Fill in has_finalizer, has_vanilla_constructor, and layout_helper
++  C6FIK("before set_precomputed_flags");
+   set_precomputed_flags(ik);
++  C6FIK("after set_precomputed_flags");
+ 
+   // check if this class can access its super class
+   check_super_class_access(ik, CHECK);
+@@ -5404,12 +5430,14 @@ void ClassFileParser::fill_instance_klass(InstanceKlass* ik,
+ 
+   // Allocate mirror and initialize static fields
+   // The create_mirror() call will also call compute_modifiers()
++  C6FIK("before java_lang_Class::create_mirror");
+   java_lang_Class::create_mirror(ik,
+                                  Handle(THREAD, _loader_data->class_loader()),
+                                  module_handle,
+                                  _protection_domain,
+                                  cl_inst_info.class_data(),
+                                  CHECK);
++  C6FIK("after java_lang_Class::create_mirror");
+ 
+   assert(_all_mirandas != NULL, "invariant");
+ 
+diff --git a/src/hotspot/share/classfile/classLoader.cpp b/src/hotspot/share/classfile/classLoader.cpp
+index 05561110ad7..275e45d0903 100644
+--- a/src/hotspot/share/classfile/classLoader.cpp
++++ b/src/hotspot/share/classfile/classLoader.cpp
+@@ -1140,6 +1140,8 @@ InstanceKlass* ClassLoader::load_class(Symbol* name, bool search_append_only, TR
+   HandleMark hm(THREAD);
+ 
+   const char* const class_name = name->as_C_string();
++  if (0) fprintf(stderr, "[C6CL] load_class(%s): enter, search_append_only=%d\n",
++          class_name, (int)search_append_only); fflush(stderr);
+ 
+   EventMarkClassLoading m("Loading class %s", class_name);
+ 
+@@ -1188,7 +1190,9 @@ InstanceKlass* ClassLoader::load_class(Symbol* name, bool search_append_only, TR
+   if (!search_append_only && (NULL == stream)) {
+     if (has_jrt_entry()) {
+       e = _jrt_entry;
++      if (0) fprintf(stderr, "[C6CL] before _jrt_entry->open_stream(%s)\n", file_name); fflush(stderr);
+       stream = _jrt_entry->open_stream(THREAD, file_name);
++      if (0) fprintf(stderr, "[C6CL] after _jrt_entry->open_stream stream=%p\n", (void*)stream); fflush(stderr);
+     } else {
+       // Exploded build - attempt to locate class in its defining module's location.
+       assert(_exploded_entries != NULL, "No exploded build entries present");
+@@ -1225,12 +1229,15 @@ InstanceKlass* ClassLoader::load_class(Symbol* name, bool search_append_only, TR
+   Handle protection_domain;
+   ClassLoadInfo cl_info(protection_domain);
+ 
++  if (0) fprintf(stderr, "[C6CL] before KlassFactory::create_from_stream(%s)\n", class_name); fflush(stderr);
+   InstanceKlass* result = KlassFactory::create_from_stream(stream,
+                                                            name,
+                                                            loader_data,
+                                                            cl_info,
+                                                            CHECK_NULL);
++  if (0) fprintf(stderr, "[C6CL] after KlassFactory::create_from_stream result=%p\n", (void*)result); fflush(stderr);
+   result->set_classpath_index(classpath_index);
++  if (0) fprintf(stderr, "[C6CL] load_class(%s): return\n", class_name); fflush(stderr);
+   return result;
+ }
+ 
+diff --git a/src/hotspot/share/classfile/javaClasses.cpp b/src/hotspot/share/classfile/javaClasses.cpp
+index cac737125f1..4c04c8e6ddb 100644
+--- a/src/hotspot/share/classfile/javaClasses.cpp
++++ b/src/hotspot/share/classfile/javaClasses.cpp
+@@ -273,38 +273,61 @@ Handle java_lang_String::basic_create(int length, bool is_latin1, TRAPS) {
+   assert(_initialized, "Must be initialized");
+   assert(CompactStrings || !is_latin1, "Must be UTF16 without CompactStrings");
+ 
++  if (0) fprintf(stderr, "[C6BC] basic_create enter len=%d latin1=%d "
++                  "String_klass()->instance_size=%d (HeapWords)\n",
++          length, (int)is_latin1,
++          (int)vmClasses::String_klass()->size_helper());
++  fflush(stderr);
++
+   // Create the String object first, so there's a chance that the String
+   // and the char array it points to end up in the same cache line.
+   oop obj;
++  if (0) fprintf(stderr, "[C6BC] before String_klass->allocate_instance\n"); fflush(stderr);
+   obj = vmClasses::String_klass()->allocate_instance(CHECK_NH);
++  if (0) fprintf(stderr, "[C6BC] after allocate_instance obj=%p\n", (void*)obj); fflush(stderr);
+ 
+   // Create the char array.  The String object must be handlized here
+   // because GC can happen as a result of the allocation attempt.
+   Handle h_obj(THREAD, obj);
+   int arr_length = is_latin1 ? length : length << 1; // 2 bytes per UTF16.
++  if (0) fprintf(stderr, "[C6BC] before new_byteArray(arr_length=%d)\n", arr_length); fflush(stderr);
+   typeArrayOop buffer = oopFactory::new_byteArray(arr_length, CHECK_NH);;
++  if (0) fprintf(stderr, "[C6BC] after new_byteArray buffer=%p\n", (void*)buffer); fflush(stderr);
+ 
+   // Point the String at the char array
+   obj = h_obj();
++  if (0) fprintf(stderr, "[C6BC] before set_value\n"); fflush(stderr);
+   set_value(obj, buffer);
++  if (0) fprintf(stderr, "[C6BC] after set_value\n"); fflush(stderr);
+   // No need to zero the offset, allocation zero'ed the entire String object
++  if (0) fprintf(stderr, "[C6BC] before set_coder\n"); fflush(stderr);
+   set_coder(obj, is_latin1 ? CODER_LATIN1 : CODER_UTF16);
++  if (0) fprintf(stderr, "[C6BC] after set_coder\n"); fflush(stderr);
+   return h_obj;
+ }
+ 
+ Handle java_lang_String::create_from_unicode(const jchar* unicode, int length, TRAPS) {
+   bool is_latin1 = CompactStrings && UNICODE::is_latin1(unicode, length);
++  if (0) fprintf(stderr, "[C6CFU] enter len=%d latin1=%d CompactStrings=%d\n",
++          length, (int)is_latin1, (int)CompactStrings); fflush(stderr);
+   Handle h_obj = basic_create(length, is_latin1, CHECK_NH);
++  if (0) fprintf(stderr, "[C6CFU] after basic_create h_obj=%#p\n", (void*)h_obj()); fflush(stderr);
+   typeArrayOop buffer = value(h_obj());
++  if (0) fprintf(stderr, "[C6CFU] after value(), buffer=%#p (tag=%d)\n",
++          (void*)buffer, (int)__builtin_cheri_tag_get((void*)buffer)); fflush(stderr);
+   assert(TypeArrayKlass::cast(buffer->klass())->element_type() == T_BYTE, "only byte[]");
+   if (is_latin1) {
++    if (0) fprintf(stderr, "[C6CFU] before latin1 byte_at_put loop\n"); fflush(stderr);
+     for (int index = 0; index < length; index++) {
+       buffer->byte_at_put(index, (jbyte)unicode[index]);
+     }
++    if (0) fprintf(stderr, "[C6CFU] after latin1 byte_at_put loop\n"); fflush(stderr);
+   } else {
++    if (0) fprintf(stderr, "[C6CFU] before utf16 char_at_put loop\n"); fflush(stderr);
+     for (int index = 0; index < length; index++) {
+       buffer->char_at_put(index, unicode[index]);
+     }
++    if (0) fprintf(stderr, "[C6CFU] after utf16 char_at_put loop\n"); fflush(stderr);
+   }
+ 
+ #ifdef ASSERT
+@@ -863,8 +886,12 @@ inline static void assert_valid_static_string_field(fieldDescriptor* fd) {
+ 
+ static void initialize_static_string_field(fieldDescriptor* fd, Handle mirror, TRAPS) {
+   DEBUG_ONLY(assert_valid_static_string_field(fd);)
++  if (0) fprintf(stderr, "[C6ISSF] before string_initial_value (fd offset=%d)\n", fd->offset()); fflush(stderr);
+   oop string = fd->string_initial_value(CHECK);
++  if (0) fprintf(stderr, "[C6ISSF] after string_initial_value, string oop=%p\n", (void*)string); fflush(stderr);
++  if (0) fprintf(stderr, "[C6ISSF] before obj_field_put(offset=%d, string)\n", fd->offset()); fflush(stderr);
+   mirror()->obj_field_put(fd->offset(), string);
++  if (0) fprintf(stderr, "[C6ISSF] after obj_field_put\n"); fflush(stderr);
+ }
+ 
+ #if INCLUDE_CDS_JAVA_HEAP
+@@ -919,11 +946,19 @@ static void initialize_static_primitive_field(fieldDescriptor* fd, Handle mirror
+ 
+ static void initialize_static_field(fieldDescriptor* fd, Handle mirror, TRAPS) {
+   assert(mirror.not_null() && fd->is_static(), "just checking");
++  if (0) fprintf(stderr, "[C6ISF] field name=%s type=%d offset=%d has_init=%d\n",
++          fd->name() ? fd->name()->as_C_string() : "?",
++          (int)fd->field_type(), fd->offset(), (int)fd->has_initial_value());
++  fflush(stderr);
+   if (fd->has_initial_value()) {
+     if (fd->field_type() != T_OBJECT) {
++      if (0) fprintf(stderr, "[C6ISF] before initialize_static_primitive_field type=%d\n", (int)fd->field_type()); fflush(stderr);
+       initialize_static_primitive_field(fd, mirror);
++      if (0) fprintf(stderr, "[C6ISF] after initialize_static_primitive_field\n"); fflush(stderr);
+     } else {
++      if (0) fprintf(stderr, "[C6ISF] before initialize_static_string_field\n"); fflush(stderr);
+       initialize_static_string_field(fd, mirror, CHECK);
++      if (0) fprintf(stderr, "[C6ISF] after initialize_static_string_field\n"); fflush(stderr);
+     }
+   }
+ }
+@@ -977,20 +1012,30 @@ void java_lang_Class::initialize_mirror_fields(Klass* k,
+                                                Handle protection_domain,
+                                                Handle classData,
+                                                TRAPS) {
++#define C6IMF(label) do { if (0) fprintf(stderr, "[C6IMF %s] " label "\n", \
++        k->name() ? k->name()->as_C_string() : "?"); fflush(stderr); } while (0)
++  C6IMF("IMF enter");
+   // Allocate a simple java object for a lock.
+   // This needs to be a java object because during class initialization
+   // it can be held across a java call.
++  C6IMF("before new_typeArray(T_INT,0)");
+   typeArrayOop r = oopFactory::new_typeArray(T_INT, 0, CHECK);
++  C6IMF("after new_typeArray(T_INT,0)");
+   set_init_lock(mirror(), r);
++  C6IMF("after set_init_lock");
+ 
+   // Set protection domain also
+   set_protection_domain(mirror(), protection_domain());
++  C6IMF("after set_protection_domain");
+ 
+   // Initialize static fields
++  C6IMF("before do_local_static_fields");
+   InstanceKlass::cast(k)->do_local_static_fields(&initialize_static_field, mirror, CHECK);
++  C6IMF("after do_local_static_fields");
+ 
+  // Set classData
+   set_class_data(mirror(), classData());
++  C6IMF("after set_class_data");
+ }
+ 
+ // Set the java.lang.Module module field in the java_lang_Class mirror
+@@ -1048,28 +1093,37 @@ void java_lang_Class::create_mirror(Klass* k, Handle class_loader,
+                                     Handle classData, TRAPS) {
+   assert(k != NULL, "Use create_basic_type_mirror for primitive types");
+   assert(k->java_mirror() == NULL, "should only assign mirror once");
++#define C6CM(label) do { if (0) fprintf(stderr, "[C6CM %s] " label "\n", \
++        k->name() ? k->name()->as_C_string() : "?"); fflush(stderr); } while (0)
++  C6CM("create_mirror enter");
+ 
+   // Use this moment of initialization to cache modifier_flags also,
+   // to support Class.getModifiers().  Instance classes recalculate
+   // the cached flags after the class file is parsed, but before the
+   // class is put into the system dictionary.
++  C6CM("before compute_modifier_flags");
+   int computed_modifiers = k->compute_modifier_flags();
++  C6CM("after compute_modifier_flags");
+   k->set_modifier_flags(computed_modifiers);
+   // Class_klass has to be loaded because it is used to allocate
+   // the mirror.
+   if (vmClasses::Class_klass_loaded()) {
+     // Allocate mirror (java.lang.Class instance)
++    C6CM("before allocate_instance (Class mirror)");
+     oop mirror_oop = InstanceMirrorKlass::cast(vmClasses::Class_klass())->allocate_instance(k, CHECK);
++    C6CM("after allocate_instance");
+     Handle mirror(THREAD, mirror_oop);
+     Handle comp_mirror;
+ 
+     // Setup indirection from mirror->klass
+     java_lang_Class::set_klass(mirror(), k);
++    C6CM("after set_klass on mirror");
+ 
+     InstanceMirrorKlass* mk = InstanceMirrorKlass::cast(mirror->klass());
+     assert(oop_size(mirror()) == mk->instance_size(k), "should have been set");
+ 
+     java_lang_Class::set_static_oop_field_count(mirror(), mk->compute_static_oop_field_count(mirror()));
++    C6CM("after set_static_oop_field_count");
+ 
+     // It might also have a component mirror.  This mirror must already exist.
+     if (k->is_array_klass()) {
+@@ -1092,7 +1146,9 @@ void java_lang_Class::create_mirror(Klass* k, Handle class_loader,
+     } else {
+       assert(k->is_instance_klass(), "Must be");
+ 
++      C6CM("before initialize_mirror_fields");
+       initialize_mirror_fields(k, mirror, protection_domain, classData, THREAD);
++      C6CM("after initialize_mirror_fields");
+       if (HAS_PENDING_EXCEPTION) {
+         // If any of the fields throws an exception like OOM remove the klass field
+         // from the mirror so GC doesn't follow it after the klass has been deallocated.
+diff --git a/src/hotspot/share/classfile/klassFactory.cpp b/src/hotspot/share/classfile/klassFactory.cpp
+index 7b5960ee36e..d66c28eeea1 100644
+--- a/src/hotspot/share/classfile/klassFactory.cpp
++++ b/src/hotspot/share/classfile/klassFactory.cpp
+@@ -191,15 +191,19 @@ InstanceKlass* KlassFactory::create_from_stream(ClassFileStream* stream,
+                                         CHECK_NULL);
+   }
+ 
++  if (0) fprintf(stderr, "[C6KF] before ClassFileParser ctor (%s)\n", name->as_C_string()); fflush(stderr);
+   ClassFileParser parser(stream,
+                          name,
+                          loader_data,
+                          &cl_info,
+                          ClassFileParser::BROADCAST, // publicity level
+                          CHECK_NULL);
++  if (0) fprintf(stderr, "[C6KF] after ClassFileParser ctor (%s)\n", name->as_C_string()); fflush(stderr);
+ 
+   const ClassInstanceInfo* cl_inst_info = cl_info.class_hidden_info_ptr();
++  if (0) fprintf(stderr, "[C6KF] before create_instance_klass (%s)\n", name->as_C_string()); fflush(stderr);
+   InstanceKlass* result = parser.create_instance_klass(old_stream != stream, *cl_inst_info, CHECK_NULL);
++  if (0) fprintf(stderr, "[C6KF] after create_instance_klass (%s) result=%p\n", name->as_C_string(), (void*)result); fflush(stderr);
+   assert(result != NULL, "result cannot be null with no pending exception");
+ 
+   if (cached_class_file != NULL) {
+diff --git a/src/hotspot/share/classfile/systemDictionary.cpp b/src/hotspot/share/classfile/systemDictionary.cpp
+index 96fbf375bca..d0eb08533a7 100644
+--- a/src/hotspot/share/classfile/systemDictionary.cpp
++++ b/src/hotspot/share/classfile/systemDictionary.cpp
+@@ -1286,13 +1286,17 @@ InstanceKlass* SystemDictionary::load_instance_class_impl(Symbol* class_name, Ha
+     if (k == NULL) {
+       // Use VM class loader
+       PerfTraceTime vmtimer(ClassLoader::perf_sys_classload_time());
++      if (0) fprintf(stderr, "[C6L] before ClassLoader::load_class(%s)\n", class_name->as_C_string()); fflush(stderr);
+       k = ClassLoader::load_class(class_name, search_only_bootloader_append, CHECK_NULL);
++      if (0) fprintf(stderr, "[C6L] after ClassLoader::load_class(%s) k=%p\n", class_name->as_C_string(), (void*)k); fflush(stderr);
+     }
+ 
+     // find_or_define_instance_class may return a different InstanceKlass
+     if (k != NULL) {
+       CDS_ONLY(SharedClassLoadingMark slm(THREAD, k);)
++      if (0) fprintf(stderr, "[C6L] before find_or_define_instance_class(%s)\n", class_name->as_C_string()); fflush(stderr);
+       k = find_or_define_instance_class(class_name, class_loader, k, CHECK_NULL);
++      if (0) fprintf(stderr, "[C6L] after find_or_define_instance_class(%s) k=%p\n", class_name->as_C_string(), (void*)k); fflush(stderr);
+     }
+     return k;
+   } else {
+@@ -1643,20 +1647,28 @@ void SystemDictionary::methods_do(void f(Method*)) {
+ // ----------------------------------------------------------------------------
+ // Initialization
+ 
++// C-6 instrument
++#define C6S(label) do { if (0) fprintf(stderr, "[C6s] " label "\n"); fflush(stderr); } while (0)
++
+ void SystemDictionary::initialize(TRAPS) {
++  C6S("SD::initialize enter");
+   // Allocate arrays
+-  _placeholders        = new PlaceholderTable(_placeholder_table_size);
+-  _loader_constraints  = new LoaderConstraintTable(_loader_constraint_size);
+-  _resolution_errors   = new ResolutionErrorTable(_resolution_error_size);
+-  _invoke_method_table = new SymbolPropertyTable(_invoke_method_size);
+-  _pd_cache_table = new ProtectionDomainCacheTable(defaultProtectionDomainCacheSize);
++  _placeholders        = new PlaceholderTable(_placeholder_table_size);            C6S("after new PlaceholderTable");
++  _loader_constraints  = new LoaderConstraintTable(_loader_constraint_size);       C6S("after new LoaderConstraintTable");
++  _resolution_errors   = new ResolutionErrorTable(_resolution_error_size);         C6S("after new ResolutionErrorTable");
++  _invoke_method_table = new SymbolPropertyTable(_invoke_method_size);             C6S("after new SymbolPropertyTable");
++  _pd_cache_table = new ProtectionDomainCacheTable(defaultProtectionDomainCacheSize); C6S("after new ProtectionDomainCacheTable");
+ 
+   // Resolve basic classes
++  C6S("before vmClasses::resolve_all");
+   vmClasses::resolve_all(CHECK);
++  C6S("after vmClasses::resolve_all");
+   // Resolve classes used by archived heap objects
+   if (UseSharedSpaces) {
+     HeapShared::resolve_classes(THREAD);
++    C6S("after HeapShared::resolve_classes");
+   }
++  C6S("SD::initialize return");
+ }
+ 
+ // Constraints on class loaders. The details of the algorithm can be
+diff --git a/src/hotspot/share/classfile/vmClasses.cpp b/src/hotspot/share/classfile/vmClasses.cpp
+index 2bd1ca65cc0..344e44bea93 100644
+--- a/src/hotspot/share/classfile/vmClasses.cpp
++++ b/src/hotspot/share/classfile/vmClasses.cpp
+@@ -80,7 +80,9 @@ bool vmClasses::contain(Klass* k) {
+ #endif
+ 
+ bool vmClasses::resolve(vmClassID id, TRAPS) {
++  if (0) fprintf(stderr, "[C6R] resolve(%d): enter\n", (int)id); fflush(stderr);
+   InstanceKlass** klassp = &_klasses[as_int(id)];
++  if (0) fprintf(stderr, "[C6R] resolve(%d): klassp=%p\n", (int)id, (void*)klassp); fflush(stderr);
+ 
+ #if INCLUDE_CDS
+   if (UseSharedSpaces && !JvmtiExport::should_post_class_prepare()) {
+@@ -93,31 +95,52 @@ bool vmClasses::resolve(vmClassID id, TRAPS) {
+   }
+ #endif // INCLUDE_CDS
+ 
+-  if (!is_loaded(*klassp)) {
++  bool loaded = is_loaded(*klassp);
++  if (0) fprintf(stderr, "[C6R] resolve(%d): is_loaded=%d\n", (int)id, loaded); fflush(stderr);
++  if (!loaded) {
+     int sid = vm_class_name_ids[as_int(id)];
+     Symbol* symbol = vmSymbols::symbol_at(vmSymbols::as_SID(sid));
++    if (0) fprintf(stderr, "[C6R] resolve(%d): sym=%s before resolve_or_fail\n",
++            (int)id, symbol ? symbol->as_C_string() : "<null>"); fflush(stderr);
+     Klass* k = SystemDictionary::resolve_or_fail(symbol, true, CHECK_false);
++    if (0) fprintf(stderr, "[C6R] resolve(%d): after resolve_or_fail k=%p\n",
++            (int)id, (void*)k); fflush(stderr);
+     (*klassp) = InstanceKlass::cast(k);
++    if (0) fprintf(stderr, "[C6R] resolve(%d): after cast/store\n", (int)id); fflush(stderr);
+   }
+   return ((*klassp) != NULL);
+ }
+ 
+ void vmClasses::resolve_until(vmClassID limit_id, vmClassID &start_id, TRAPS) {
+   assert((int)start_id <= (int)limit_id, "IDs are out of order!");
++  if (0) fprintf(stderr, "[C6r] resolve_until: start=%d limit=%d\n",
++          (int)start_id, (int)limit_id); fflush(stderr);
+   for (auto id : EnumRange<vmClassID>{start_id, limit_id}) { // (inclusive start, exclusive end)
++    int sid_idx = (int)id;
++    int sid = vm_class_name_ids[sid_idx];
++    Symbol* symbol = vmSymbols::symbol_at(vmSymbols::as_SID(sid));
++    if (0) fprintf(stderr, "[C6r] before resolve id=%d sym=%s\n",
++            sid_idx, symbol != NULL ? symbol->as_C_string() : "<null>");
++    fflush(stderr);
+     resolve(id, CHECK);
++    if (0) fprintf(stderr, "[C6r] after resolve id=%d\n", sid_idx); fflush(stderr);
+   }
+ 
+   // move the starting value forward to the limit:
+   start_id = limit_id;
+ }
+ 
++// C-6 instrument
++#define C6V(label) do { if (0) fprintf(stderr, "[C6v] " label "\n"); fflush(stderr); } while (0)
++
+ void vmClasses::resolve_all(TRAPS) {
++  C6V("vmClasses::resolve_all enter");
+   assert(!Object_klass_loaded(), "well-known classes should only be initialized once");
+ 
+   // Create the ModuleEntry for java.base.  This call needs to be done here,
+   // after vmSymbols::initialize() is called but before any classes are pre-loaded.
+   ClassLoader::classLoader_init2(THREAD);
++  C6V("after ClassLoader::classLoader_init2");
+ 
+   // Preload commonly used klasses
+   vmClassID scan = vmClassID::FIRST;
+@@ -148,24 +171,29 @@ void vmClasses::resolve_all(TRAPS) {
+   } else
+ #endif
+   {
++    C6V("before resolve_through(Class_klass) [non-CDS path]");
+     resolve_through(VM_CLASS_ID(Class_klass), scan, CHECK);
++    C6V("after resolve_through(Class_klass)");
+   }
+ 
+   assert(vmClasses::Object_klass() != NULL, "well-known classes should now be initialized");
+ 
+   java_lang_Object::register_natives(CHECK);
++  C6V("after java_lang_Object::register_natives");
+ 
+   // Calculate offsets for String and Class classes since they are loaded and
+   // can be used after this point.
+-  java_lang_String::compute_offsets();
+-  java_lang_Class::compute_offsets();
++  java_lang_String::compute_offsets();   C6V("after java_lang_String::compute_offsets");
++  java_lang_Class::compute_offsets();    C6V("after java_lang_Class::compute_offsets");
+ 
+   // Fixup mirrors for classes loaded before java.lang.Class.
+-  Universe::initialize_basic_type_mirrors(CHECK);
+-  Universe::fixup_mirrors(CHECK);
++  Universe::initialize_basic_type_mirrors(CHECK); C6V("after Universe::initialize_basic_type_mirrors");
++  Universe::fixup_mirrors(CHECK);                 C6V("after Universe::fixup_mirrors");
+ 
+   // do a bunch more:
++  C6V("before resolve_through(Reference_klass)");
+   resolve_through(VM_CLASS_ID(Reference_klass), scan, CHECK);
++  C6V("after resolve_through(Reference_klass)");
+ 
+   // The offsets for jlr.Reference must be computed before
+   // InstanceRefKlass::update_nonstatic_oop_maps is called. That function uses
+diff --git a/src/hotspot/share/memory/universe.cpp b/src/hotspot/share/memory/universe.cpp
+index 8ba5fae9cb7..33f84d9d345 100644
+--- a/src/hotspot/share/memory/universe.cpp
++++ b/src/hotspot/share/memory/universe.cpp
+@@ -301,43 +301,62 @@ void initialize_basic_type_klass(Klass* k, TRAPS) {
+   k->append_to_sibling_list();
+ }
+ 
++// C-6 instrument: breadcrumbs inside Universe::genesis to locate crash.
++#define C6G(label) do { \
++  if (0) fprintf(stderr, "[C6g] " label "\n"); fflush(stderr); \
++} while (0)
++
+ void Universe::genesis(TRAPS) {
++  C6G("genesis: enter");
+   ResourceMark rm(THREAD);
+   HandleMark   hm(THREAD);
++  C6G("after RM/HM");
+ 
+   { AutoModifyRestore<bool> temporarily(_bootstrapping, true);
++    C6G("after _bootstrapping=true");
+ 
+     { MutexLocker mc(THREAD, Compile_lock);
++      C6G("after MutexLocker(Compile_lock)");
+ 
+       java_lang_Class::allocate_fixup_lists();
++      C6G("after java_lang_Class::allocate_fixup_lists");
+ 
+       // determine base vtable size; without that we cannot create the array klasses
+       compute_base_vtable_size();
++      C6G("after compute_base_vtable_size");
+ 
+       if (!UseSharedSpaces) {
+         for (int i = T_BOOLEAN; i < T_LONG+1; i++) {
+           _typeArrayKlassObjs[i] = TypeArrayKlass::create_klass((BasicType)i, CHECK);
++          if (0) fprintf(stderr, "[C6g] after TypeArrayKlass::create_klass i=%d\n", i); fflush(stderr);
+         }
++        C6G("after TypeArrayKlass loop");
+ 
+         ClassLoaderData* null_cld = ClassLoaderData::the_null_class_loader_data();
+-
+-        _the_array_interfaces_array     = MetadataFactory::new_array<Klass*>(null_cld, 2, NULL, CHECK);
+-        _the_empty_int_array            = MetadataFactory::new_array<int>(null_cld, 0, CHECK);
+-        _the_empty_short_array          = MetadataFactory::new_array<u2>(null_cld, 0, CHECK);
+-        _the_empty_method_array         = MetadataFactory::new_array<Method*>(null_cld, 0, CHECK);
+-        _the_empty_klass_array          = MetadataFactory::new_array<Klass*>(null_cld, 0, CHECK);
+-        _the_empty_instance_klass_array = MetadataFactory::new_array<InstanceKlass*>(null_cld, 0, CHECK);
++        C6G("after the_null_class_loader_data");
++
++        _the_array_interfaces_array     = MetadataFactory::new_array<Klass*>(null_cld, 2, NULL, CHECK); C6G("after new_array<Klass*>(2)");
++        _the_empty_int_array            = MetadataFactory::new_array<int>(null_cld, 0, CHECK); C6G("after new_array<int>(0)");
++        _the_empty_short_array          = MetadataFactory::new_array<u2>(null_cld, 0, CHECK); C6G("after new_array<u2>(0)");
++        _the_empty_method_array         = MetadataFactory::new_array<Method*>(null_cld, 0, CHECK); C6G("after new_array<Method*>(0)");
++        _the_empty_klass_array          = MetadataFactory::new_array<Klass*>(null_cld, 0, CHECK); C6G("after new_array<Klass*>(0)");
++        _the_empty_instance_klass_array = MetadataFactory::new_array<InstanceKlass*>(null_cld, 0, CHECK); C6G("after new_array<InstanceKlass*>(0)");
+       }
+     }
++    C6G("after Compile_lock release");
+ 
+     vmSymbols::initialize();
++    C6G("after vmSymbols::initialize");
+ 
+     SystemDictionary::initialize(CHECK);
++    C6G("after SystemDictionary::initialize");
+ 
+     // Create string constants
+     oop s = StringTable::intern("null", CHECK);
++    C6G("after StringTable::intern('null')");
+     _the_null_string = OopHandle(vm_global(), s);
+     s = StringTable::intern("-2147483648", CHECK);
++    C6G("after StringTable::intern('-2147483648')");
+     _the_min_jint_string = OopHandle(vm_global(), s);
+ 
+ 
+@@ -356,15 +375,16 @@ void Universe::genesis(TRAPS) {
+       _the_array_interfaces_array->at_put(1, vmClasses::Serializable_klass());
+     }
+ 
+-    initialize_basic_type_klass(boolArrayKlassObj(), CHECK);
+-    initialize_basic_type_klass(charArrayKlassObj(), CHECK);
+-    initialize_basic_type_klass(floatArrayKlassObj(), CHECK);
+-    initialize_basic_type_klass(doubleArrayKlassObj(), CHECK);
+-    initialize_basic_type_klass(byteArrayKlassObj(), CHECK);
+-    initialize_basic_type_klass(shortArrayKlassObj(), CHECK);
+-    initialize_basic_type_klass(intArrayKlassObj(), CHECK);
+-    initialize_basic_type_klass(longArrayKlassObj(), CHECK);
++    initialize_basic_type_klass(boolArrayKlassObj(), CHECK);   C6G("after init bool[]");
++    initialize_basic_type_klass(charArrayKlassObj(), CHECK);   C6G("after init char[]");
++    initialize_basic_type_klass(floatArrayKlassObj(), CHECK);  C6G("after init float[]");
++    initialize_basic_type_klass(doubleArrayKlassObj(), CHECK); C6G("after init double[]");
++    initialize_basic_type_klass(byteArrayKlassObj(), CHECK);   C6G("after init byte[]");
++    initialize_basic_type_klass(shortArrayKlassObj(), CHECK);  C6G("after init short[]");
++    initialize_basic_type_klass(intArrayKlassObj(), CHECK);    C6G("after init int[]");
++    initialize_basic_type_klass(longArrayKlassObj(), CHECK);   C6G("after init long[]");
+   } // end of core bootstrapping
++  C6G("after core bootstrapping block");
+ 
+   {
+     Handle tns = java_lang_String::create_from_str("<null_sentinel>", CHECK);
+diff --git a/src/hotspot/share/oops/constantPool.cpp b/src/hotspot/share/oops/constantPool.cpp
+index 53e166c0c69..4ae0d583dc3 100644
+--- a/src/hotspot/share/oops/constantPool.cpp
++++ b/src/hotspot/share/oops/constantPool.cpp
+@@ -1166,8 +1166,13 @@ oop ConstantPool::resolve_constant_at_impl(const constantPoolHandle& this_cp,
+ }
+ 
+ oop ConstantPool::uncached_string_at(int which, TRAPS) {
++  if (0) fprintf(stderr, "[C6CPU] uncached_string_at(%d) enter\n", which); fflush(stderr);
+   Symbol* sym = unresolved_string_at(which);
++  if (0) fprintf(stderr, "[C6CPU] sym=%p (\"%.40s\")\n",
++          (void*)sym, sym ? sym->as_C_string() : "<null>"); fflush(stderr);
++  if (0) fprintf(stderr, "[C6CPU] before StringTable::intern\n"); fflush(stderr);
+   oop str = StringTable::intern(sym, CHECK_(NULL));
++  if (0) fprintf(stderr, "[C6CPU] after StringTable::intern, str=%p\n", (void*)str); fflush(stderr);
+   assert(java_lang_String::is_instance(str), "must be string");
+   return str;
+ }
+diff --git a/src/hotspot/share/runtime/init.cpp b/src/hotspot/share/runtime/init.cpp
+index 06974b89e42..c60b6ceec0f 100644
+--- a/src/hotspot/share/runtime/init.cpp
++++ b/src/hotspot/share/runtime/init.cpp
+@@ -32,6 +32,8 @@
+ #include "jvmci/jvmci.hpp"
+ #endif
+ #include "interpreter/bytecodes.hpp"
++#include "interpreter/interpreter.hpp"
++#include "runtime/thread.inline.hpp"
+ #include "logging/log.hpp"
+ #include "logging/logAsyncWriter.hpp"
+ #include "logging/logTag.hpp"
+@@ -110,45 +112,68 @@ void vm_init_globals() {
+ }
+ 
+ 
++// C-6 instrument: breadcrumbs to localize the purecap boot crashes. Now that
++// boot works (C-5/C-6 done), silence them — they flooded stderr and slowed the
++// Zero interpreter. Re-enable by restoring the fprintf body if needed.
++#define C6_BREAD(label) do { } while (0)
++
+ jint init_globals() {
+-  management_init();
+-  JvmtiExport::initialize_oop_storage();
+-  bytecodes_init();
+-  classLoader_init1();
+-  compilationPolicy_init();
+-  codeCache_init();
+-  VM_Version_init();              // depends on codeCache_init for emitting code
+-  stubRoutines_init1();
++  C6_BREAD("init_globals: enter");
++  management_init();                C6_BREAD("after management_init");
++  JvmtiExport::initialize_oop_storage(); C6_BREAD("after JvmtiExport::initialize_oop_storage");
++  bytecodes_init();                 C6_BREAD("after bytecodes_init");
++  classLoader_init1();              C6_BREAD("after classLoader_init1");
++  compilationPolicy_init();         C6_BREAD("after compilationPolicy_init");
++  codeCache_init();                 C6_BREAD("after codeCache_init");
++  VM_Version_init();                C6_BREAD("after VM_Version_init"); // depends on codeCache_init for emitting code
++  stubRoutines_init1();             C6_BREAD("after stubRoutines_init1");
+   jint status = universe_init();  // dependent on codeCache_init and
+                                   // stubRoutines_init1 and metaspace_init.
++  C6_BREAD("after universe_init (Genesis)");
+   if (status != JNI_OK)
+     return status;
+ 
+-  AsyncLogWriter::initialize();
+-  gc_barrier_stubs_init();  // depends on universe_init, must be before interpreter_init
+-  interpreter_init_stub();  // before methods get loaded
+-  accessFlags_init();
+-  InterfaceSupport_init();
+-  VMRegImpl::set_regName(); // need this before generate_stubs (for printing oop maps).
+-  SharedRuntime::generate_stubs();
+-  universe2_init();  // dependent on codeCache_init and stubRoutines_init1
+-  javaClasses_init();// must happen after vtable initialization, before referenceProcessor_init
+-  interpreter_init_code();  // after javaClasses_init and before any method gets linked
+-  referenceProcessor_init();
+-  jni_handles_init();
++  AsyncLogWriter::initialize();     C6_BREAD("after AsyncLogWriter::initialize");
++  gc_barrier_stubs_init();          C6_BREAD("after gc_barrier_stubs_init"); // depends on universe_init, must be before interpreter_init
++  interpreter_init_stub();          C6_BREAD("after interpreter_init_stub"); // before methods get loaded
++  accessFlags_init();               C6_BREAD("after accessFlags_init");
++  InterfaceSupport_init();          C6_BREAD("after InterfaceSupport_init");
++  VMRegImpl::set_regName();         C6_BREAD("after VMRegImpl::set_regName"); // need this before generate_stubs
++  SharedRuntime::generate_stubs();  C6_BREAD("after SharedRuntime::generate_stubs");
++  universe2_init();                 C6_BREAD("after universe2_init"); // dependent on codeCache_init and stubRoutines_init1
++  javaClasses_init();               C6_BREAD("after javaClasses_init"); // must happen after vtable init, before refProcessor
++  interpreter_init_code();          C6_BREAD("after interpreter_init_code"); // after javaClasses_init and before any method gets linked
++#if defined(__CHERI_PURE_CAPABILITY__) && !defined(ZERO)
++  // C-6 fix #34: the main thread was constructed before interpreter_init,
++  // so its _cap_dispatch is stale (null). Now that the dispatch table
++  // exists, re-seed the current (main) thread with a valid cap so its
++  // interpreter get_dispatch can load a tagged dispatch-table capability.
++  // (Template-interpreter only: ZeroInterpreter has no dispatch_table and
++  // the aarch64 cap_data_table is not built for the zero variant.)
++  if (Thread::current_or_null() != NULL) {
++    Thread::current()->set_cap_dispatch((void*)Interpreter::dispatch_table());
++    // C-6 fix #46: re-seed the libjvm.so-data cap-table base now that all
++    // interpreter globals have been registered during code generation.
++    extern address cap_data_table_base();
++    Thread::current()->set_cap_data_base((void*)cap_data_table_base());
++  }
++#endif
++  referenceProcessor_init();        C6_BREAD("after referenceProcessor_init");
++  jni_handles_init();               C6_BREAD("after jni_handles_init");
+ #if INCLUDE_VM_STRUCTS
+-  vmStructs_init();
++  vmStructs_init();                 C6_BREAD("after vmStructs_init");
+ #endif // INCLUDE_VM_STRUCTS
+ 
+-  vtableStubs_init();
+-  InlineCacheBuffer_init();
+-  compilerOracle_init();
+-  dependencyContext_init();
+-  dependencies_init();
++  vtableStubs_init();               C6_BREAD("after vtableStubs_init");
++  InlineCacheBuffer_init();         C6_BREAD("after InlineCacheBuffer_init");
++  compilerOracle_init();            C6_BREAD("after compilerOracle_init");
++  dependencyContext_init();         C6_BREAD("after dependencyContext_init");
++  dependencies_init();              C6_BREAD("after dependencies_init");
+ 
+   if (!compileBroker_init()) {
+     return JNI_EINVAL;
+   }
++  C6_BREAD("after compileBroker_init");
+ #if INCLUDE_JVMCI
+   if (EnableJVMCI) {
+     JVMCI::initialize_globals();
+@@ -158,8 +183,9 @@ jint init_globals() {
+   if (!universe_post_init()) {
+     return JNI_ERR;
+   }
+-  stubRoutines_init2(); // note: StubRoutines need 2-phase init
+-  MethodHandles::generate_adapters();
++  C6_BREAD("after universe_post_init");
++  stubRoutines_init2();             C6_BREAD("after stubRoutines_init2"); // note: StubRoutines need 2-phase init
++  MethodHandles::generate_adapters(); C6_BREAD("after MethodHandles::generate_adapters");
+ 
+   // All the flags that get adjusted by VM_Version_init and os::init_2
+   // have been set so dump the flags now.
+diff --git a/src/hotspot/share/runtime/sharedRuntime.cpp b/src/hotspot/share/runtime/sharedRuntime.cpp
+index 9af4b513a99..9d0c55e7b51 100644
+--- a/src/hotspot/share/runtime/sharedRuntime.cpp
++++ b/src/hotspot/share/runtime/sharedRuntime.cpp
+@@ -542,7 +542,13 @@ address SharedRuntime::raw_exception_handler_for_return_address(JavaThread* curr
+ 
+ 
+ JRT_LEAF(address, SharedRuntime::exception_handler_for_return_address(JavaThread* current, address return_address))
+-  return raw_exception_handler_for_return_address(current, return_address);
++  address h = raw_exception_handler_for_return_address(current, return_address);
++#ifdef __CHERI_PURE_CAPABILITY__
++  if (0) fprintf(stderr, "[C6EH] returning handler=%#p tag=%d (return_address=%#p)\n",
++          (void*)h, (int)__builtin_cheri_tag_get((void*)h), (void*)return_address);
++  fflush(stderr);
++#endif
++  return h;
+ JRT_END
+ 
+ 
+diff --git a/src/hotspot/share/runtime/thread.cpp b/src/hotspot/share/runtime/thread.cpp
+index fe4f555df2a..29cf4346f6e 100644
+--- a/src/hotspot/share/runtime/thread.cpp
++++ b/src/hotspot/share/runtime/thread.cpp
+@@ -231,6 +231,11 @@ void JavaThread::smr_delete() {
+ 
+ DEBUG_ONLY(Thread* Thread::_starting_thread = NULL;)
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++extern "C" intptr_t cap_trampoline_dispatch(int fn_id,
++    intptr_t a0, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4);
++#endif
++
+ Thread::Thread() {
+ 
+   DEBUG_ONLY(_run_state = PRE_CALL_RUN;)
+@@ -239,6 +244,28 @@ Thread::Thread() {
+   set_stack_base(NULL);
+   set_stack_size(0);
+   set_lgrp_id(-1);
++
++#if defined(__CHERI_PURE_CAPABILITY__) && !defined(ZERO)
++  // C-6 fix #25 (Option C): seed the cap trampoline cap.
++  _cap_trampoline_addr = (void*)&cap_trampoline_dispatch;
++  // C-6 fix #34: seed the dispatch-table cap. For threads created after
++  // interpreter_init this is the real table; for the main thread (created
++  // earlier) it is null here and re-seeded in init_globals().
++  _cap_dispatch = (void*)Interpreter::dispatch_table();
++  // C-6 fix #46: seed the libjvm.so-data cap-table base (same timing
++  // caveat as _cap_dispatch; re-seeded for the main thread in init_globals).
++  {
++    extern address cap_data_table_base();
++    _cap_data_base = (void*)cap_data_table_base();
++  }
++#elif defined(__CHERI_PURE_CAPABILITY__)
++  // Zero variant: the C++ interpreter needs no codecache trampoline,
++  // dispatch-table, or data-cap-table mechanism (clang emits cap-correct
++  // loads directly). Those aarch64-only symbols aren't built here.
++  _cap_trampoline_addr = NULL;
++  _cap_dispatch = NULL;
++  _cap_data_base = NULL;
++#endif
+   DEBUG_ONLY(clear_suspendible_thread();)
+ 
+   // allocated data structures
+@@ -2675,21 +2702,32 @@ static void call_initPhase3(TRAPS) {
+ 
+ void Threads::initialize_java_lang_classes(JavaThread* main_thread, TRAPS) {
+   TraceTime timer("Initialize java.lang classes", TRACETIME_LOG(Info, startuptime));
++#define C6IJC(label) do { if (0) fprintf(stderr, "[C6IJC] " label "\n"); fflush(stderr); } while (0)
++  C6IJC("IJC enter");
+ 
+   if (EagerXrunInit && Arguments::init_libraries_at_startup()) {
+     create_vm_init_libraries();
+   }
+ 
++  C6IJC("before init_class String");
+   initialize_class(vmSymbols::java_lang_String(), CHECK);
++  C6IJC("after init_class String");
+ 
+   // Inject CompactStrings value after the static initializers for String ran.
+   java_lang_String::set_compact_strings(CompactStrings);
++  C6IJC("after set_compact_strings");
+ 
+   // Initialize java_lang.System (needed before creating the thread)
++  C6IJC("before init_class System");
+   initialize_class(vmSymbols::java_lang_System(), CHECK);
++  C6IJC("after init_class System");
+   // The VM creates & returns objects of this class. Make sure it's initialized.
++  C6IJC("before init_class Class");
+   initialize_class(vmSymbols::java_lang_Class(), CHECK);
++  C6IJC("after init_class Class");
++  C6IJC("before init_class ThreadGroup");
+   initialize_class(vmSymbols::java_lang_ThreadGroup(), CHECK);
++  C6IJC("after init_class ThreadGroup");
+   Handle thread_group = create_initial_thread_group(CHECK);
+   Universe::set_main_thread_group(thread_group());
+   initialize_class(vmSymbols::java_lang_Thread(), CHECK);
+@@ -2908,6 +2946,7 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+     *canTryAgain = false; // don't let caller call JNI_CreateJavaVM again
+     return status;
+   }
++  if (0) fprintf(stderr, "[C6T] after init_globals\n"); fflush(stderr);
+ 
+   JFR_ONLY(Jfr::on_create_vm_1();)
+ 
+@@ -2923,26 +2962,32 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   JvmtiExport::transition_pending_onload_raw_monitors();
+ 
+   // Create the VMThread
++  if (0) fprintf(stderr, "[C6T] before VMThread::create\n"); fflush(stderr);
+   { TraceTime timer("Start VMThread", TRACETIME_LOG(Info, startuptime));
+ 
+     VMThread::create();
++    if (0) fprintf(stderr, "[C6T] after VMThread::create\n"); fflush(stderr);
+     Thread* vmthread = VMThread::vm_thread();
+ 
+     if (!os::create_thread(vmthread, os::vm_thread)) {
+       vm_exit_during_initialization("Cannot create VM thread. "
+                                     "Out of system resources.");
+     }
++    if (0) fprintf(stderr, "[C6T] after os::create_thread(vmthread)\n"); fflush(stderr);
+ 
+     // Wait for the VM thread to become ready, and VMThread::run to initialize
+     // Monitors can have spurious returns, must always check another state flag
+     {
+       MonitorLocker ml(Notify_lock);
+       os::start_thread(vmthread);
++      if (0) fprintf(stderr, "[C6T] after os::start_thread(vmthread); now waiting for active_handles\n"); fflush(stderr);
+       while (vmthread->active_handles() == NULL) {
+         ml.wait();
+       }
++      if (0) fprintf(stderr, "[C6T] vmthread active_handles ready\n"); fflush(stderr);
+     }
+   }
++  if (0) fprintf(stderr, "[C6T] VMThread fully started\n"); fflush(stderr);
+ 
+   assert(Universe::is_fully_initialized(), "not initialized");
+   if (VerifyDuringStartup) {
+@@ -2969,9 +3014,12 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   // Notify JVMTI agents that VM has started (JNI is up) - nop if no agents.
+   JvmtiExport::post_early_vm_start();
+ 
++  if (0) fprintf(stderr, "[C6T] before initialize_java_lang_classes\n"); fflush(stderr);
+   initialize_java_lang_classes(main_thread, CHECK_JNI_ERR);
++  if (0) fprintf(stderr, "[C6T] after initialize_java_lang_classes\n"); fflush(stderr);
+ 
+   quicken_jni_functions();
++  if (0) fprintf(stderr, "[C6T] after quicken_jni_functions\n"); fflush(stderr);
+ 
+   // No more stub generation allowed after that point.
+   StubCodeDesc::freeze();
