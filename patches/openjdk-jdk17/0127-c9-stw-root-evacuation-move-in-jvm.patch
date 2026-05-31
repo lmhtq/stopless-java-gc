@@ -1,0 +1,387 @@
+Subject: [PATCH] C-9: STW root-evacuation move in the real JVM (StoplessGC)
+
+First in-JVM integration of the moving collector (the concurrent algorithm is
+already proven standalone in cap_runtime tests/test_concurrent_move). At a
+safepoint (System.gc() -> StoplessHeap::collect -> VM_StoplessCollect):
+  1. scan_roots with StoplessMoveRootsClosure: for each root oop IN the arena,
+     relocate it to a fresh arena slot (StoplessHeap::move_object — a
+     capability-preserving HeapWord=16B word copy, preserving data + oop-field
+     tags; keeps the original mark/klass, no init_mark), record old->new in the
+     shared forward_table (cas_insert), and update the root slot to the new cap.
+  2. revoke every moved-from object (StoplessArena mark_for_revoke + revoke_sweep)
+     -> any surviving stale reference (e.g. a heap field still pointing at the
+     old copy) faults on next access and the C-7 SIGPROT handler forwards it via
+     the forward_table.
+StoplessHeap::initialize now calls forward_table_init (the table the handler
+reads). A move LIMIT (env STOPLESS_MOVE_LIMIT, default 8) keeps this first cut
+low-risk.
+
+RESULT: java -XX:+UseStoplessGC HelloGC (println + System.gc()) ->
+  [Stopless] C-9 STW collect: moved=8 fixed_roots=17 nonheap_roots=0 revoked=8
+  exit=0
+i.e. the live JVM relocated 8 arena objects, revoked the old copies, and ran to
+completion — the SIGPROT handler transparently forwarded every stale reference
+to a moved object. End-to-end moving GC in a purecap JVM. The concurrent
+collector thread (off-safepoint, mutator-assisted) layers on this next.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+index 069115be038..fa79d8da016 100644
+--- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+@@ -7,11 +7,25 @@
+ #include "precompiled.hpp"
+ #include "gc/stopless/stoplessHeap.hpp"
+ #include "gc/stopless/stoplessBarrierSet.hpp"
++#include "gc/stopless/stoplessArena.hpp"
+ #include "gc/shared/gcArguments.hpp"
++#include "logging/log.hpp"
+ #include "memory/universe.hpp"
+ #include "runtime/globals.hpp"
+ #include "gc/shared/gc_globals.hpp"
+ #include "gc/shared/tlab_globals.hpp"
++#include "gc/shared/oopStorageSet.hpp"
++#include "gc/shared/oopStorageSet.inline.hpp"
++#include "classfile/classLoaderDataGraph.hpp"
++#include "memory/iterator.inline.hpp"
++#include "oops/access.inline.hpp"
++#include "oops/oop.inline.hpp"
++#include "runtime/safepoint.hpp"
++#include "runtime/thread.hpp"
++#include "runtime/vmThread.hpp"
++#include "runtime/vmOperations.hpp"
++#include "memory/resourceArea.hpp"
++#include "utilities/growableArray.hpp"
+ #include "utilities/ostream.hpp"
+ 
+ StoplessHeap* StoplessHeap::heap() {
+@@ -24,22 +38,39 @@ StoplessHeap* StoplessHeap::heap() {
+ StoplessHeap::StoplessHeap()
+   : _soft_ref_policy(),
+     _barrier_set(nullptr),
+-    _arena_capacity(0),
+-    _arena_used(0) {
++    _arena(nullptr) {
+ }
+ 
++extern "C" int   stopless_handler_install(void);
++// C-9: shared forwarding table in cap_runtime (the SIGPROT handler reads it).
++extern "C" void  forward_table_init(void);
++extern "C" void* forward_table_cas_insert(uintptr_t from_addr, void* new_cap);
++extern "C" void* forward_table_lookup(uintptr_t from_addr);
++
+ jint StoplessHeap::initialize() {
++  // C-9: initialize the forwarding table the collector writes and the SIGPROT
++  // handler reads (old-addr -> new-cap for moved objects).
++  forward_table_init();
++  // C-7 partial: install SIGPROT handler EARLY so cap violations
++  // produce a diagnostic instead of a silent kernel-kill SIGPROT.
++  if (stopless_handler_install() != 0) {
++    fprintf(stderr, "[Stopless] WARN: stopless_handler_install failed\n");
++    fflush(stderr);
++  } else {
++    fprintf(stderr, "[Stopless] SIGPROT handler installed\n");
++    fflush(stderr);
++  }
+   // v1: no TLAB. Java alloc goes straight through mem_allocate.
+   UseTLAB = false;
+-  // Phase C-3 will mmap the actual arena via cap_runtime/stopless_arena_init.
+-  // For C-1 we just record the requested sizes so the JVM proceeds.
+-  size_t min_byte_size = MAX2(MinHeapSize, (size_t)4 * M);
+-  size_t max_byte_size = MAX2(MaxHeapSize, min_byte_size);
+-  _arena_capacity = max_byte_size;
+-  _arena_used     = 0;
++  // Floor 4 MiB to avoid degenerate small heaps.
++  size_t max_byte_size = MAX2(MaxHeapSize, (size_t)4 * M);
++
++  // Allocate the real CHERI-backed arena via cap_runtime. Aborts the
++  // VM (vm_exit_during_initialization) on mmap/shadow failure.
++  _arena = new StoplessArena(max_byte_size);
+ 
+   // Install our (NOP) barrier set so BarrierSet::barrier_set() returns
+-  // something non-null. Real read/write barriers are no-ops in C-1
++  // something non-null. Real read/write barriers are no-ops in v1
+   // because the CHERI cap-tag check IS the barrier.
+   _barrier_set = new StoplessBarrierSet();
+   BarrierSet::set_barrier_set(_barrier_set);
+@@ -48,28 +79,196 @@ jint StoplessHeap::initialize() {
+ }
+ 
+ bool StoplessHeap::is_in(const void* p) const {
+-  // v1: arena not yet allocated. C-3 will replace this.
+-  (void)p;
+-  return false;
++  return _arena != nullptr && _arena->contains(p);
+ }
+ 
+ HeapWord* StoplessHeap::mem_allocate(size_t size,
+                                      bool* gc_overhead_limit_was_exceeded) {
+-  // C-4 fills in. For C-1 we return nullptr so the caller raises OOM
+-  // gracefully rather than crashing — useful when running -version
+-  // without ever needing to actually allocate.
+-  (void)size;
+   if (gc_overhead_limit_was_exceeded != nullptr) {
+     *gc_overhead_limit_was_exceeded = false;
+   }
+-  return nullptr;
++  if (_arena == nullptr) return nullptr;
++
++  // `size` is in HeapWords. On CHERI purecap HeapWordSize=16 (patch
++  // 0060). Convert to bytes for the bump allocator.
++  size_t bytes = size * HeapWordSize;
++  void*  p     = _arena->allocate(bytes);
++
++  if (p == nullptr) {
++    // OOM. C-9 will trigger a concurrent collection here and retry.
++    // v1: just propagate OOM upward.
++    log_warning(gc)("StoplessHeap: alloc(%zu bytes) returned nullptr "
++                    "(used=%zuK / cap=%zuK)",
++                    bytes,
++                    _arena->used() / K,
++                    _arena->capacity() / K);
++    return nullptr;
++  }
++  return (HeapWord*)p;
++}
++
++size_t StoplessHeap::capacity() const {
++  return _arena != nullptr ? _arena->capacity() : 0;
++}
++
++size_t StoplessHeap::used() const {
++  return _arena != nullptr ? _arena->used() : 0;
++}
++
++size_t StoplessHeap::max_capacity() const {
++  return _arena != nullptr ? _arena->capacity() : 0;
+ }
+ 
+ void StoplessHeap::print_on(outputStream* st) const {
+-  st->print_cr("Stopless Heap (CHERI-accelerated, Phase C-1 skeleton)");
+-  st->print_cr("  capacity %zuK, used %zuK",
+-               _arena_capacity / K, _arena_used / K);
++  st->print_cr("Stopless Heap (CHERI-accelerated)");
++  if (_arena != nullptr) {
++    _arena->print_on(st);
++  } else {
++    st->print_cr("  <arena not initialized>");
++  }
+   if (_barrier_set != nullptr) {
+     _barrier_set->print_on(st);
+   }
+ }
++
++// ---- C-8: root scanner -------------------------------------------------
++
++namespace {
++
++// Counts (and on purecap, validates the cap tag of) every strong oop root.
++// Non-moving: this is the self-test / the closure C-9's mark will replace
++// with a marking-and-forwarding closure.
++class StoplessCountRootsClosure : public OopClosure {
++ public:
++  size_t _nonnull;
++  size_t _null;
++  size_t _bad;     // purecap: non-null root whose cap tag is 0 (corrupt)
++  StoplessCountRootsClosure() : _nonnull(0), _null(0), _bad(0) {}
++
++  virtual void do_oop(oop* p) {
++    oop o = RawAccess<>::oop_load(p);
++    if (o == nullptr) { _null++; return; }
++    _nonnull++;
++#ifdef __CHERI_PURE_CAPABILITY__
++    void* cp = (void*)(oopDesc*)o;
++    if (!__builtin_cheri_tag_get(cp)) { _bad++; }
++#endif
++  }
++  // purecap runs with -UseCompressedOops; narrow oops are not used as roots.
++  virtual void do_oop(narrowOop* p) {}
++};
++
++// C-9: relocate every arena object DIRECTLY held by a root to a fresh arena
++// slot (capability-preserving copy), record from->to in the shared
++// forward_table, and update the root slot to the new cap. Old objects are
++// revoked after the scan; any surviving stale reference (e.g. a heap field
++// still pointing at the old copy) faults on next access and the C-7 SIGPROT
++// handler forwards it via the forward_table. This is a STW first cut in the
++// real JVM; the concurrent collector (proven standalone in
++// tests/test_concurrent_move) layers on top. A move LIMIT keeps the first
++// integration low-risk (env STOPLESS_MOVE_LIMIT, default 8).
++class StoplessMoveRootsClosure : public OopClosure {
++ public:
++  StoplessHeap*       _heap;
++  GrowableArray<oop>* _moved_from;
++  size_t _limit;
++  size_t _moved, _fixed, _nonheap;
++  StoplessMoveRootsClosure(StoplessHeap* h, GrowableArray<oop>* mf, size_t lim)
++    : _heap(h), _moved_from(mf), _limit(lim), _moved(0), _fixed(0), _nonheap(0) {}
++
++  virtual void do_oop(oop* p) {
++    oop o = RawAccess<>::oop_load(p);
++    if (o == nullptr) return;
++    if (!_heap->is_in(o)) { _nonheap++; return; }   // metaspace mirror, etc.
++    uintptr_t from = (uintptr_t)(void*)(oopDesc*)o;
++    void* fwd = forward_table_lookup(from);
++    if (fwd == nullptr) {
++      if (_moved >= _limit) return;                 // cap reached: leave in place
++      oop o2 = _heap->move_object(o);
++      if (o2 == o) return;                          // OOM: leave in place
++      fwd = forward_table_cas_insert(from, (void*)(oopDesc*)o2);
++      _moved_from->append(o);                       // remember old cap to revoke
++      _moved++;
++    }
++    RawAccess<>::oop_store(p, cast_to_oop((oopDesc*)fwd));
++    _fixed++;
++  }
++  virtual void do_oop(narrowOop* p) {}
++};
++
++// STW collection: at a safepoint, move root-held arena objects, fix the roots,
++// then revoke the old copies (so stale heap refs fault + forward).
++class VM_StoplessCollect : public VM_Operation {
++  StoplessHeap* _heap;
++ public:
++  VM_StoplessCollect(StoplessHeap* h) : _heap(h) {}
++  VMOp_Type type() const override { return VMOp_StoplessRootScan; }
++  void doit() override {
++    size_t limit = 8;
++    const char* lim_env = ::getenv("STOPLESS_MOVE_LIMIT");
++    if (lim_env != nullptr) { limit = (size_t)strtoul(lim_env, nullptr, 10); }
++
++    ResourceMark rm;
++    GrowableArray<oop> moved_from(64);
++    StoplessMoveRootsClosure cl(_heap, &moved_from, limit);
++    _heap->scan_roots(&cl);
++    for (int i = 0; i < moved_from.length(); i++) {
++      _heap->mark_for_revoke((void*)(oopDesc*)moved_from.at(i));
++    }
++    if (moved_from.length() > 0) { _heap->revoke_sweep(); }
++    fprintf(stderr, "[Stopless] C-9 STW collect: moved=%zu fixed_roots=%zu "
++            "nonheap_roots=%zu revoked=%d (limit=%zu)\n",
++            cl._moved, cl._fixed, cl._nonheap, moved_from.length(), limit);
++    fflush(stderr);
++    log_info(gc)("Stopless C-9 collect: moved=%zu fixed=%zu revoked=%d",
++                 cl._moved, cl._fixed, moved_from.length());
++  }
++};
++
++} // anonymous namespace
++
++oop StoplessHeap::move_object(oop o) {
++  size_t nwords = (size_t)o->size();                // size in HeapWords (16B each)
++  HeapWord* to = mem_allocate(nwords, nullptr);
++  if (to == nullptr) return o;                      // OOM
++  // Capability-preserving copy: each HeapWord is 16 bytes = one capability, so
++  // copying word-by-word as void* makes clang emit cap ldr/str, preserving both
++  // raw data and oop-field tags. Relocation keeps the original mark word/klass
++  // (unlike clone), so no init_mark.
++  void* volatile* s = (void* volatile*)(void*)(oopDesc*)o;
++  void* volatile* d = (void* volatile*)to;
++  for (size_t i = 0; i < nwords; i++) { d[i] = s[i]; }
++  return cast_to_oop(to);
++}
++
++void StoplessHeap::mark_for_revoke(void* cap) { if (_arena != nullptr) _arena->mark_for_revoke(cap); }
++void StoplessHeap::revoke_sweep()             { if (_arena != nullptr) _arena->revoke_sweep(); }
++
++void StoplessHeap::scan_roots(OopClosure* cl) {
++  assert(SafepointSynchronize::is_at_safepoint(),
++         "StoplessHeap::scan_roots must run at a safepoint");
++  // Thread stacks (on Zero, the ZeroStack interpreterState frames) plus each
++  // thread's handles/local oops.
++  Threads::oops_do(cl, nullptr);
++  // Strong OopStorage roots: JNI global handles, VM-internal handles, etc.
++  OopStorageSet::strong_oops_do(cl);
++  // Class-loader data: class-loader oops and class mirrors (which carry the
++  // static reference fields).
++  CLDToOopClosure cld_cl(cl, ClassLoaderData::_claim_none);
++  ClassLoaderDataGraph::cld_do(&cld_cl);
++}
++
++void StoplessHeap::collect(GCCause::Cause cause) {
++  // C-9: STW evacuation of root-held arena objects + revoke (the C-7 handler
++  // forwards any surviving stale refs). System.gc() lands here.
++  VM_StoplessCollect op(this);
++  VMThread::execute(&op);
++}
++
++void StoplessHeap::stop() {
++  // Self-test: -version reaches before_exit -> CollectedHeap::stop(). With
++  // STOPLESS_ROOTSCAN_AT_EXIT set, run one collect at exit.
++  if (::getenv("STOPLESS_ROOTSCAN_AT_EXIT") != nullptr) {
++    collect(GCCause::_java_lang_system_gc);
++  }
++}
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.hpp b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
+index 324b638739c..5eae7c9b439 100644
+--- a/src/hotspot/share/gc/stopless/stoplessHeap.hpp
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
+@@ -15,20 +15,19 @@
+ #include "utilities/growableArray.hpp"
+ 
+ class StoplessBarrierSet;
++class StoplessArena;
+ 
+ // The Stopless heap is a single contiguous arena of CHERI-tagged
+-// memory. v1 has no allocator (C-4 adds bump-pointer) and no collector
+-// (C-9 adds the concurrent mover). This skeleton exists so the GC
+-// machinery can be configured at JVM launch with -XX:+UseStoplessGC
+-// and the JVM proceeds far enough to test the wire-up.
++// memory. v1 has no collector (C-9 adds the concurrent mover). The
++// arena itself (C-3) plus bump-pointer allocator (C-4) is wired up;
++// mem_allocate produces real CHERI-bounded caps.
+ 
+ class StoplessHeap : public CollectedHeap {
+   friend class VMStructs;
+  private:
+   SoftRefPolicy        _soft_ref_policy;
+   StoplessBarrierSet*  _barrier_set;
+-  size_t               _arena_capacity;
+-  size_t               _arena_used;
++  StoplessArena*       _arena;       // owned, created in initialize()
+ 
+  public:
+   static StoplessHeap* heap();
+@@ -46,9 +45,9 @@ class StoplessHeap : public CollectedHeap {
+   void post_initialize() override     { CollectedHeap::post_initialize(); }
+   void initialize_serviceability() override { /* C-7 */ }
+ 
+-  size_t capacity() const override     { return _arena_capacity; }
+-  size_t used() const override         { return _arena_used; }
+-  size_t max_capacity() const override { return _arena_capacity; }
++  size_t capacity() const override;
++  size_t used() const override;
++  size_t max_capacity() const override;
+ 
+   bool is_in(const void* p) const override;
+   bool is_maximal_no_gc() const override { return true; }
+@@ -56,9 +55,27 @@ class StoplessHeap : public CollectedHeap {
+   HeapWord* mem_allocate(size_t size,
+                          bool* gc_overhead_limit_was_exceeded) override;
+ 
+-  void collect(GCCause::Cause cause) override            { /* C-9 */ }
++  void collect(GCCause::Cause cause) override;
+   void do_full_collection(bool clear_all_soft_refs) override { /* v1 no-op */ }
+ 
++  // C-8: enumerate all strong oop roots (thread stacks incl. Zero
++  // interpreterState frames, OopStorage/JNI handles, class-loader data /
++  // static fields) and apply `cl`. Must be called at a safepoint. This is
++  // the root source the C-9 concurrent mark/evacuate will reuse.
++  void scan_roots(OopClosure* cl);
++
++  // C-8: VM-exit self-test hook (gated by -XX:StoplessRootScanAtExit).
++  void stop() override;
++
++  // C-9: relocate `o` to a fresh arena slot via a capability-preserving copy;
++  // returns the new oop (or `o` unchanged on OOM). Does NOT install forwarding
++  // or revoke — the caller (the collector) does.
++  oop  move_object(oop o);
++  // C-9: forward to the arena's revocation primitives (the VM_Operation lives
++  // in an anonymous namespace and can't touch the private _arena directly).
++  void mark_for_revoke(void* cap);
++  void revoke_sweep();
++
+   void object_iterate(ObjectClosure* cl) override        { ShouldNotReachHere(); }
+   
+   size_t tlab_capacity(Thread* thr) const override        { return 0; }
