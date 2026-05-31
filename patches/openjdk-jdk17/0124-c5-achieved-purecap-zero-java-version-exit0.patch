@@ -1,0 +1,165 @@
+Subject: [PATCH] C-5 ACHIEVED: purecap Zero `java -version` exits 0
+
+Final two fixes after which `java -version` completes (exit 0) on the
+CHERI Morello purecap Zero VM:
+
+- share/utilities/concurrentHashTable.hpp: Bucket::set_state embeds the
+  lock/redirect state in a Node*'s low 2 bits via `(Node*)(bits | (uintptr_t)n)`.
+  On CHERI uintptr_t is __uintcap_t and `a | b` takes provenance from the LHS,
+  so the result inherited `bits`' (tag-0 integer) provenance and the stored
+  Node* lost its tag -> SymbolTable's first()/delete_in_bucket dereferenced a
+  tag-0 Node and SIGPROT'd while loading java.util.ImmutableCollections. Put
+  the capability on the left: `(uintptr_t)n | bits` (OR is commutative; identical
+  on LP64).
+- os_cpu/bsd_zero/atomic_bsd_zero.hpp: PlatformCmpxchg<1> was
+  CmpxchgByteUsingInt, which reads the enclosing 4-byte int. A capability to a
+  1-byte global (OopStorage::needs_cleanup_requested, a volatile bool) has
+  1-byte bounds, so the widened int read exceeds the cap bounds and SIGPROT'd
+  on the ServiceThread. Use a native 1-byte __atomic_compare_exchange on CHERI.
+
+RESULT:
+  $ java -XX:+UseEpsilonGC -XX:-UseCompressedOops -XX:-UseCompressedClassPointers -version
+  openjdk version "17.0.13-internal" 2024-10-15
+  OpenJDK 64-Bit Zero VM (... interpreted mode)
+  exit=0
+
+This closes C-5 (java -version exit 0) on the Zero route — the first purecap
+OpenJDK that boots and runs to completion in this project. (A non-fatal
+"[21.9s] Attempt to allocate stack guard pages failed" prints during teardown;
+exit is still 0.) The full purecap Zero is ~12 small fixes (libffi staging +
+16-byte & 1-byte atomics + ZeroStack/istate element-size + sharedRuntime empty
+blobs + javaCalls/init/thread ZERO guards + a ConcurrentHashTable provenance
+fix), vs the 60+ layer template-interpreter cascade it bypasses.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/os_cpu/bsd_zero/atomic_bsd_zero.hpp b/src/hotspot/os_cpu/bsd_zero/atomic_bsd_zero.hpp
+index b9ee395bc30..9e76fab90b2 100644
+--- a/src/hotspot/os_cpu/bsd_zero/atomic_bsd_zero.hpp
++++ b/src/hotspot/os_cpu/bsd_zero/atomic_bsd_zero.hpp
+@@ -203,6 +203,21 @@ inline D Atomic::PlatformAdd<8>::add_and_fetch(D volatile* dest, I add_value,
+   return res;
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: cap-sized (16-byte) atomic add — e.g. an atomically bumped
++// pointer/counter declared as intptr_t/__uintcap_t. clang's __atomic_add_fetch
++// on a capability adds to its address while preserving tag/bounds.
++template<>
++template<typename D, typename I>
++inline D Atomic::PlatformAdd<16>::add_and_fetch(D volatile* dest, I add_value,
++                                                atomic_memory_order order) const {
++  STATIC_ASSERT(16 == sizeof(D));
++  D res = __atomic_add_fetch(dest, add_value, __ATOMIC_RELEASE);
++  FULL_MEM_BARRIER;
++  return res;
++}
++#endif // __CHERI_PURE_CAPABILITY__
++
+ template<>
+ template<typename T>
+ inline T Atomic::PlatformXchg<4>::operator()(T volatile* dest,
+@@ -243,8 +258,29 @@ inline T Atomic::PlatformXchg<8>::operator()(T volatile* dest,
+ }
+ 
+ // No direct support for cmpxchg of bytes; emulate using int.
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI: CmpxchgByteUsingInt reads the enclosing 4-byte int, but a capability
++// to a 1-byte global (e.g. the volatile bool OopStorage::needs_cleanup_requested)
++// has 1-byte bounds, so the widened int access exceeds the cap bounds and
++// SIGPROTs. Use a native 1-byte atomic (Morello has byte-granular CAS).
++template<>
++template<typename T>
++inline T Atomic::PlatformCmpxchg<1>::operator()(T volatile* dest,
++                                                T compare_value,
++                                                T exchange_value,
++                                                atomic_memory_order order) const {
++  STATIC_ASSERT(1 == sizeof(T));
++  T value = compare_value;
++  FULL_MEM_BARRIER;
++  __atomic_compare_exchange(dest, &value, &exchange_value, /*weak*/false,
++                            __ATOMIC_RELAXED, __ATOMIC_RELAXED);
++  FULL_MEM_BARRIER;
++  return value;
++}
++#else
+ template<>
+ struct Atomic::PlatformCmpxchg<1> : Atomic::CmpxchgByteUsingInt {};
++#endif
+ 
+ template<>
+ template<typename T>
+@@ -302,4 +338,55 @@ inline void Atomic::PlatformStore<8>::operator()(T volatile* dest,
+   os::atomic_copy64(reinterpret_cast<const volatile int64_t*>(&store_value), reinterpret_cast<volatile int64_t*>(dest));
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: oop / Klass* are 16-byte capabilities, so the GC needs
++// cap-sized (16-byte) atomics. Zero's per-size specializations stop at 8;
++// add the 16-byte forms. clang lowers __atomic_* on a 16-byte capability
++// type to the Morello capability atomic instructions, preserving the tag.
++template<>
++template<typename T>
++inline T Atomic::PlatformCmpxchg<16>::operator()(T volatile* dest,
++                                                 T compare_value,
++                                                 T exchange_value,
++                                                 atomic_memory_order order) const {
++  STATIC_ASSERT(16 == sizeof(T));
++  T value = compare_value;
++  FULL_MEM_BARRIER;
++  __atomic_compare_exchange(dest, &value, &exchange_value, /*weak*/false,
++                            __ATOMIC_RELAXED, __ATOMIC_RELAXED);
++  FULL_MEM_BARRIER;
++  return value;
++}
++
++template<>
++template<typename T>
++inline T Atomic::PlatformXchg<16>::operator()(T volatile* dest,
++                                              T exchange_value,
++                                              atomic_memory_order order) const {
++  STATIC_ASSERT(16 == sizeof(T));
++  T result;
++  FULL_MEM_BARRIER;
++  __atomic_exchange(dest, &exchange_value, &result, __ATOMIC_RELAXED);
++  FULL_MEM_BARRIER;
++  return result;
++}
++
++template<>
++template<typename T>
++inline T Atomic::PlatformLoad<16>::operator()(T const volatile* src) const {
++  STATIC_ASSERT(16 == sizeof(T));
++  T value;
++  __atomic_load(const_cast<T*>(src), &value, __ATOMIC_RELAXED);
++  return value;
++}
++
++template<>
++template<typename T>
++inline void Atomic::PlatformStore<16>::operator()(T volatile* dest,
++                                                  T store_value) const {
++  STATIC_ASSERT(16 == sizeof(T));
++  __atomic_store(dest, &store_value, __ATOMIC_RELAXED);
++}
++#endif // __CHERI_PURE_CAPABILITY__
++
+ #endif // OS_CPU_BSD_ZERO_ATOMIC_BSD_ZERO_HPP
+diff --git a/src/hotspot/share/utilities/concurrentHashTable.hpp b/src/hotspot/share/utilities/concurrentHashTable.hpp
+index a94d3ed9ac8..3973d394768 100644
+--- a/src/hotspot/share/utilities/concurrentHashTable.hpp
++++ b/src/hotspot/share/utilities/concurrentHashTable.hpp
+@@ -104,7 +104,12 @@ class ConcurrentHashTable : public CHeapObj<F> {
+     }
+ 
+     static Node* set_state(Node* n, uintptr_t bits) {
+-      return (Node*)(bits | (uintptr_t)n);
++      // CHERI: uintptr_t is __uintcap_t. In `a | b` provenance is inherited
++      // from the LHS, so the capability (uintptr_t)n must be on the left —
++      // otherwise the result takes `bits`' (tag-0 integer) provenance and the
++      // stored Node* loses its tag, faulting on the next deref. OR is
++      // commutative, so this is identical on LP64.
++      return (Node*)((uintptr_t)n | bits);
+     }
+ 
+     static uintptr_t get_state(Node* node) {
