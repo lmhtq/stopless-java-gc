@@ -34,6 +34,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdio.h>
 
 static inline uintptr_t
 align_up_repr(uintptr_t off, size_t rounded_size)
@@ -77,6 +78,8 @@ stopless_alloc(void *arena_, size_t size_bytes)
     char *obj = (char *)a->base + aligned_off;
     obj = (char *)cheri_bounds_set(obj, size_bytes);
     obj = (char *)cheri_perms_and(obj, ~CHERI_PERM_SW_VMEM);
+    /* C-7: per-allocation tracing removed — it flooded stderr and made the
+       interpreter crawl during class loading. */
     return obj;
 }
 

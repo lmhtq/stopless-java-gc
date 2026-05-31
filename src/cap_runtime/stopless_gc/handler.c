@@ -37,30 +37,46 @@ unsigned long long stopless_handler_self_heals = 0;
 
 static struct sigaction prev_sa;
 
+/* C-6 L38: HotSpot's SafeFetch probes (os::is_readable_pointer etc.)
+   deliberately load through a possibly-bad pointer and rely on the signal
+   handler to redirect the PC to a continuation that returns a default.
+   The stock handle_safefetch only recognises SIGSEGV/SIGBUS, but on CHERI
+   the bad load faults with SIGPROT (PROT_CHERI_TAG/BOUNDS). These labels
+   are defined in libjvm.so's safefetch_bsd_aarch64.S; cap_runtime is
+   linked into the same DSO so the references resolve at link time. */
+/* C-7: weak so this same .a links into BOTH the template-interpreter libjvm
+   (where safefetch_bsd_aarch64.S defines them) and the Zero libjvm (os_cpu/
+   bsd_zero has no such stub — the symbols stay NULL, the redirect is skipped,
+   and Zero does SafeFetch in C++). */
+extern char _SafeFetch32_fault[] __attribute__((weak));
+extern char _SafeFetch32_continuation[] __attribute__((weak));
+extern char _SafeFetchN_fault[] __attribute__((weak));
+extern char _SafeFetchN_continuation[] __attribute__((weak));
+
 static void
 sigprot_handler(int sig, siginfo_t *si, void *ctx_)
 {
     ucontext_t *ctx = (ucontext_t *)ctx_;
 
-    /* C-6 L32 diag: unconditionally report the first few faults with PC,
-       then abort — so we can locate a deeper unforwarded fault without
-       the handler looping (retry-without-advance) forever. */
+    /* C-6 L38: SafeFetch redirect FIRST (before any diag/abort) — these
+       faults are expected and frequent. If the faulting PC is a SafeFetch
+       load, advance PCC to the matching continuation (which returns the
+       caller-supplied default) and resume. Preserve PCC bounds/tag via
+       cheri_address_set. */
     {
-        static int diag_count = 0;
-        unsigned long pc = (unsigned long)ctx->uc_mcontext.mc_capregs.cap_elr;
-        fprintf(stderr, "[stopless DIAG] SIGPROT #%d pc=0x%lx si_code=%d si_addr=%p\n",
-                diag_count, pc, si->si_code, si->si_addr);
-        fflush(stderr);
-        if (++diag_count >= 3) {
-            fprintf(stderr, "[stopless DIAG] 3rd fault — aborting to avoid loop\n");
-            fflush(stderr);
-            signal(sig, SIG_DFL);
-            /* abort via default action on the SAME signal */
-            struct sigaction da; memset(&da, 0, sizeof(da));
-            da.sa_handler = SIG_DFL; sigemptyset(&da.sa_mask);
-            sigaction(sig, &da, NULL);
-            raise(sig);
-            _exit(42);
+        __uintcap_t elr = (__uintcap_t)ctx->uc_mcontext.mc_capregs.cap_elr;
+        uintptr_t pc = (uintptr_t)cheri_address_get((void *)elr);
+        if (_SafeFetch32_fault != NULL && pc == (uintptr_t)(void *)_SafeFetch32_fault) {
+            void *cont = cheri_address_set((void *)elr,
+                            (uintptr_t)(void *)_SafeFetch32_continuation);
+            ctx->uc_mcontext.mc_capregs.cap_elr = (__uintcap_t)cont;
+            return;
+        }
+        if (_SafeFetchN_fault != NULL && pc == (uintptr_t)(void *)_SafeFetchN_fault) {
+            void *cont = cheri_address_set((void *)elr,
+                            (uintptr_t)(void *)_SafeFetchN_continuation);
+            ctx->uc_mcontext.mc_capregs.cap_elr = (__uintcap_t)cont;
+            return;
         }
     }
 
