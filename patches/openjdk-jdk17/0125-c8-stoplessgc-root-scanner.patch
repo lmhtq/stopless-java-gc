@@ -1,0 +1,320 @@
+Subject: [PATCH] C-8: StoplessGC root scanner (Threads/OopStorage/CLDG) on Zero
+
+Implements StoplessHeap::scan_roots(OopClosure*) — the strong-root source the
+C-9 concurrent mark/evacuate will reuse — using the standard HotSpot machinery:
+  - Threads::oops_do  (thread stacks; on Zero these are the ZeroStack
+    interpreterState frames + each thread's handles)
+  - OopStorageSet::strong_oops_do  (JNI globals, VM-internal handles)
+  - ClassLoaderDataGraph::cld_do via CLDToOopClosure  (class-loader oops +
+    class mirrors / static fields)
+Must run at a safepoint (asserted).
+
+Wired through StoplessHeap::collect() which runs a VM_StoplessRootScan
+VM_Operation (new VMOp_StoplessRootScan type) at a safepoint. A self-test hook
+in StoplessHeap::stop() (reached at before_exit, gated by the env var
+STOPLESS_ROOTSCAN_AT_EXIT — the GC_STOPLESS_FLAGS macro isn't wired into the JVM
+flag table yet) runs one scan with a counting/validating closure.
+
+RESULT on purecap Zero:
+  STOPLESS_ROOTSCAN_AT_EXIT=1 java -XX:+UseStoplessGC ... -version
+  [Stopless] C-8 root scan: 736 non-null roots, 32 null slots, 0 bad(tag-0)
+  exit=0
+i.e. the root machinery — including Zero frame walking and the safepoint VM-op
+path — works on purecap; all 736 roots are valid tagged capabilities (0 tag-0).
+C-8 done; unblocks the C-9 mark phase.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+index 069115be038..ee5e7dd21e2 100644
+--- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
+@@ -7,11 +7,23 @@
+ #include "precompiled.hpp"
+ #include "gc/stopless/stoplessHeap.hpp"
+ #include "gc/stopless/stoplessBarrierSet.hpp"
++#include "gc/stopless/stoplessArena.hpp"
+ #include "gc/shared/gcArguments.hpp"
++#include "logging/log.hpp"
+ #include "memory/universe.hpp"
+ #include "runtime/globals.hpp"
+ #include "gc/shared/gc_globals.hpp"
+ #include "gc/shared/tlab_globals.hpp"
++#include "gc/shared/oopStorageSet.hpp"
++#include "gc/shared/oopStorageSet.inline.hpp"
++#include "classfile/classLoaderDataGraph.hpp"
++#include "memory/iterator.inline.hpp"
++#include "oops/access.inline.hpp"
++#include "oops/oop.inline.hpp"
++#include "runtime/safepoint.hpp"
++#include "runtime/thread.hpp"
++#include "runtime/vmThread.hpp"
++#include "runtime/vmOperations.hpp"
+ #include "utilities/ostream.hpp"
+ 
+ StoplessHeap* StoplessHeap::heap() {
+@@ -24,22 +36,32 @@ StoplessHeap* StoplessHeap::heap() {
+ StoplessHeap::StoplessHeap()
+   : _soft_ref_policy(),
+     _barrier_set(nullptr),
+-    _arena_capacity(0),
+-    _arena_used(0) {
++    _arena(nullptr) {
+ }
+ 
++extern "C" int stopless_handler_install(void);
++
+ jint StoplessHeap::initialize() {
++  // C-7 partial: install SIGPROT handler EARLY so cap violations
++  // produce a diagnostic instead of a silent kernel-kill SIGPROT.
++  if (stopless_handler_install() != 0) {
++    fprintf(stderr, "[Stopless] WARN: stopless_handler_install failed\n");
++    fflush(stderr);
++  } else {
++    fprintf(stderr, "[Stopless] SIGPROT handler installed\n");
++    fflush(stderr);
++  }
+   // v1: no TLAB. Java alloc goes straight through mem_allocate.
+   UseTLAB = false;
+-  // Phase C-3 will mmap the actual arena via cap_runtime/stopless_arena_init.
+-  // For C-1 we just record the requested sizes so the JVM proceeds.
+-  size_t min_byte_size = MAX2(MinHeapSize, (size_t)4 * M);
+-  size_t max_byte_size = MAX2(MaxHeapSize, min_byte_size);
+-  _arena_capacity = max_byte_size;
+-  _arena_used     = 0;
++  // Floor 4 MiB to avoid degenerate small heaps.
++  size_t max_byte_size = MAX2(MaxHeapSize, (size_t)4 * M);
++
++  // Allocate the real CHERI-backed arena via cap_runtime. Aborts the
++  // VM (vm_exit_during_initialization) on mmap/shadow failure.
++  _arena = new StoplessArena(max_byte_size);
+ 
+   // Install our (NOP) barrier set so BarrierSet::barrier_set() returns
+-  // something non-null. Real read/write barriers are no-ops in C-1
++  // something non-null. Real read/write barriers are no-ops in v1
+   // because the CHERI cap-tag check IS the barrier.
+   _barrier_set = new StoplessBarrierSet();
+   BarrierSet::set_barrier_set(_barrier_set);
+@@ -48,28 +70,136 @@ jint StoplessHeap::initialize() {
+ }
+ 
+ bool StoplessHeap::is_in(const void* p) const {
+-  // v1: arena not yet allocated. C-3 will replace this.
+-  (void)p;
+-  return false;
++  return _arena != nullptr && _arena->contains(p);
+ }
+ 
+ HeapWord* StoplessHeap::mem_allocate(size_t size,
+                                      bool* gc_overhead_limit_was_exceeded) {
+-  // C-4 fills in. For C-1 we return nullptr so the caller raises OOM
+-  // gracefully rather than crashing — useful when running -version
+-  // without ever needing to actually allocate.
+-  (void)size;
+   if (gc_overhead_limit_was_exceeded != nullptr) {
+     *gc_overhead_limit_was_exceeded = false;
+   }
+-  return nullptr;
++  if (_arena == nullptr) return nullptr;
++
++  // `size` is in HeapWords. On CHERI purecap HeapWordSize=16 (patch
++  // 0060). Convert to bytes for the bump allocator.
++  size_t bytes = size * HeapWordSize;
++  void*  p     = _arena->allocate(bytes);
++
++  if (p == nullptr) {
++    // OOM. C-9 will trigger a concurrent collection here and retry.
++    // v1: just propagate OOM upward.
++    log_warning(gc)("StoplessHeap: alloc(%zu bytes) returned nullptr "
++                    "(used=%zuK / cap=%zuK)",
++                    bytes,
++                    _arena->used() / K,
++                    _arena->capacity() / K);
++    return nullptr;
++  }
++  return (HeapWord*)p;
++}
++
++size_t StoplessHeap::capacity() const {
++  return _arena != nullptr ? _arena->capacity() : 0;
++}
++
++size_t StoplessHeap::used() const {
++  return _arena != nullptr ? _arena->used() : 0;
++}
++
++size_t StoplessHeap::max_capacity() const {
++  return _arena != nullptr ? _arena->capacity() : 0;
+ }
+ 
+ void StoplessHeap::print_on(outputStream* st) const {
+-  st->print_cr("Stopless Heap (CHERI-accelerated, Phase C-1 skeleton)");
+-  st->print_cr("  capacity %zuK, used %zuK",
+-               _arena_capacity / K, _arena_used / K);
++  st->print_cr("Stopless Heap (CHERI-accelerated)");
++  if (_arena != nullptr) {
++    _arena->print_on(st);
++  } else {
++    st->print_cr("  <arena not initialized>");
++  }
+   if (_barrier_set != nullptr) {
+     _barrier_set->print_on(st);
+   }
+ }
++
++// ---- C-8: root scanner -------------------------------------------------
++
++namespace {
++
++// Counts (and on purecap, validates the cap tag of) every strong oop root.
++// Non-moving: this is the self-test / the closure C-9's mark will replace
++// with a marking-and-forwarding closure.
++class StoplessCountRootsClosure : public OopClosure {
++ public:
++  size_t _nonnull;
++  size_t _null;
++  size_t _bad;     // purecap: non-null root whose cap tag is 0 (corrupt)
++  StoplessCountRootsClosure() : _nonnull(0), _null(0), _bad(0) {}
++
++  virtual void do_oop(oop* p) {
++    oop o = RawAccess<>::oop_load(p);
++    if (o == nullptr) { _null++; return; }
++    _nonnull++;
++#ifdef __CHERI_PURE_CAPABILITY__
++    void* cp = (void*)(oopDesc*)o;
++    if (!__builtin_cheri_tag_get(cp)) { _bad++; }
++#endif
++  }
++  // purecap runs with -UseCompressedOops; narrow oops are not used as roots.
++  virtual void do_oop(narrowOop* p) {}
++};
++
++// Runs the root scan at a safepoint (all mutators stopped) — the correctness
++// precondition for walking thread stacks.
++class VM_StoplessRootScan : public VM_Operation {
++  StoplessHeap* _heap;
++ public:
++  VM_StoplessRootScan(StoplessHeap* h) : _heap(h) {}
++  VMOp_Type type() const override { return VMOp_StoplessRootScan; }
++  void doit() override {
++    StoplessCountRootsClosure cl;
++    _heap->scan_roots(&cl);
++    fprintf(stderr,
++            "[Stopless] C-8 root scan: %zu non-null roots, %zu null slots, "
++            "%zu bad(tag-0)\n", cl._nonnull, cl._null, cl._bad);
++    fflush(stderr);
++    log_info(gc)("Stopless C-8 root scan: %zu roots, %zu null, %zu bad",
++                 cl._nonnull, cl._null, cl._bad);
++  }
++};
++
++} // anonymous namespace
++
++void StoplessHeap::scan_roots(OopClosure* cl) {
++  assert(SafepointSynchronize::is_at_safepoint(),
++         "StoplessHeap::scan_roots must run at a safepoint");
++  // Thread stacks (on Zero, the ZeroStack interpreterState frames) plus each
++  // thread's handles/local oops.
++  Threads::oops_do(cl, nullptr);
++  // Strong OopStorage roots: JNI global handles, VM-internal handles, etc.
++  OopStorageSet::strong_oops_do(cl);
++  // Class-loader data: class-loader oops and class mirrors (which carry the
++  // static reference fields).
++  CLDToOopClosure cld_cl(cl, ClassLoaderData::_claim_none);
++  ClassLoaderDataGraph::cld_do(&cld_cl);
++}
++
++void StoplessHeap::collect(GCCause::Cause cause) {
++  // C-8: no evacuation yet (C-9). For now a collect request just runs the
++  // root-scan self-test at a safepoint, exercising the C-9 mark root source.
++  VM_StoplessRootScan op(this);
++  VMThread::execute(&op);
++}
++
++void StoplessHeap::stop() {
++  // C-8 self-test: -version reaches before_exit -> CollectedHeap::stop().
++  // Gated by an env var (the GC_STOPLESS_FLAGS macro isn't wired into the JVM
++  // flag table yet, so we avoid a JVM flag here). With STOPLESS_ROOTSCAN_AT_EXIT
++  // set, run one safepoint root scan to verify the root machinery (esp. Zero
++  // frame walking) works on purecap.
++  if (::getenv("STOPLESS_ROOTSCAN_AT_EXIT") != nullptr) {
++    fprintf(stderr, "[Stopless] C-8 root-scan self-test at VM exit...\n");
++    fflush(stderr);
++    collect(GCCause::_java_lang_system_gc);
++  }
++}
+diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.hpp b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
+index 324b638739c..6604228187a 100644
+--- a/src/hotspot/share/gc/stopless/stoplessHeap.hpp
++++ b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
+@@ -15,20 +15,19 @@
+ #include "utilities/growableArray.hpp"
+ 
+ class StoplessBarrierSet;
++class StoplessArena;
+ 
+ // The Stopless heap is a single contiguous arena of CHERI-tagged
+-// memory. v1 has no allocator (C-4 adds bump-pointer) and no collector
+-// (C-9 adds the concurrent mover). This skeleton exists so the GC
+-// machinery can be configured at JVM launch with -XX:+UseStoplessGC
+-// and the JVM proceeds far enough to test the wire-up.
++// memory. v1 has no collector (C-9 adds the concurrent mover). The
++// arena itself (C-3) plus bump-pointer allocator (C-4) is wired up;
++// mem_allocate produces real CHERI-bounded caps.
+ 
+ class StoplessHeap : public CollectedHeap {
+   friend class VMStructs;
+  private:
+   SoftRefPolicy        _soft_ref_policy;
+   StoplessBarrierSet*  _barrier_set;
+-  size_t               _arena_capacity;
+-  size_t               _arena_used;
++  StoplessArena*       _arena;       // owned, created in initialize()
+ 
+  public:
+   static StoplessHeap* heap();
+@@ -46,9 +45,9 @@ class StoplessHeap : public CollectedHeap {
+   void post_initialize() override     { CollectedHeap::post_initialize(); }
+   void initialize_serviceability() override { /* C-7 */ }
+ 
+-  size_t capacity() const override     { return _arena_capacity; }
+-  size_t used() const override         { return _arena_used; }
+-  size_t max_capacity() const override { return _arena_capacity; }
++  size_t capacity() const override;
++  size_t used() const override;
++  size_t max_capacity() const override;
+ 
+   bool is_in(const void* p) const override;
+   bool is_maximal_no_gc() const override { return true; }
+@@ -56,9 +55,18 @@ class StoplessHeap : public CollectedHeap {
+   HeapWord* mem_allocate(size_t size,
+                          bool* gc_overhead_limit_was_exceeded) override;
+ 
+-  void collect(GCCause::Cause cause) override            { /* C-9 */ }
++  void collect(GCCause::Cause cause) override;
+   void do_full_collection(bool clear_all_soft_refs) override { /* v1 no-op */ }
+ 
++  // C-8: enumerate all strong oop roots (thread stacks incl. Zero
++  // interpreterState frames, OopStorage/JNI handles, class-loader data /
++  // static fields) and apply `cl`. Must be called at a safepoint. This is
++  // the root source the C-9 concurrent mark/evacuate will reuse.
++  void scan_roots(OopClosure* cl);
++
++  // C-8: VM-exit self-test hook (gated by -XX:StoplessRootScanAtExit).
++  void stop() override;
++
+   void object_iterate(ObjectClosure* cl) override        { ShouldNotReachHere(); }
+   
+   size_t tlab_capacity(Thread* thr) const override        { return 0; }
+diff --git a/src/hotspot/share/runtime/vmOperation.hpp b/src/hotspot/share/runtime/vmOperation.hpp
+index d331a0a0539..128d0462bb7 100644
+--- a/src/hotspot/share/runtime/vmOperation.hpp
++++ b/src/hotspot/share/runtime/vmOperation.hpp
+@@ -66,6 +66,7 @@
+   template(ZMarkEnd)                              \
+   template(ZRelocateStart)                        \
+   template(ZVerify)                               \
++  template(StoplessRootScan)                      \
+   template(HandshakeOneThread)                    \
+   template(HandshakeAllThreads)                   \
+   template(HandshakeFallback)                     \
