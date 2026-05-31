@@ -16,4 +16,89 @@ interpreter-frame local slot addressing at a native-call safepoint and/or the
 register-only self-heal not advancing. Needs live gdb single-stepping.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
-
+diff --git a/src/cap_runtime/stopless_gc/handler.c b/src/cap_runtime/stopless_gc/handler.c
+index 05fbc10..7bd637e 100644
+--- a/src/cap_runtime/stopless_gc/handler.c
++++ b/src/cap_runtime/stopless_gc/handler.c
+@@ -99,39 +99,58 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
+         return;
+     }
+ 
+-    /* On CHERI, si_addr = faulting PC, not the cap value. To find
+-       which cap faulted, scan the cap register file for a tag-zero
+-       cap whose address is in our forwarding table. */
++    /* On CHERI, si_addr = faulting PC, not the cap value. */
+     struct capregs *cregs = &ctx->uc_mcontext.mc_capregs;
+     uintptr_t fault_addr = 0;
+     void *new_cap = NULL;
+     int faulting_reg = -1;
+-    for (int i = 0; i < 30; i++) {
+-        __uintcap_t c = cregs->cap_x[i];
+-        if (cheri_tag_get((void *)c)) continue;  /* not the culprit */
+-        uintptr_t addr = (uintptr_t)cheri_address_get((void *)c);
+-        void *fwd = forward_table_lookup(addr);
+-        if (fwd == NULL && g_evacuate_cb != NULL) {
+-            /* C-9/C-10: not yet forwarded — assist by evacuating now. The cb
+-               copies the object + cas_inserts the forwarding (one winner) and
+-               returns the authoritative new cap, or NULL if addr isn't a live
+-               GC object (then this is a genuine fault, handled below). */
+-            fwd = g_evacuate_cb(addr);
+-            if (fwd != NULL) stopless_handler_assists++;
+-        }
+-        if (fwd != NULL) {
+-            new_cap = fwd;
+-            fault_addr = addr;
+-            faulting_reg = i;
+-            break;
++
++    /* Local helper: given a candidate base register index, if it holds a
++       tag-zero cap whose address forwards (or can be evacuated), record it. */
++#define STOPLESS_TRY_REG(i) do {                                              \
++        int _i = (i);                                                         \
++        if (new_cap == NULL && _i >= 0 && _i < 30) {                          \
++            __uintcap_t _c = cregs->cap_x[_i];                                \
++            if (!cheri_tag_get((void *)_c)) {                                 \
++                uintptr_t _a = (uintptr_t)cheri_address_get((void *)_c);      \
++                void *_fwd = forward_table_lookup(_a);                        \
++                if (_fwd == NULL && g_evacuate_cb != NULL) {                  \
++                    _fwd = g_evacuate_cb(_a);                                 \
++                    if (_fwd != NULL) stopless_handler_assists++;             \
++                }                                                             \
++                if (_fwd != NULL) { new_cap = _fwd; fault_addr = _a; faulting_reg = _i; } \
++            }                                                                 \
++        }                                                                     \
++    } while (0)
++
++    /* V2: decode the faulting load/store to find the EXACT base register,
++       instead of guessing "first tag-zero reg that forwards". After a revoke
++       sweep many registers hold tag-zero caps, and a wrong guess overwrites a
++       live Method or istate cap -> interpreter state corruption (the C-9 spin).
++       AArch64/Morello LDR/STR/LDP/STP encode the base register Rn in bits
++       [9:5]; the dereferenced capability lives there. PCC (cap_elr) is
++       readable, so we can fetch the instruction word. */
++    {
++        __uintcap_t elr = (__uintcap_t)cregs->cap_elr;
++        uint32_t insn = *(volatile uint32_t *)elr;
++        unsigned rn = (insn >> 5) & 0x1f;     /* base register field */
++        STOPLESS_TRY_REG((int)rn);
++    }
++
++    /* Fallback (old V1 behaviour): if the decoded base didn't forward, scan
++       the whole cap register file for the first tag-zero forwardable cap. */
++    if (new_cap == NULL) {
++        for (int i = 0; i < 30; i++) {
++            STOPLESS_TRY_REG(i);
++            if (new_cap != NULL) break;
+         }
+     }
+     if (new_cap == NULL) {
+-        /* No matching cap in register file. Last-resort: try si_addr
+-           interpreted as cap address (in case kernel ever changes). */
++        /* Last-resort: try si_addr interpreted as cap address. */
+         new_cap = forward_table_lookup((uintptr_t)si->si_addr);
+         fault_addr = (uintptr_t)si->si_addr;
+     }
++#undef STOPLESS_TRY_REG
+ 
+     if (new_cap == NULL) {
+         unsigned long pc = (unsigned long)ctx->uc_mcontext.mc_capregs.cap_elr;
