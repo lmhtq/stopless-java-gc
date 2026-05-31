@@ -1,0 +1,188 @@
+Subject: [PATCH] C-6 Zero: boot through VM init + run interpreter into bootstrap class loading
+
+Builds on patch 0122 (purecap Zero enablement). Four fixes take the Zero VM
+from "undefined symbols at dlopen" all the way through VM init and into the
+C++ bytecode interpreter executing real bootstrap-class <clinit>s
+(java.lang.String, java.util.Objects, ... loading java.util.ImmutableCollections).
+
+- cpu/zero/sharedRuntime_zero.cpp: generate_empty_{runtime_stub,safepoint_blob,
+  deopt_blob} returned CAST_FROM_FN_PTR(*, zero_stub) — a sealed, execute-only
+  function sentry. SharedRuntime::generate_stubs immediately does
+  _resolve_static_call_blob->entry_point(), and dereferencing a sealed/XO cap
+  SIGPROTs on CHERI. Back these never-invoked empty blobs with a readable
+  zero-filled data buffer instead (CHERI only).
+- share/runtime/javaCalls.cpp: the call_stub C64-mode bit0 munging (fix #10/#17)
+  is template-interpreter-specific; guard it with !defined(ZERO) so Zero uses
+  the plain call_stub path (the bit0|1 was making the zero call_stub cap
+  invalid -> "(invalid,sentry)" -> SIGPROT entering the interpreter).
+- cpu/zero/stack_zero.hpp: ZeroStack::setup computed _top = _base + (size >>
+  LogBytesPerWord) and alloc used the same >>LogBytesPerWord. _base is intptr_t*
+  and intptr_t is a 16-byte capability on purecap, so pointer arithmetic strides
+  by 16 while >>LogBytesPerWord divides by 8 -> _top at mem+2*size (OOB) and
+  the first ZeroStack::push SIGPROTs. Use / sizeof(intptr_t) (== stock /8 on LP64).
+- cpu/zero/interpreterFrame_zero.hpp: istate_off used the same >>LogBytesPerWord;
+  with the stack now in 16-byte element units, interpreter_state() located the
+  istate at 2x the distance build() alloc'd it -> garbage istate->_msg -> fatal
+  "Unexpected message from frame manager". Use / sizeof(intptr_t) to match.
+
+RESULT: java -version (Zero, EpsilonGC, -UseCompressed{Oops,ClassPointers}) now
+runs the interpreter and loads bootstrap classes (String, Objects, ...). Next
+fault: a SIGPROT during ClassFileParser of java.util.ImmutableCollections.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/cpu/zero/interpreterFrame_zero.hpp b/src/hotspot/cpu/zero/interpreterFrame_zero.hpp
+index a8066080d54..334cc18f7fb 100644
+--- a/src/hotspot/cpu/zero/interpreterFrame_zero.hpp
++++ b/src/hotspot/cpu/zero/interpreterFrame_zero.hpp
+@@ -56,9 +56,17 @@ class InterpreterFrame : public ZeroFrame {
+ 
+  protected:
+   enum Layout {
++    // CHERI purecap: istate is alloc'd as align_up(sizeof, wordSize) bytes on a
++    // ZeroStack of intptr_t (16-byte) elements, so the offset must be in those
++    // element units (/ sizeof(intptr_t)), NOT >> LogBytesPerWord (the 8-byte
++    // Java-word log). With >> LogBytesPerWord interpreter_state() locates istate
++    // at 2x the distance from where build() alloc'd it -> reads a garbage _msg
++    // -> "Unexpected message from frame manager". This matches the element
++    // accounting in ZeroStack::alloc/setup. (On LP64 sizeof(intptr_t)==8, so
++    // this is identical to the stock >> LogBytesPerWord.)
+     istate_off = jf_header_words +
+       (align_up(sizeof(BytecodeInterpreter),
+-                wordSize) >> LogBytesPerWord) - 1,
++                wordSize) / (int)sizeof(intptr_t)) - 1,
+     header_words
+   };
+ 
+diff --git a/src/hotspot/cpu/zero/sharedRuntime_zero.cpp b/src/hotspot/cpu/zero/sharedRuntime_zero.cpp
+index f2b90c3a627..002caa391d4 100644
+--- a/src/hotspot/cpu/zero/sharedRuntime_zero.cpp
++++ b/src/hotspot/cpu/zero/sharedRuntime_zero.cpp
+@@ -93,6 +93,27 @@ JRT_LEAF(void, zero_stub())
+   ShouldNotCallThis();
+ JRT_END
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// CHERI purecap: zero_stub is a SEALED, execute-only function sentry. Casting
++// it to a *Blob* and then dereferencing it (SharedRuntime::generate_stubs does
++// _resolve_static_call_blob->entry_point()) faults SIGPROT — a sealed/XO
++// capability cannot be read as data. These "empty" blobs are never invoked
++// under pure interpretation, so back them with a readable, zero-filled data
++// buffer; the setup-time header reads (entry_point() etc.) then return harmless
++// values instead of dereferencing a sentry.
++alignas(16) static char zero_blob_placeholder[512] = {0};
++static RuntimeStub* generate_empty_runtime_stub(const char* name) {
++  return (RuntimeStub*)(void*)zero_blob_placeholder;
++}
++
++static SafepointBlob* generate_empty_safepoint_blob() {
++  return (SafepointBlob*)(void*)zero_blob_placeholder;
++}
++
++static DeoptimizationBlob* generate_empty_deopt_blob() {
++  return (DeoptimizationBlob*)(void*)zero_blob_placeholder;
++}
++#else
+ static RuntimeStub* generate_empty_runtime_stub(const char* name) {
+   return CAST_FROM_FN_PTR(RuntimeStub*,zero_stub);
+ }
+@@ -104,6 +125,7 @@ static SafepointBlob* generate_empty_safepoint_blob() {
+ static DeoptimizationBlob* generate_empty_deopt_blob() {
+   return CAST_FROM_FN_PTR(DeoptimizationBlob*,zero_stub);
+ }
++#endif
+ 
+ 
+ void SharedRuntime::generate_deopt_blob() {
+diff --git a/src/hotspot/cpu/zero/stack_zero.hpp b/src/hotspot/cpu/zero/stack_zero.hpp
+index b5742b6a381..0f2d37fb467 100644
+--- a/src/hotspot/cpu/zero/stack_zero.hpp
++++ b/src/hotspot/cpu/zero/stack_zero.hpp
+@@ -52,7 +52,13 @@ class ZeroStack {
+     assert(!(size & WordAlignmentMask), "unaligned");
+ 
+     _base = (intptr_t *) mem;
+-    _top  = _base + (size >> LogBytesPerWord);
++    // CHERI purecap: _base is intptr_t* and intptr_t is a 16-byte capability,
++    // so pointer arithmetic strides by 16, but LogBytesPerWord (the Java word
++    // log) is still 3 (/8). On LP64 sizeof(intptr_t)==BytesPerWord==8 so the
++    // stock `size >> LogBytesPerWord` happened to be right; on purecap it puts
++    // _top at mem+2*size (out of the allocated region) -> _sp starts OOB and
++    // the first push SIGPROTs. Use the actual element size.
++    _top  = _base + (size / sizeof(intptr_t));
+     _sp   = _top;
+   }
+   void teardown() {
+@@ -89,7 +95,10 @@ class ZeroStack {
+   }
+ 
+   void *alloc(size_t size) {
+-    int count = align_up(size, wordSize) >> LogBytesPerWord;
++    // CHERI purecap: count is in intptr_t-element (16-byte) units to match the
++    // intptr_t* arithmetic of _sp; sizeof(intptr_t) is 8 on LP64 (== the stock
++    // >> LogBytesPerWord) and 16 on purecap.
++    int count = align_up(size, wordSize) / sizeof(intptr_t);
+     assert(count <= available_words(), "stack overflow");
+     return _sp -= count;
+   }
+diff --git a/src/hotspot/share/runtime/javaCalls.cpp b/src/hotspot/share/runtime/javaCalls.cpp
+index 798cee7a6f8..79ae9aaa476 100644
+--- a/src/hotspot/share/runtime/javaCalls.cpp
++++ b/src/hotspot/share/runtime/javaCalls.cpp
+@@ -426,13 +426,56 @@ void JavaCalls::call_helper(JavaValue* result, const methodHandle& method, JavaC
+         }
+       }
+ #endif
++#if defined(__CHERI_PURE_CAPABILITY__) && !defined(ZERO)
++      // C-6 fix #10: on Morello, BLR to a capability target sets
++      // PSTATE.C64 = target_cap.Value[0]. Our generated stubs are
++      // C64-mode code but the cap returned by StubRoutines::call_stub()
++      // has address 0x...8 (bit 0 = 0), so BLR enters A64 mode and
++      // misinterprets the C64 encoding → CAP_TAG fault on ifetch.
++      // (ARM ARM DDI0606 §2.10 RZTMWK + RZRMXS.) Fix: OR bit 0 into
++      // the cap address before invoking. Uses cheri_address_set to
++      // preserve cap tag/bounds/perms.
++      StubRoutines::CallStub _cs = StubRoutines::call_stub();
++      void* _cs_v = (void*)_cs;
++      unsigned long _cs_addr = (unsigned long)__builtin_cheri_address_get(_cs_v);
++      _cs_v = __builtin_cheri_address_set(_cs_v, _cs_addr | 1);
++      // C-6 fix #17 (new strategy): also flip entry_point bit 0 HERE, via
++      // cheri_address_set rather than via cap-ADD #1 in the stub. The
++      // earlier stub-emit approach (patch 0095) made c4.address odd, but
++      // BLR-cap on Morello (per actual hw behaviour observed via gdb at
++      // PC=0x428bc2c1 → SIGBUS alignment) did NOT auto-clear bit 0 for
++      // ifetch. cheri_address_set + |1 sets bit 0 the same way it works
++      // for call_stub itself (verified entering C64 cleanly).
++      void* _ep = (void*)entry_point;
++      unsigned long _ep_addr = (unsigned long)__builtin_cheri_address_get(_ep);
++      // C-6 fix #17b / L59: keep entry_point bit0=0. On this Morello, BLR to a
++      // cap does NOT auto-clear bit0 for ifetch (setting bit0=1 lands the PC on
++      // an odd address -> SIGBUS at the entry's first instruction). The
++      // call_stub already runs C64 (fix #10), and BLR to an even target keeps
++      // C64, so the interpreter runs C64 with an even PC. The remaining issue
++      // (the call_stub's `blr x4` bakes bit0=1 into the return sentry, so the
++      // method's final `ret` lands on an odd PC) is fixed on the interpreter
++      // return side, not here.
++      _ep = __builtin_cheri_address_set(_ep, _ep_addr);  // no | 1
++      address entry_point_c64 = (address)_ep;
++      fprintf(stderr, "[C6CSMODE] BLR target now %#p ; entry_point %#p (orig %#lx)\n",
++              _cs_v, _ep, _ep_addr);
++      fflush(stderr);
++      ((StubRoutines::CallStub)_cs_v)(
++        (address)&link,
++#else
+       StubRoutines::call_stub()(
+         (address)&link,
++#endif
+         // (intptr_t*)&(result->_value), // see NOTE above (compiler problem)
+         result_val_address,          // see NOTE above (compiler problem)
+         result_type,
+         method(),
++#if defined(__CHERI_PURE_CAPABILITY__) && !defined(ZERO)
++        entry_point_c64,
++#else
+         entry_point,
++#endif
+         parameter_address,
+         args->size_of_parameters(),
+         CHECK
