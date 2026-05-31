@@ -1,0 +1,70 @@
+Subject: [PATCH] C-9: cap-preserving JVM_Clone on purecap (unblocks real programs)
+
+Running a real Java program (a user main, not just -version) on purecap Zero
+SIGPROT'd in Object.clone. Diagnosed on Morello (call-site args verified correct
+via instrumentation): the clone is NOT a libffi/marshalling problem — handle and
+the resolved obj are both valid (tag=1). The generic Access<>::clone path has two
+purecap bugs:
+  (1) the inlined RuntimeDispatch _clone_func(oop,oop,size_t) indirect call
+      delivers src<-klass and size<-garbage to the barrier (a clang Morello
+      codegen bug specific to this signature; the call site passes the correct
+      obj()/new_obj/size, and load/store barriers with other signatures work);
+  (2) RawAccessBarrier::clone copies the object as 8-byte jlongs, which on
+      purecap SPLITS 16-byte capabilities and strips the cloned object's
+      oop-field tags.
+
+Fix: in JVM_Clone, do a direct capability-preserving shallow copy on purecap —
+each HeapWord is 16 bytes = one capability, so copying word-by-word as void*
+(clang emits cap ldr/str) preserves both data and oop tags; then init_mark.
+StoplessGC has NOP access barriers (the cap-tag IS the barrier), so this is
+semantically correct. Bypasses the broken dispatch.
+
+RESULT: HelloGC (println + System.gc()) runs on purecap Zero+StoplessGC:
+  hello from purecap Zero
+  [Stopless] C-8 root scan: 837 non-null roots, 0 bad(tag-0)   <- System.gc() drove it
+  after System.gc()
+  exit=0
+Real programs now run; System.gc() drives StoplessHeap::collect -> the C-8 root
+scan at a real GC point. Unblocks C-9/C-10 JVM integration + C-11/C-12.
+
+Note: only JVM_Clone is fixed; a complex program may hit the same clang codegen
+issue in another templated indirect access (e.g. arraycopy) — handle if it bites.
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+
+diff --git a/src/hotspot/share/prims/jvm.cpp b/src/hotspot/share/prims/jvm.cpp
+index 7419921cd9a..b630d8a628f 100644
+--- a/src/hotspot/share/prims/jvm.cpp
++++ b/src/hotspot/share/prims/jvm.cpp
+@@ -667,7 +667,31 @@ JVM_ENTRY(jobject, JVM_Clone(JNIEnv* env, jobject handle))
+     new_obj_oop = Universe::heap()->obj_allocate(klass, size, CHECK_NULL);
+   }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: do a direct, capability-preserving shallow copy instead of
++  // HeapAccess<>::clone. Two purecap problems with the generic path, both
++  // diagnosed on Morello (call-site args verified correct):
++  //   (1) the Access<>::clone template dispatch mis-passes args — the inlined
++  //       _clone_func(oop,oop,size_t) indirect call delivers src<-klass and
++  //       size<-garbage to the barrier (a clang Morello codegen bug; load/store
++  //       barriers have different signatures and are unaffected);
++  //   (2) RawAccessBarrier::clone copies the object as 8-byte jlongs, which
++  //       would SPLIT 16-byte capabilities and strip the cloned object's
++  //       oop-field tags.
++  // Each HeapWord is 16 bytes = exactly one capability on purecap, so copying
++  // word-by-word as void* (clang emits cap ldr/str) preserves both raw data and
++  // oop tags. StoplessGC has NOP access barriers (the cap-tag IS the barrier),
++  // so a direct copy + init_mark is semantically correct.
++  {
++    void* volatile* s = (void* volatile*)(void*)(oopDesc*)obj();
++    void* volatile* d = (void* volatile*)(void*)new_obj_oop;
++    size_t nwords = (size_t)align_object_size(size);
++    for (size_t i = 0; i < nwords; i++) { d[i] = s[i]; }  // 16-byte cap copy each
++    new_obj_oop->init_mark();
++  }
++#else
+   HeapAccess<>::clone(obj(), new_obj_oop, size);
++#endif
+ 
+   Handle new_obj(THREAD, new_obj_oop);
+   // Caution: this involves a java upcall, so the clone should be
