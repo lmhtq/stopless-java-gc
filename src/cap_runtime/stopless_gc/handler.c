@@ -91,8 +91,18 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
         }
     }
 
-    /* PROT_CHERI_TAG ⇒ caller tried to load/store via tag-zero cap. */
-    if (si->si_code != /*PROT_CHERI_TAG=*/2) {
+    /* A GC-revoked cap traps when the mutator loads/stores through it. CheriBSD
+       has TWO revocation representations and the kernel build decides which:
+         - CHERI_CAPREVOKE_CLEARTAGS defined  -> tag cleared  -> PROT_CHERI_TAG (2)
+         - default (CLEARTAGS *undefined*)    -> perms cleared -> PROT_CHERI_PERM (5)
+       (see cheri_revoke_is_revoked() in sys/cheri/revoke.h: revoked iff
+        tag==0 || perms==0). The default build clears PERMS, so a revoked cap
+       keeps tag=1 and faults as PROT_CHERI_PERM. Accept BOTH so the handler
+       works regardless of how the guest kernel was built; rejecting code 5
+       here was the cause of the MinMove silent re-fault spin (handler returned
+       without healing or advancing PC -> instruction retried -> faulted -> ...). */
+    if (si->si_code != /*PROT_CHERI_TAG=*/2 &&
+        si->si_code != /*PROT_CHERI_PERM=*/5) {
         if (prev_sa.sa_sigaction) {
             prev_sa.sa_sigaction(sig, si, ctx_);
         }
@@ -111,7 +121,12 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
         int _i = (i);                                                         \
         if (new_cap == NULL && _i >= 0 && _i < 30) {                          \
             __uintcap_t _c = cregs->cap_x[_i];                                \
-            if (!cheri_tag_get((void *)_c)) {                                 \
+            /* "revoked" matches the kernel's cheri_revoke_is_revoked():       \
+               tag==0 (CLEARTAGS build) OR perms==0 (default perms-clear       \
+               build). forward_table membership is the real gate below, so a   \
+               perms-0 cap that isn't a GC oop simply won't forward. */        \
+            if (!cheri_tag_get((void *)_c) ||                                 \
+                cheri_perms_get((void *)_c) == 0) {                            \
                 uintptr_t _a = (uintptr_t)cheri_address_get((void *)_c);      \
                 void *_fwd = forward_table_lookup(_a);                        \
                 if (_fwd == NULL && g_evacuate_cb != NULL) {                  \
@@ -245,21 +260,58 @@ __thread volatile void **stopless_v1_pending_slot;
 
 /* C-6 fix #11 diag: also catch SIGILL so we see WHERE the illegal
    instruction faults inside call_stub. */
+static void sigill_handler(int sig, siginfo_t *si, void *ctx_);
+
+/* C-9 boot diag: the boot SIGILL fires during EARLY VM init (stub generation,
+   ~fn_id 47) BEFORE stopless_handler_install() runs, so a normal install is
+   too late to catch it. A library constructor installs the SIGILL diagnostic
+   the moment libjvm.so is loaded (before JNI_CreateJavaVM). HotSpot later
+   installs its own SIGILL handler, but that is after this early crash point. */
+__attribute__((constructor))
+static void stopless_early_sigill_install(void)
+{
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = sigill_handler;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGILL, &sa, NULL);
+    fprintf(stderr, "[stopless] early SIGILL diag installed (ctor)\n");
+    fflush(stderr);
+}
+
 static void
 sigill_handler(int sig, siginfo_t *si, void *ctx_)
 {
     ucontext_t *ctx = (ucontext_t *)ctx_;
-    __uintcap_t celr = (__uintcap_t)ctx->uc_mcontext.mc_capregs.cap_elr;
-    void *pc_cap = (void *)celr;
-    unsigned long pc = (unsigned long)cheri_address_get(pc_cap);
-    fprintf(stderr, "[stopless] SIGILL: si_addr=%p pc=0x%lx flags=%d\n",
-            si->si_addr, pc, (int)cheri_flags_get(pc_cap));
-    /* Print 4 instructions around the faulting PC. */
-    uint32_t* insn = (uint32_t*)pc_cap;
-    for (int i = -1; i <= 2; i++) {
-        fprintf(stderr, "  pc%+d (0x%lx): 0x%08x\n",
-                i, pc + i*4, insn[i]);
-    }
+    struct capregs *cr = &ctx->uc_mcontext.mc_capregs;
+    /* FAULT-SAFE: print ONLY capability metadata (addr/tag/bounds/perms/flags)
+       via cheri_* intrinsics — NEVER dereference pc_cap to read instruction
+       bytes (that takes a nested cap fault on CHERI and hides the real fault,
+       per C-6 L36). flags bit0 = C64 mode (1=C64, 0=A64); a SIGILL with a
+       valid-bounds PCC usually means an A64<->C64 mode mismatch on the branch. */
+#define STOPLESS_DUMPCAP(name, v) do {                                        \
+        void *_c = (void *)(__uintcap_t)(v);                                  \
+        fprintf(stderr, "  %-5s tag=%d addr=%#lx base=%#lx top=%#lx "         \
+                "perms=%#lx flags=%d(C64=%d)\n", name,                        \
+                (int)cheri_tag_get(_c),                                       \
+                (unsigned long)cheri_address_get(_c),                         \
+                (unsigned long)cheri_base_get(_c),                            \
+                (unsigned long)(cheri_base_get(_c) + cheri_length_get(_c)),   \
+                (unsigned long)cheri_perms_get(_c),                           \
+                (int)cheri_flags_get(_c),                                     \
+                (int)(cheri_flags_get(_c) & 1));                              \
+    } while (0)
+    fprintf(stderr, "[stopless] SIGILL si_code=%d si_addr=%p\n",
+            si->si_code, si->si_addr);
+    STOPLESS_DUMPCAP("PCC", cr->cap_elr);   /* faulting PC + mode */
+    STOPLESS_DUMPCAP("CLR", cr->cap_lr);    /* return addr = the cap_blr call site */
+    STOPLESS_DUMPCAP("CSP", cr->cap_sp);
+    STOPLESS_DUMPCAP("c0",  cr->cap_x[0]);  /* dispatch ABI: w0 = fn_id */
+    STOPLESS_DUMPCAP("c1",  cr->cap_x[1]);
+    STOPLESS_DUMPCAP("c16", cr->cap_x[16]); /* rscratch1 = loaded trampoline cap */
+    STOPLESS_DUMPCAP("c17", cr->cap_x[17]);
+#undef STOPLESS_DUMPCAP
     fflush(stderr);
     signal(sig, SIG_DFL);
     raise(sig);
@@ -279,13 +331,21 @@ stopless_handler_install(void)
         perror("stopless_handler_install: sigaction(SIGPROT)");
         return -1;
     }
-    /* C-6 L36: the diagnostic SIGILL/SIGSEGV handlers (which read raw
-       instruction bytes around the faulting PC) themselves take nested
-       capability faults on CHERI and obscure the real fault. Leave SIGILL
-       and SIGSEGV to default handling so the original fault surfaces
-       cleanly (and gdb can catch it at the true PC). The
-       sigill_handler function is retained but no longer installed. */
-    (void)sigill_handler;
+    /* C-6 L36 NOTE: the OLD sigill_handler dereferenced the faulting PC to
+       print instruction bytes, which took a nested cap fault and hid the real
+       fault. The handler is now FAULT-SAFE (metadata only, no PC dereference),
+       so we install it to capture the C-9-boot SIGILL (suspected A64<->C64
+       mode mismatch on the cap_blr trampoline branch). */
+    {
+        struct sigaction sa_ill;
+        memset(&sa_ill, 0, sizeof(sa_ill));
+        sa_ill.sa_sigaction = sigill_handler;
+        sa_ill.sa_flags = SA_SIGINFO;
+        sigemptyset(&sa_ill.sa_mask);
+        if (sigaction(SIGILL, &sa_ill, NULL) != 0) {
+            perror("stopless_handler_install: sigaction(SIGILL)");
+        }
+    }
     fflush(stderr);
     return 0;
 }

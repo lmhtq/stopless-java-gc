@@ -13,11 +13,11 @@ SDK     ?= $(HOME)/projs/stopless-java-gc/third_party/output/morello-sdk
 SYSROOT ?= $(HOME)/projs/stopless-java-gc/third_party/output/rootfs-morello-purecap
 CC       = $(SDK)/bin/clang
 CFLAGS  += --target=aarch64-unknown-freebsd \
-           -march=morello+c64 -mabi=purecap \
+           -march=morello -mabi=purecap \
            --sysroot=$(SYSROOT) \
            -isystem $(SYSROOT)/usr/include
 LDFLAGS += --target=aarch64-unknown-freebsd \
-           -march=morello+c64 -mabi=purecap \
+           -march=morello -mabi=purecap \
            --sysroot=$(SYSROOT)
 endif
 

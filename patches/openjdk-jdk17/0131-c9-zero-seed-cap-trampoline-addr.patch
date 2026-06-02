@@ -1,0 +1,143 @@
+diff --git a/src/hotspot/share/runtime/thread.cpp b/src/hotspot/share/runtime/thread.cpp
+index fe4f555df2a..9d3762b0efc 100644
+--- a/src/hotspot/share/runtime/thread.cpp
++++ b/src/hotspot/share/runtime/thread.cpp
+@@ -231,6 +231,11 @@ void JavaThread::smr_delete() {
+ 
+ DEBUG_ONLY(Thread* Thread::_starting_thread = NULL;)
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++extern "C" intptr_t cap_trampoline_dispatch(int fn_id,
++    intptr_t a0, intptr_t a1, intptr_t a2, intptr_t a3, intptr_t a4);
++#endif
++
+ Thread::Thread() {
+ 
+   DEBUG_ONLY(_run_state = PRE_CALL_RUN;)
+@@ -239,6 +244,39 @@ Thread::Thread() {
+   set_stack_base(NULL);
+   set_stack_size(0);
+   set_lgrp_id(-1);
++
++#if defined(__CHERI_PURE_CAPABILITY__) && !defined(ZERO)
++  // C-6 fix #25 (Option C): seed the cap trampoline cap.
++  _cap_trampoline_addr = (void*)&cap_trampoline_dispatch;
++  // C-6 fix #34: seed the dispatch-table cap. For threads created after
++  // interpreter_init this is the real table; for the main thread (created
++  // earlier) it is null here and re-seeded in init_globals().
++  _cap_dispatch = (void*)Interpreter::dispatch_table();
++  // C-6 fix #46: seed the libjvm.so-data cap-table base (same timing
++  // caveat as _cap_dispatch; re-seeded for the main thread in init_globals).
++  {
++    extern address cap_data_table_base();
++    _cap_data_base = (void*)cap_data_table_base();
++  }
++#elif defined(__CHERI_PURE_CAPABILITY__)
++  // Zero variant. The original assumption was that Zero needs NO codecache
++  // trampoline (clang emits cap-correct calls in the C++ interpreter). That
++  // is true for the interpreter proper, BUT the purecap Zero build still
++  // generates a handful of aarch64 stubs (StubGenerator / runtime stubs) via
++  // MacroAssembler::call_VM_leaf_base, whose codecache PCC bounds cannot reach
++  // libjvm.so .text — so they route through cap_trampoline_dispatch exactly
++  // like the non-Zero build. cap_trampoline_dispatch IS compiled and linked
++  // into the Zero libjvm (cap_trampoline_aarch64.cpp), so we MUST seed its cap
++  // here; leaving it NULL makes those stubs cap_blr a null cap and fault at
++  // the first stub call during early VM init (the C-9 boot SIGILL: the branch
++  // dies before cap_trampoline_dispatch's prologue, so [C6DISP] never prints).
++  _cap_trampoline_addr = (void*)&cap_trampoline_dispatch;
++  // _cap_dispatch / _cap_data_base back the template-interpreter dispatch and
++  // data-cap tables, which Zero's C++ interpreter does not use; their backing
++  // symbols are not built in Zero, so leave them NULL.
++  _cap_dispatch = NULL;
++  _cap_data_base = NULL;
++#endif
+   DEBUG_ONLY(clear_suspendible_thread();)
+ 
+   // allocated data structures
+@@ -2675,21 +2713,32 @@ static void call_initPhase3(TRAPS) {
+ 
+ void Threads::initialize_java_lang_classes(JavaThread* main_thread, TRAPS) {
+   TraceTime timer("Initialize java.lang classes", TRACETIME_LOG(Info, startuptime));
++#define C6IJC(label) do { if (0) fprintf(stderr, "[C6IJC] " label "\n"); fflush(stderr); } while (0)
++  C6IJC("IJC enter");
+ 
+   if (EagerXrunInit && Arguments::init_libraries_at_startup()) {
+     create_vm_init_libraries();
+   }
+ 
++  C6IJC("before init_class String");
+   initialize_class(vmSymbols::java_lang_String(), CHECK);
++  C6IJC("after init_class String");
+ 
+   // Inject CompactStrings value after the static initializers for String ran.
+   java_lang_String::set_compact_strings(CompactStrings);
++  C6IJC("after set_compact_strings");
+ 
+   // Initialize java_lang.System (needed before creating the thread)
++  C6IJC("before init_class System");
+   initialize_class(vmSymbols::java_lang_System(), CHECK);
++  C6IJC("after init_class System");
+   // The VM creates & returns objects of this class. Make sure it's initialized.
++  C6IJC("before init_class Class");
+   initialize_class(vmSymbols::java_lang_Class(), CHECK);
++  C6IJC("after init_class Class");
++  C6IJC("before init_class ThreadGroup");
+   initialize_class(vmSymbols::java_lang_ThreadGroup(), CHECK);
++  C6IJC("after init_class ThreadGroup");
+   Handle thread_group = create_initial_thread_group(CHECK);
+   Universe::set_main_thread_group(thread_group());
+   initialize_class(vmSymbols::java_lang_Thread(), CHECK);
+@@ -2908,6 +2957,7 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+     *canTryAgain = false; // don't let caller call JNI_CreateJavaVM again
+     return status;
+   }
++  if (0) fprintf(stderr, "[C6T] after init_globals\n"); fflush(stderr);
+ 
+   JFR_ONLY(Jfr::on_create_vm_1();)
+ 
+@@ -2923,26 +2973,32 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   JvmtiExport::transition_pending_onload_raw_monitors();
+ 
+   // Create the VMThread
++  if (0) fprintf(stderr, "[C6T] before VMThread::create\n"); fflush(stderr);
+   { TraceTime timer("Start VMThread", TRACETIME_LOG(Info, startuptime));
+ 
+     VMThread::create();
++    if (0) fprintf(stderr, "[C6T] after VMThread::create\n"); fflush(stderr);
+     Thread* vmthread = VMThread::vm_thread();
+ 
+     if (!os::create_thread(vmthread, os::vm_thread)) {
+       vm_exit_during_initialization("Cannot create VM thread. "
+                                     "Out of system resources.");
+     }
++    if (0) fprintf(stderr, "[C6T] after os::create_thread(vmthread)\n"); fflush(stderr);
+ 
+     // Wait for the VM thread to become ready, and VMThread::run to initialize
+     // Monitors can have spurious returns, must always check another state flag
+     {
+       MonitorLocker ml(Notify_lock);
+       os::start_thread(vmthread);
++      if (0) fprintf(stderr, "[C6T] after os::start_thread(vmthread); now waiting for active_handles\n"); fflush(stderr);
+       while (vmthread->active_handles() == NULL) {
+         ml.wait();
+       }
++      if (0) fprintf(stderr, "[C6T] vmthread active_handles ready\n"); fflush(stderr);
+     }
+   }
++  if (0) fprintf(stderr, "[C6T] VMThread fully started\n"); fflush(stderr);
+ 
+   assert(Universe::is_fully_initialized(), "not initialized");
+   if (VerifyDuringStartup) {
+@@ -2969,9 +3025,12 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
+   // Notify JVMTI agents that VM has started (JNI is up) - nop if no agents.
+   JvmtiExport::post_early_vm_start();
+ 
++  if (0) fprintf(stderr, "[C6T] before initialize_java_lang_classes\n"); fflush(stderr);
+   initialize_java_lang_classes(main_thread, CHECK_JNI_ERR);
++  if (0) fprintf(stderr, "[C6T] after initialize_java_lang_classes\n"); fflush(stderr);
+ 
+   quicken_jni_functions();
++  if (0) fprintf(stderr, "[C6T] after quicken_jni_functions\n"); fflush(stderr);
+ 
+   // No more stub generation allowed after that point.
+   StubCodeDesc::freeze();
