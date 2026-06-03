@@ -392,3 +392,39 @@ scripts/catch_sigexit.gdb):
    output first (the assembler already has cap_stp_imm=0x42800000, cap_stp_sp_pre=
    0x62800000, cap_ldp_imm=0x42C00000; post-index families are 0x22800000/0x22C00000
    by the addressing-mode bit pattern — VERIFY before use).
+
+## L. B1 result (2026-06-03): control-flow corruption confirmed; EL0 unreadable from EL1
+
+Full register state at the crash (read from the kernel trapframe via gdb; ASLR off):
+```
+ELR=SP=LR=0x4267c010 (a near-top thread-stack addr; stack 0x4247d000-0x4267d000)
+FP(c29)=0x4267c100   ESR=0x8200000f (EC=0x20 instruction abort)
+codecache ptrs in regs: c0=0x59559a00 c4=0x59559a50 c12=0x590051c0 c22=0x590050d0 c26=0x59523620
+stack/near-SP ptrs:     c1=c19=0x4267bf90 c20=SP c24=0x4267c050 c29=0x4267c100
+libjvm .data: c16=0x4210e540   others: c8=0x428b5df0 c21=0x42273980 c23=0x428b8c80 c25=0x428b014d
+```
+INTERPRETATION (high confidence): a function **epilogue `ret`'d to a corrupted return
+address that equals an SP value** (LR==SP==0x4267c010) → fetch from the stack →
+instruction abort. Classic "saved LR/return-cap on the stack got clobbered to an SP-
+like value". It runs in generated code (codecache pointers live in c0/c4/c12/c22/c26).
+NOT a missing opcode, NOT seeding, NOT a clean null cap_blr. The integer-stp-of-cap-
+regs defect (§K) is real but does not touch LR, so likely not THE cause.
+
+TOOLING CEILING HIT: the QEMU system gdbstub, stopped at `sigexit` (EL1/kernel),
+CANNOT read EL0 userspace VAs — every read of the stack (0x42...) and codecache
+(0x59...) returns "unmapped"; only kernel memory (0xffff..., incl. the trapframe) is
+readable. So I cannot disassemble the offending stub or read the corrupt frame from
+the sigexit catch. To see the exact corrupting instruction requires being **stopped
+at EL0** (a HW breakpoint inside the codecache stub while it runs in userspace), or a
+bounded `-d in_asm,nochain` instruction trace (firehose; impractical for a full run).
+
+NET: boot crash characterized to "ret-to-corrupted-LR(=SP) in a codecache stub" with
+full register evidence; exact instruction still unpinned (tooling ceiling). Two ways
+forward: (1) STRUCTURAL FIX (best lead): make the trampoline stub's cap-register
+save/restore cap-correct (§K integer stp/ldp -> cap-width, encodings verified vs
+clang) AND audit the stub's frame (FP/LR) setup for a wordSize(16) vs BytesPerWord(8)
+slot bug -- this is the most likely class of cause for a clobbered saved-LR on
+purecap; test empirically. (2) DEEPER DIAG: set a HW breakpoint at the specific
+codecache stub PC (find it by scanning the codecache for the cap_blr/ret pattern, or
+break at cap_trampoline_dispatch=0x41abf0cc and read CLR to locate the caller stub),
+single-step the epilogue at EL0 where userspace memory IS readable.
