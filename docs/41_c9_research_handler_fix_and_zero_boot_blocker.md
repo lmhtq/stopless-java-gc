@@ -467,3 +467,36 @@ fully tractable at EL0 (HW bp in the specific generated routine; memory readable
 This is the THIRD distinct C-9 layer: (1) handler code-5 [FIXED], (2) the boot SIGILL
 [here, characterized to template-interpreter <clinit>-return x30 corruption], and the
 StoplessGC move itself [untestable until boot works].
+
+## N. Source audit (2026-06-03): return paths CLEAN; saved-LR slot overwritten during <clinit>
+
+Audited every LR/return path the crash could be on:
+- `MacroAssembler::enter()/leave()` (macroAssembler_aarch64.hpp:907/932): cap-correct
+  (cap-stp/cap-ldp c29,c30 at [sp,#-32]!/[sp],#32; mov via cap-add #0). CORRECT.
+- `call_stub` return (stubGenerator_aarch64.cpp:330-425): callee-saved restored via
+  cap_ldp_imm; final `leave(); ret(lr)`. CORRECT.
+- native-method return (templateInterpreterGenerator:1656-1669): cap_ldr sender sp +
+  leave() + ret(lr). CORRECT.
+- Java `_return` template (templateTable_aarch64.cpp:2257-2266): `remove_activation;
+  cap_clear_bit0(lr,rscratch1); ret(lr)`. cap_clear_bit0 (macroAssembler_aarch64.hpp:
+  899) = `andr tmp, lr, ~1; SCVALUE lr, lr, tmp` -> clears bit0 of lr's address,
+  preserves the cap. CORRECT (clearing bit0 of a valid lr cannot produce an SP value).
+
+THEREFORE: lr was ALREADY == SP (0x4267c010) when it ENTERED the return path —
+i.e. leave() restored it from the frame's saved-LR slot, and that slot had been
+**overwritten with an SP value during <clinit> execution**. At frame setup
+(templateInterpreterGenerator:943 `cap_stp_sp(rfp, lr, 10*wordSize)`) lr is saved
+correctly (saved-rfp at rfp+0, saved-LR at rfp+16). So some bytecode handler /
+frame access during <clinit> wrote an SP-like value into the saved-LR slot — a
+**frame-slot STRIDE error**: the classic purecap **wordSize(16) vs BytesPerWord(8)**
+confusion (see docs/38). A slot computed with the wrong stride lands on rfp+16
+(saved-LR) and gets an SP/stack value.
+
+PIN PATH (next): EL0-single-step <clinit> execution watching a write to
+[rfp+16]/[rfp+11*wordSize] (HW watchpoint on the saved-LR slot address once rfp is
+known), OR audit interpreter frame-slot offset computations for `* BytesPerWord` vs
+`* wordSize` (or raw byte offsets) that could alias rfp+16 — especially local-
+variable / expression-stack stores in <clinit> (which sets static fields). docs/38
+(wordSize vs BytesPerWord slot addressing) is the reference for this bug class. This
+is the 2nd C-9 layer's root class; once fixed, boot should pass fn_id 47 and the
+code-5 handler fix (layer 1) can finally be validated on MinMove.
