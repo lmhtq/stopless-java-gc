@@ -20,6 +20,12 @@ extern "C" {
 int  stopless_handler_install(void);
 void stopless_handler_remove(void);
 
+/* C-9 boot-crash diagnostics: re-arm a sigaltstack-based crash dumper that
+   overrides HotSpot's signal handlers (so a ret-to-stack boot crash is caught
+   with a full trapframe + stack-window + frame-chain dump). Idempotent. Must be
+   called from a late hook (after HotSpot signal init). */
+void stopless_install_crash_diag(void);
+
 /* C-9/C-10: register the mutator-assisted-evacuation callback. Called when a
    tag-0 cap faults whose address is not yet forwarded; the cb evacuates the
    object (copy + cas_insert) and returns the new cap, or NULL if the address

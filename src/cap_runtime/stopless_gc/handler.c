@@ -317,6 +317,132 @@ sigill_handler(int sig, siginfo_t *si, void *ctx_)
     raise(sig);
 }
 
+/* ===================================================================== *
+ * C-9 boot-crash dumper (sigaltstack-based, robust to stack corruption)
+ *
+ * The boot SIGILL fires AFTER HotSpot installs its own signal handlers
+ * (which override our early ctor handler) and the crash is a ret-to-stack
+ * (corrupt saved-LR slot) that leaves the stack in a state where HotSpot's
+ * fatal-error reporter itself dies (no hs_err, just rc=132). This dumper:
+ *   - runs on a dedicated sigaltstack (SA_ONSTACK) so it executes even if
+ *     CSP is unusable;
+ *   - dumps ONLY the trapframe regs + a bounded window of stack words read
+ *     through the (valid) ucontext CSP capability — no unchecked derefs;
+ *   - must be re-armed AFTER HotSpot's signal init: call
+ *     stopless_install_crash_diag() from a late hook (we call it right
+ *     before java.lang.String.<clinit> in InstanceKlass::call_class_initializer).
+ * ===================================================================== */
+static char stopless_altstack[256 * 1024] __attribute__((aligned(16)));
+
+/* Read one 64-bit word at `addr` THROUGH the valid CSP capability `base`
+   (bounds-checked, fault-safe). Returns the word, or a sentinel if oob. */
+static unsigned long
+stopless_stk_rd(void *base, unsigned long addr)
+{
+    if (!cheri_tag_get(base)) return 0xBAD0BAD0BAD0BAD0UL;
+    unsigned long b = (unsigned long)cheri_base_get(base);
+    unsigned long t = b + (unsigned long)cheri_length_get(base);
+    if (addr < b || addr + 8 > t) return 0xBAD1BAD1BAD1BAD1UL;
+    void *p = cheri_address_set(base, addr);
+    return *(volatile unsigned long *)p;
+}
+
+static void
+stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
+{
+    ucontext_t *ctx = (ucontext_t *)ctx_;
+    struct capregs *cr = &ctx->uc_mcontext.mc_capregs;
+    void *csp = (void *)(__uintcap_t)cr->cap_sp;
+    unsigned long elr = (unsigned long)cheri_address_get((void *)(__uintcap_t)cr->cap_elr);
+    unsigned long lr  = (unsigned long)cheri_address_get((void *)(__uintcap_t)cr->cap_lr);
+    unsigned long spA = (unsigned long)cheri_address_get(csp);
+    unsigned long fp  = (unsigned long)cheri_address_get((void *)(__uintcap_t)cr->cap_x[29]);
+
+    fprintf(stderr, "\n[stopless] ===== CRASH DUMP (sig=%d code=%d addr=%p) =====\n",
+            sig, si->si_code, si->si_addr);
+    fprintf(stderr, "[stopless]   ELR(faulting PC)=%#lx  CLR(c30)=%#lx  CSP=%#lx  c29(FP)=%#lx\n",
+            elr, lr, spA, fp);
+    fprintf(stderr, "[stopless]   ELR tag=%d perms=%#lx | CSP tag=%d base=%#lx top=%#lx\n",
+            (int)cheri_tag_get((void *)(__uintcap_t)cr->cap_elr),
+            (unsigned long)cheri_perms_get((void *)(__uintcap_t)cr->cap_elr),
+            (int)cheri_tag_get(csp),
+            (unsigned long)cheri_base_get(csp),
+            (unsigned long)(cheri_base_get(csp) + cheri_length_get(csp)));
+    /* After a corrupt-LR `cap-ldp c29,c30,[sp],#32 ; ret c30`, CSP has already
+       been incremented by 32, so the crashing callee frame base was CSP-32 and
+       its saved-LR slot (rfp+16) was at CSP-16. Dump a window around it. */
+    fprintf(stderr, "[stopless]   stack window (via CSP cap):\n");
+    for (long off = -48; off <= 96; off += 8) {
+        unsigned long a = spA + off;
+        unsigned long w = stopless_stk_rd(csp, a);
+        const char *mark = "";
+        if (off == -16) mark = "  <== callee saved-LR slot (CSP-16)";
+        else if (off == -32) mark = "  <== callee saved-FP slot (CSP-32)";
+        else if (off == 0)   mark = "  <== CSP";
+        fprintf(stderr, "[stopless]     [%#lx] (CSP%+ld) = %#018lx%s\n", a, off, w, mark);
+    }
+    /* Full cap-register file: tag + address for x0..x30. Reveals which
+       register holds the bad stack value and what c30/c29/x9 etc. are. */
+    fprintf(stderr, "[stopless]   cap regs (tag:addr):\n");
+    for (int r = 0; r <= 30; r++) {
+        void *c = (void *)(__uintcap_t)cr->cap_x[r];
+        fprintf(stderr, "[stopless]     c%-2d tag=%d addr=%#lx%s", r,
+                (int)cheri_tag_get(c), (unsigned long)cheri_address_get(c),
+                (r % 2) ? "\n" : "   ");
+    }
+    fprintf(stderr, "\n");
+    /* The intact saved-LR slot of the crashing frame, for comparison vs c30. */
+    {
+        unsigned long slot = stopless_stk_rd(csp, fp + 16);
+        fprintf(stderr, "[stopless]   [fp+16]=saved_lr slot = %#lx  (c30=%#lx)\n",
+                slot, lr);
+    }
+    /* Walk the interpreter/native frame chain via saved-FP links (bounded). */
+    fprintf(stderr, "[stopless]   frame chain (saved-FP -> saved-LR):\n");
+    unsigned long f = fp;
+    for (int i = 0; i < 8 && f; i++) {
+        unsigned long sfp = stopless_stk_rd(csp, f);        /* [fp+0]  saved FP */
+        unsigned long slr = stopless_stk_rd(csp, f + 16);   /* [fp+16] saved LR */
+        fprintf(stderr, "[stopless]     #%d fp=%#lx  saved_lr=%#lx\n", i, f, slr);
+        if (sfp <= f || (sfp & 0xf) || sfp == 0xBAD0BAD0BAD0BAD0UL || sfp == 0xBAD1BAD1BAD1BAD1UL)
+            break;
+        f = sfp;
+    }
+    fprintf(stderr, "[stopless] ===== END CRASH DUMP =====\n");
+    fflush(stderr);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+/* Re-arm our crash dumper on an alternate stack, overriding HotSpot's
+   handlers. Idempotent. Call from a late hook (post-VM-init). */
+void
+stopless_install_crash_diag(void)
+{
+    static int armed = 0;
+    if (armed) return;
+    armed = 1;
+
+    stack_t ss;
+    memset(&ss, 0, sizeof(ss));
+    ss.ss_sp = stopless_altstack;
+    ss.ss_size = sizeof(stopless_altstack);
+    ss.ss_flags = 0;
+    if (sigaltstack(&ss, NULL) != 0)
+        perror("stopless_install_crash_diag: sigaltstack");
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_sigaction = stopless_crash_dumper;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    sigemptyset(&sa.sa_mask);
+    int sigs[] = { SIGILL, SIGSEGV, SIGBUS, 34 /*SIGPROT*/, SIGTRAP };
+    for (unsigned i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++)
+        sigaction(sigs[i], &sa, NULL);
+    fprintf(stderr, "[stopless] crash diag re-armed on altstack (SA_ONSTACK)\n");
+    fflush(stderr);
+}
+
 int
 stopless_handler_install(void)
 {

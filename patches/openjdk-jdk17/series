@@ -135,4 +135,3 @@
 0085-stopless-arena-allocate-wire.patch
 0131-c9-zero-seed-cap-trampoline-addr.patch
 0132-c9-sigdiag-cap-dump-in-posix-signal-handler.patch
-0133-c9-clinit-run-diag.patch

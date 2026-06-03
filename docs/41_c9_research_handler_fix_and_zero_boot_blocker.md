@@ -651,3 +651,78 @@ NEXT (decisive, two options): (a) re-do the watchpoint with a TIGHT window — b
 `invokespecial`/`return` templates for a saved-LR/wordSize slot bug. Given §K is a
 verified concrete defect on the exact path `anewarray` takes, fixing it + retesting is
 the most actionable shot.
+
+## S. ROOT CAUSE FOUND: remove_activation return-path strips CSP tag (2026-06-03)
+
+Built a sigaltstack-based crash dumper (handler.c stopless_install_crash_diag,
+SA_ONSTACK, re-armed from InstanceKlass::call_class_initializer right before
+java.lang.String.<clinit>, overriding HotSpot's handlers which themselves died
+on the corrupt stack -> no hs_err). It fired with a DECISIVE dump:
+
+    sig=11 SEGV_ACCERR addr=0x426bd010
+    ELR(PC)=0x426bd010  CLR(c30)=0x426bd010  CSP=0x426bd010  c29(FP)=0x426bd100
+    CSP tag=0 base=0 top=0xffffffffffffffff      <-- SP is UNTAGGED (null-derived)
+
+PC==LR==SP all equal a STACK address, and CSP has tag=0/base=0/top=MAX — the
+exact signature of an INTEGER op writing the SP register. Traced to the
+UN-PORTED tail of `InterpreterMacroAssembler::remove_activation`
+(interp_masm_aarch64.cpp ~796-825), which had NO __CHERI_PURE_CAPABILITY__ path:
+
+    ldr(rscratch2, [rfp, sender_sp_offset*wordSize]);  // (1) int ldr of a CAP (sender_sp) -> tag stripped
+    ...
+    mov(esp, rscratch2);                                // (2) esp <- untagged
+    leave();                                            // (correct: cap-add sp,rfp,#0; cap-ldp)
+    andr(sp, esp, -16);                                 // (3) int AND writes CSP -> tag-0 CSP
+
+leave() itself is correct (restores lr from [rfp+16] fine), so the FIRST return
+succeeds — but it leaves the CALLER's CSP untagged. The caller then resumes,
+and its own return path / next CSP use collapses PC/LR/SP onto a stack address
+-> ifetch from stack -> SEGV/SIGILL. This is the C-9 boot blocker (manifested at
+java.lang.String.<clinit>, the first class initializer).
+
+FIX (cap-correct, gated on __CHERI_PURE_CAPABILITY__):
+  (1) cap_ldr_imm(rscratch2, rfp, sender_sp_offset*wordSize)  -- preserve tag
+  (2) cap_add_imm(esp, rscratch2, 0)                          -- cap-mov
+  (3) cap_add_imm(sp, esp, 0)   -- cap-copy (sender_sp is already 16-aligned,
+      so this is equivalent to `andr sp,esp,-16` but keeps CSP's tag/bounds).
+cap_add_imm/cap_sub_imm already special-case `sp`->reg31. Rebuilding + retesting.
+
+This was found WITHOUT gdb (which had been wedging the guest) — the in-process
+sigaltstack dumper is the reusable tool for any future boot crash.
+
+## T. §S fix VALIDATED; residual c30=sender_sp on return (2026-06-03)
+
+The §S remove_activation cap-fix (cap_ldr sender_sp; cap_add_imm esp; cap_add_imm sp)
+WORKS: the crash signature changed from "CSP tag=0 base=0 top=MAX" (untagged) to a
+properly TAGGED CSP (base=0x424be000 top=0x426be000), and the stack window/frame
+chain are now fully readable. Confirmed mov(Register,Register) is already cap-aware
+(C-6 #13/#8): mov(r13,sp)/mov(sp,rscratch1) emit cap-ADD, so sender_sp keeps its tag.
+
+RESIDUAL crash (still at java.lang.String.<clinit>, now SIGSEGV/SEGV_ACCERR):
+    ELR(PC)=CLR(c30)=CSP=0x426bd010   c29(FP)=0x426bd100
+    [fp+16] saved_lr slot = 0x428f5df0   (the CORRECT return entry — intact)
+    c8(rscratch1)=0x428f5df0 tag=0       (return addr, but in rscratch1, untagged)
+    c30(lr)=esp(c20)=sender_sp(c13)=c9=CSP=0x426bd010   (FIVE regs collapsed to CSP)
+So we branch (ret/br) via c30 to a STACK address (=sender_sp), while the in-memory
+saved-LR slot is correct. i.e. lr/c30 got the sender_sp value instead of the saved
+return address, OR the faulting `ret` is not the one preceded by cap_clear_bit0
+(c8=0x428f5df0 implies a cap_clear_bit0 ran with lr=0x428f5df0, inconsistent with
+c30=0x426bd010 at the SAME ret) — pointing at a DIFFERENT ret/br than the template
+_return (possibly a stub / native / method-handle path, given rmethod(c12)=0x590051c0
+and rbcp(c22)=0x590050d0 both sit in the CODECACHE, not metaspace).
+
+Static forensics can't pin the faulting branch (ELR = post-branch target; the branch
+PC isn't preserved). NEXT decisive options:
+  (a) gdbstub single-step the callee's _return / the active stub from a breakpoint at
+      call_class_initializer(String) — now that we know the exact crash, a short step
+      window is feasible despite earlier gdbstub flakiness;
+  (b) enhance the crash dumper to scan the stack BELOW CSP for the callee frames and
+      flag which method's saved-LR slot (if any) holds a stack-range value, and to
+      decode the code words at c8/c23/c25 (return-entry/normal-entry/call_stub) to
+      identify which generated path is executing.
+
+TOOLING WIN: the sigaltstack crash dumper (handler.c stopless_install_crash_diag,
+re-armed pre-String.<clinit>) is the reusable, gdb-free way to get full trapframe +
+stack + cap-register state on any boot crash. Diagnostic source changes
+(instanceKlass clinit hook, the dumper) are kept as WIP records, not in the apply
+series, until boot is validated end-to-end.
