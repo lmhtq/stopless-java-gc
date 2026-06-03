@@ -537,3 +537,43 @@ Do (1)-(3) atomically (keep locals self-consistent). This is a real codegen refa
 code-5 handler fix (layer 1) can finally be validated on MinMove, then the StoplessGC
 move. NB: this L47b bug is a Zero/template-interpreter PORT artifact — a fresh
 CHERI-native GC design (the project's actual contribution) never inherits it.
+
+## P. RETRACTION of §O + watchpoint results (2026-06-03)
+
+**§O is WRONG — retracted.** Reading the actual code (not docs/38, which is stale):
+the L47b locals fix WAS completed. `templateTable_aarch64.cpp`:
+- `locals_index` (586) and `locals_index_wide` (709) PRE-SCALE the negated index by
+  `logStackElementSize - LogBytesPerWord` (=1, i.e. ×2), so the subsequent
+  `iaddress(r)` `lsl#3` yields the correct ×16 stride. (The `iaddress(Register)`
+  comment at line 72 saying "still ×8" is STALE.)
+- `lload`/`dload` (672/689) load the index raw then `sub(r1,rlocals,r1,uxtw,
+  logStackElementSize)` = ×16 (no double-scale; they do NOT use locals_index).
+- `aload` (696-703) uses `locals_index` + `lea(iaddress)` + `cap_ldr` (C-6 #53).
+All variable-index locals are ×16-correct. So the boot SIGILL is NOT the locals bug.
+
+So the SOURCE audit has now ruled out EVERY obvious path: enter/leave, call_stub
+return, native return, Java _return + cap_clear_bit0, AND all locals accessors.
+
+WATCHPOINT (HW, on saved-LR slot 0x4267c110 = crash FP 0x4267c100 + 16):
+- Conditioned on a STACK-range value: fired at PC 0x40162784 (a mapping BELOW libjvm
+  / below 0x401a4000 — likely ld-elf.so / libc / launcher), store at 0x40162780
+  (cap-store), value 0x4267bfd0. This is almost certainly an EARLIER reuse of that
+  stack address by a deeper frame, not the <clinit> corruption (value != crash value).
+- Conditioned on the EXACT crash value 0x4267c010: NEVER fired (java still crashed).
+  => either (a) the slot's final value is written as a 16-byte CAP store whose low-8
+  my `*(unsigned long*)` watch + condition didn't match, (b) the crash frame is at a
+  slightly different address THIS run (init non-determinism across the long session),
+  so 0x4267c110 wasn't the live saved-LR slot, or (c) leave() reads lr from a slot
+  that was never written by THIS frame (stale value left by a prior frame) — i.e.
+  the frame SETUP stored lr to a different slot than teardown reads (a setup/teardown
+  offset MISMATCH), which the watchpoint on the teardown-slot wouldn't catch as a
+  "write".
+
+HONEST STATUS: crash CHARACTERIZED (ifetch abort, ret to x30==SP, returning from a
+class <clinit> in template-interpreter codegen; §J-§N solid) but ROOT CAUSE NOT YET
+PINNED. §O's L47b attribution was a confident mis-diagnosis (stale-doc-driven) and is
+withdrawn. Robust next step: re-catch sigexit to confirm THIS-session crash ELR/FP
+(rule out address drift), then either (i) watch the confirmed live saved-LR slot for
+ANY write (cap-aware, no value condition) and take the LAST write before sigexit, or
+(ii) compare generate_fixed_frame's saved-LR STORE offset vs leave()/remove_activation's
+LR LOAD offset for a setup/teardown mismatch (hypothesis (c) above).
