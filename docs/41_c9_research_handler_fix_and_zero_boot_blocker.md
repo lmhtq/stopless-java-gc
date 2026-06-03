@@ -247,3 +247,39 @@ from the guest, or regenerate the stub) to see the offending instruction.
   hasee:10005); only the JVM native-call path SIGILLs.
 - Guest JDK at `/opt/jdk` (deployed from `images/jdk` + stripped libjvm). gdb
   installed? NO — not available.
+
+## H. Codecache pin attempt (2026-06-03, "继续" round) — ruled out, narrowed
+
+Disabled ASLR (`sysctl kern.elf64.aslr.enable=0 kern.elf64.aslr.pie_enable=0`) for
+deterministic addresses, then truss + a fresh `-d int` logged run (correlatable).
+
+Addresses (ASLR off): libjvm.so = `0x41600000-0x422a9000`; **codecache** (big
+`MAP_ANON|PROT_EXEC`) = `0x54bc0000-0x5d3c0000`.
+
+DEFINITIVELY RULED OUT (so a future rewrite doesn't chase these):
+- **Not a missing/illegal opcode.** Across two runs, ALL 253 `Undefined Instruction`
+  exceptions are benign: 250 are EC=0x07 lazy-FP-enable traps (kernel returns to ELR
+  = retry), 1 is the EC=0x00 `scbnds` the kernel emulates (returns ELR+4), 0 are
+  fatal. (`cap_blr` also emits the clang-verified `0xC2C23000` encoding QEMU supports.)
+- **Not a codecache fault.** Zero exceptions have an ELR in `0x54bc0000-0x5d3c0000`.
+- **Not a libjvm-.text fault.** java's last libjvm-range exception is the fn_id-47
+  `write` SVC (`0x41717c44`); nothing faults in libjvm after it.
+
+WHAT IT ACTUALLY LOOKS LIKE: after that last SVC, the kernel runs a long IRQ burst
+(EL1) then **returns to the signal trampoline `0xfffffffff000`** and the handler
+makes libc syscalls (`0x415d4xxx`) — i.e. the SIGILL is delivered **deferred /
+handler-mediated**, NOT as a synchronous illegal-instruction trap at a faulting PC.
+With "no core — bad address" (kernel can't write a core: corrupt CSP/cap), this
+points to **capability-state corruption** surfacing as a signal, which a
+machine-level exception log fundamentally cannot localize to a source line.
+
+CONCLUSION: the QEMU `-d int` method is **exhausted** for this bug — it cleanly
+eliminated the opcode/cap_blr/codecache/libjvm-fault hypotheses and gave reusable
+infra + addresses, but a deferred/corruption-mediated SIGILL needs **source-level
+debugging** (a real gdb/lldb breaking in the JVM signal path, or a Morello-FVP /
+real-hardware run as cross-check). Tooling gap unchanged: no gdb/lldb in this
+CheriBSD pkg repo. Next concrete options: (1) build cross-gdb on hasee attaching to
+the QEMU gdbstub (`-s`), set a HW breakpoint on the kernel's signal-post path or the
+process's sigtramp, read the corrupt cap; (2) instrument HotSpot's SIGILL/SIGSEGV
+handler to dump full cap-register state on first entry (one build cycle); (3) run on
+the Morello FVP / real hardware where instruction coverage is complete.
