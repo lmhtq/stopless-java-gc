@@ -29,6 +29,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include <ucontext.h>
 #include <cheriintrin.h>
 
@@ -408,8 +409,65 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
             break;
         f = sfp;
     }
+    /* Disassembly aid: read code/data memory at an arbitrary address by
+       picking whichever tagged register cap (incl. PCC) has bounds covering
+       it — gdb can't read this process's userspace (wrong CPU context), but we
+       run IN it with cap access. */
+    {
+        void *bases[33];
+        int nb = 0;
+        for (int r = 0; r <= 30; r++) bases[nb++] = (void *)(__uintcap_t)cr->cap_x[r];
+        bases[nb++] = (void *)(__uintcap_t)cr->cap_elr;
+        bases[nb++] = (void *)(__uintcap_t)cr->cap_sp;
+        #define COVER(addr,nbytes) ({                                          \
+            void *_p = NULL; unsigned long _a=(addr);                          \
+            for (int _i=0;_i<nb;_i++){ void*_b=bases[_i];                      \
+              if(cheri_tag_get(_b)){ unsigned long _lo=(unsigned long)cheri_base_get(_b),\
+                 _hi=_lo+(unsigned long)cheri_length_get(_b);                  \
+                 if(_a>=_lo && _a+(nbytes)<=_hi){ _p=cheri_address_set(_b,_a); break; }}}\
+            _p; })
+        unsigned long code_targets[] = {
+            0x428f5df0UL,           /* rscratch1 leftover = invoke return-entry */
+            (unsigned long)cheri_address_get((void*)(__uintcap_t)cr->cap_x[25]), /* rmonitors code */
+        };
+        for (unsigned t = 0; t < sizeof(code_targets)/sizeof(code_targets[0]); t++) {
+            unsigned long ca = code_targets[t];
+            fprintf(stderr, "[stopless]   ---- code words @ 0x%lx ----\n", ca);
+            for (int w = 0; w < 64; w++) {
+                void *p = COVER(ca + w*4, 4);
+                unsigned int insn = p ? *(volatile unsigned int *)p : 0xDEAD0000;
+                fprintf(stderr, "[stopless]     0x%lx: %08x%s\n",
+                        ca + w*4, insn, p ? "" : " (no-cover)");
+            }
+        }
+        /* What rbcp(c22), rmethod(c12), rcpool(c26) point at, and the dispatch table. */
+        unsigned long probes[][2] = {
+            { (unsigned long)cheri_address_get((void*)(__uintcap_t)cr->cap_x[22]), 22 }, /* rbcp */
+            { (unsigned long)cheri_address_get((void*)(__uintcap_t)cr->cap_x[12]), 12 }, /* rmethod */
+            { (unsigned long)cheri_address_get((void*)(__uintcap_t)cr->cap_x[21]), 21 }, /* rdispatch */
+        };
+        for (unsigned t = 0; t < 3; t++) {
+            fprintf(stderr, "[stopless]   ---- mem @ c%lu=0x%lx ----\n", probes[t][1], probes[t][0]);
+            for (int k = 0; k < 8; k++) {
+                void *p = COVER(probes[t][0] + k*8, 8);
+                unsigned long v = p ? *(volatile unsigned long *)p : 0xDEADUL;
+                fprintf(stderr, "[stopless]     +%d = 0x%lx%s\n", k*8, v, p ? "" : " (no-cover)");
+            }
+        }
+        #undef COVER
+    }
     fprintf(stderr, "[stopless] ===== END CRASH DUMP =====\n");
     fflush(stderr);
+    /* C-9 diag: optionally HANG here (env STOPLESS_HANG_ON_CRASH) so the
+       process stays alive at the crash with stable addresses (run with ASLR
+       off) — a system gdbstub can then attach and disassemble the live interp
+       code (gdb bypasses capability checks) to pin the faulting branch. */
+    if (getenv("STOPLESS_HANG_ON_CRASH")) {
+        fprintf(stderr, "[stopless] HANGING for gdb (pid=%d). attach :1234.\n",
+                (int)getpid());
+        fflush(stderr);
+        for (;;) { struct timespec ts = { 3600, 0 }; nanosleep(&ts, NULL); }
+    }
     signal(sig, SIG_DFL);
     raise(sig);
 }
