@@ -1,0 +1,20 @@
+diff --git a/src/hotspot/share/oops/instanceKlass.cpp b/src/hotspot/share/oops/instanceKlass.cpp
+index 2e9a5125014..584938510fd 100644
+--- a/src/hotspot/share/oops/instanceKlass.cpp
++++ b/src/hotspot/share/oops/instanceKlass.cpp
+@@ -1521,6 +1521,15 @@ void InstanceKlass::call_class_initializer(TRAPS) {
+     ls.print_cr("%s (" INTPTR_FORMAT ")", h_method() == NULL ? "(no method)" : "", p2i(this));
+   }
+   if (h_method() != NULL) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 boot-SIGILL diag (docs/41 §J-§Q): the crash is a corrupted saved-LR
++    // (lr=SP) on RETURN from a class <clinit> in the template interpreter. Print
++    // each <clinit> class before running it; the LAST one printed before the
++    // "Illegal instruction" is the culprit class. Printed BEFORE the call so it
++    // survives the crash.
++    { ResourceMark rm(THREAD);
++      fprintf(stderr, "[CLINIT-RUN] %s\n", external_name()); fflush(stderr); }
++#endif
+     JavaCallArguments args; // No arguments
+     JavaValue result(T_VOID);
+     JavaCalls::call(&result, h_method, &args, CHECK); // Static call (no args)

@@ -615,3 +615,39 @@ the exact method and bytecode whose execution corrupted the saved-LR slot, with 
 gdbstub fragility. Alternatively instrument call_class_initializer to print the klass
 name of each <clinit> (the LAST before the crash = the culprit class), then read its
 <clinit> bytecode. Either is faster/more reliable than the conditional watchpoint.
+
+## R. CULPRIT = java.lang.String.<clinit> (2026-06-03, instrumentation)
+
+Pivoted from the (impractical) watchpoint to JVM instrumentation: added a
+`fprintf("[CLINIT-RUN] %s")` of `external_name()` in `InstanceKlass::call_class_initializer`
+before `JavaCalls::call`. Result: exactly ONE line — `[CLINIT-RUN] java.lang.String`
+— then "Illegal instruction". So the crash is on/in the VERY FIRST class initializer,
+**java.lang.String.<clinit>** (decisive, no gdb fragility).
+
+String.<clinit> bytecode (JDK17, from javap) is tiny:
+```
+0  iconst_1; putstatic COMPACT_STRINGS:Z
+4  iconst_0; anewarray ObjectStreamField; putstatic serialPersistentFields   <- runtime alloc call
+11 new String$CaseInsensitiveComparator; dup; invokespecial <init>()V; putstatic CASE_INSENSITIVE_ORDER
+21 return
+```
+The §J/§M backtrace had TWO nested interpreter frames, so the crash is a deeper
+callee returning (the `<init>` at BCI 15, or an allocation runtime helper for the
+`anewarray`/`new`), NOT necessarily String.<clinit>'s own final `return`.
+
+STRONG SUSPECT (concrete): the runtime-call path. `anewarray` (BCI 5, the FIRST
+runtime call) and `new` (BCI 11) go interpreter -> `call_VM` -> ... ->
+`MacroAssembler::call_VM_leaf_base`, which has the §K bug: integer `stp/ldp(rscratch1,
+rmethod, [pre/post(sp,±2*wordSize)])` saving/restoring CAPABILITY registers (drops
+tag/bounds; and reserves 32B but writes only 16B). Plus `invokespecial`/`return`
+exercise the method call/return frame machinery. The corruption writes an SP-value
+into the deeper frame's saved-LR slot.
+
+NEXT (decisive, two options): (a) re-do the watchpoint with a TIGHT window — break at
+`call_class_initializer` (fires once, for String), then single-step String.<clinit>'s
+~8 bytecodes + callees watching the saved-LR slot (few writes, no hot-slot slowness);
+(b) audit/fix the runtime-call frame path: §K integer stp/ldp -> cap-width, AND audit
+`call_VM_base`/`generate_call_stub`-style interpreter runtime-call glue + the
+`invokespecial`/`return` templates for a saved-LR/wordSize slot bug. Given §K is a
+verified concrete defect on the exact path `anewarray` takes, fixing it + retesting is
+the most actionable shot.
