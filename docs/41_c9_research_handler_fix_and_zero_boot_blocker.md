@@ -577,3 +577,41 @@ withdrawn. Robust next step: re-catch sigexit to confirm THIS-session crash ELR/
 ANY write (cap-aware, no value condition) and take the LAST write before sigexit, or
 (ii) compare generate_fixed_frame's saved-LR STORE offset vs leave()/remove_activation's
 LR LOAD offset for a setup/teardown mismatch (hypothesis (c) above).
+
+## Q. Watchpoint pin attempt #2 (2026-06-03): correct slot found, but conditional WP impractical
+
+Fixed the §P address error: at the crash, the FP register is the *restored caller* FP,
+not the <clinit> rfp. Re-derived from the trapframe: leave() does `sp=R; cap-ldp
+c29,c30,[sp],#32`, so crash_SP = R+32 and the **saved-LR slot = R+16 = crash_SP-16 =
+0x4267c000** (confirmed: tf_sp=0x4267c010 every run; ASLR off). (§P watched 0x4267c110
+— wrong; that's why it missed.)
+
+HW watchpoint on the CORRECT slot 0x4267c000:
+- value-in-stack-range condition: fires on EARLY reuse writes (the slot is the saved-LR
+  slot for EVERY frame that nests to that depth — hundreds during boot). First hits were
+  low-lib (ld/libc/launcher) frames writing their own FP/stack values (0x4267c210,
+  0x4267bfd0) — NOT the <clinit> corruption (value != 0x4267c010).
+- exact-value condition (==0x4267c010): QEMU's gdbstub HALTS on EVERY write to the slot
+  to evaluate the condition; the slot is so hot that `java -version` no longer finishes
+  within 180s (SIGTERM'd) before the corruption is reached. Conditional HW watchpoint on
+  a hot stack slot over the QEMU gdbstub is impractical.
+
+TOOLING WALL (recurring this session): vanilla gdb mis-parses the morello 'g' packet
+(needs kernel.full loaded; HW-bp/regs flaky), `gdb -9` leaves the gdbstub's TCP
+connection half-open so the next connect times out (vMustReplyEmpty) and leaves the
+CPU HALTED (recover via HMP `cont`), and repeated attach/halt cycles wedge guest sshd
+(recover via reboot, ~4 min). Each gdb iteration costs minutes of recovery.
+
+WHAT'S SOLID: the corrupting write puts an SP-range value (0x4267c010) into the
+<clinit> frame's saved-LR slot (0x4267c000) during template-interpreter execution of a
+class <clinit>; on return `leave()` restores lr=that value and `ret`->ifetch abort.
+
+BETTER PIN (recommended, replaces watchpoint): INSTRUMENT the JVM instead of fighting
+the gdbstub. Add a debug check on the Java return path (TemplateTable::_return, right
+after remove_activation/before `cap_clear_bit0(lr); ret(lr)`): if `lr`'s address is in
+the current thread's stack range (i.e. corrupt), `fprintf` the current Method
+(rmethod->external_name) + bcp/BCI and abort. One build+deploy cycle, DECISIVE: names
+the exact method and bytecode whose execution corrupted the saved-LR slot, with zero
+gdbstub fragility. Alternatively instrument call_class_initializer to print the klass
+name of each <clinit> (the LAST before the crash = the culprit class), then read its
+<clinit> bytecode. Either is faster/more reliable than the conditional watchpoint.
