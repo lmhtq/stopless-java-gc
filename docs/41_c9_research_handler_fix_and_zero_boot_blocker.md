@@ -312,3 +312,83 @@ HW breakpoint at the first codecache stub entry, single-step the cap_blr, and re
 the exact instruction + capability that corrupts state. That is the concrete next
 step; everything else (addresses, ruled-out hypotheses) is now in place to make it
 fast.
+
+## J. CRACKED via QEMU gdbstub (2026-06-03) — ifetch abort: branch-to-stack
+
+Built a host Morello-aware gdb (cheribuild `upstream-gdb-native`; needed
+`libmpfr-dev` on hasee), launched QEMU with `-s` (gdbstub :1234), ASLR off, and
+caught the fatal signal at the kernel termination path: `break sigexit if sig==4`.
+
+GOTCHAS (recorded for reuse): (1) a bare TCP connect to :1234 HALTS the QEMU CPU
+(gdbstub) — resume via HMP `cont`; don't poke :1234 except via gdb. (2) This gdb
+can't decode the stub's `data_capability` register type, so `$x0` / `read_register`
+/ cap-pointer deref all fail with "DWARF register number NNN"; BUT `info registers
+x0` (textual, gdbarch path) works. Workaround in `/tmp/catch5.gdb`: Python
+`gdb.execute("info registers x0", to_string=True)` to read regs + raw `read_memory`
+at DWARF-computed struct offsets (capability in memory = 16B, address = low 8B), so
+`td -> td_frame -> tf_*` is walked manually. kernel.full has DWARF (struct layouts).
+
+**THE FAULT (deterministic, ASLR off):**
+```
+tf_elr (faulting PC) = 0x4267c010      tf_esr = 0x8200000f  -> EC=0x20 INSTRUCTION ABORT
+tf_lr  (x30/CLR)     = 0x4267c010      tf_far = 0x4267c010   (ifetch fault address)
+tf_sp                = 0x4267c010   <-- SP == PC == LR (control-flow/stack corruption)
+x0 = 0x59559a00 (in codecache 0x58bc0000-0x5d3c0000)   x16/rscratch1 = 0x4210e540 (libjvm .data)
+```
+`0x4267c010` lies in `0x4247d000-0x4267d000` — a **2 MB thread-stack** mapping (guard
+page right after), ~4 KB below the top (a plausible SP). So the CPU **branched/
+returned to a stack address and faulted fetching an instruction from the stack**.
+
+**CONCLUSION:** the boot crash is NOT an illegal opcode, NOT a clean cap_blr-to-null,
+and NOT a codecache/libjvm code fault. It is a **corrupted return/branch that lands
+on the stack** (SP==PC==LR), while executing a **codecache native-call trampoline
+stub** (x0 in codecache). This is exactly the corruption the earlier rounds inferred
+("no core — bad address", undeliverable signal). It is fully consistent with the §C
+`_cap_trampoline_addr` seeding-timing bug: when the stub's `cap_blr` / frame save-
+restore goes wrong (bad/unseeded trampoline cap at that early point), the subsequent
+`ret` returns to a stack address instead of valid code.
+
+**FIX DIRECTION (now focused, not a mystery):** the codecache native-call path
+(MacroAssembler::call_VM_leaf_base + the `_cap_trampoline_addr` seeding) corrupts the
+return/frame in early-init Zero stubs. Either (a) ensure `_cap_trampoline_addr` (and
+the stub's CSP/CLR save-restore) is valid *before* the first stub executes — seed it
+process-globally / before init_globals stub gen, not per-thread in the ctor — or (b)
+make the Zero build not emit these aarch64 trampoline stubs. Next gdb step to nail
+the exact instruction: HW-breakpoint the specific codecache stub PC (now reachable —
+ASLR off, addresses deterministic) and single-step the cap_blr + the ret to see
+which clobbers CLR/CSP to the stack value.
+
+## K. Fix-A refuted; verified lead = integer stp/ldp of cap regs (2026-06-03)
+
+Planned "fix A" (seed `_cap_trampoline_addr` earlier) is REFUTED by the init order
+in `Threads::create_vm`: `main_thread = new JavaThread()` (thread.cpp:2928, runs the
+ctor seeding from patch 0131) + `initialize_thread_current()` (2930) happen BEFORE
+`init_globals()` (2954, where StubRoutines generates AND first-executes the stubs).
+So `_cap_trampoline_addr` IS already seeded when the trampoline stubs run — seeding-
+timing is not the cause. Consistent with §J (the fault is ret-to-stack corruption,
+not a null cap_blr).
+
+VERIFIED BUG LEAD: `MacroAssembler::call_VM_leaf_base` brackets the cap_blr with
+  stp(rscratch1, rmethod, Address(pre(sp, -2*wordSize)))   // macroAssembler_aarch64.cpp:1567
+  ...cap_blr...
+  ldp(rscratch1, rmethod, Address(post(sp, 2*wordSize)))   // :1615
+`stp`/`ldp` here are STANDARD 64-bit-GPR pair ops (assembler_aarch64.hpp:1461
+`INSN(stp, 0b10,...)` = opc 0b10, X-register pair), but rscratch1/rmethod are
+CAPABILITY registers on purecap. So the save/restore drops tag+bounds (keeps only
+the low 64 bits). This is a real correctness bug. (NB it's OUTSIDE the
+`#ifdef __CHERI_PURE_CAPABILITY__` trampoline block, so it affects the shared path.)
+Whether it is THE ret-to-stack cause is unconfirmed: metadata loss on rmethod/
+rscratch1 would normally surface as a later deref (SIGPROT), not CLR/SP corruption —
+so single-step confirmation is needed before committing a fix.
+
+NEXT STEP OPTIONS (gdb infra is hot — QEMU -s, ASLR off, kernel.full DWARF,
+scripts/catch_sigexit.gdb):
+ - B1 (confirm): HW-breakpoint the specific codecache trampoline stub PC and single-
+   step the cap_blr + the surrounding stp/ldp + the ret, watching CLR(c30)/CSP go to
+   the stack value 0x4267c010. Then fix the exact offending instruction.
+ - Fix candidate (once confirmed): replace the integer stp/ldp with cap-width
+   save/restore (cap_stp pre-index + cap_ldp post-index). DO NOT hand-encode blindly
+   — derive/verify the Morello cap-LDP/STP post/pre-index encodings against clang
+   output first (the assembler already has cap_stp_imm=0x42800000, cap_stp_sp_pre=
+   0x62800000, cap_ldp_imm=0x42C00000; post-index families are 0x22800000/0x22C00000
+   by the addressing-mode bit pattern — VERIFY before use).
