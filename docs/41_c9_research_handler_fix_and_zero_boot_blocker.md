@@ -500,3 +500,40 @@ variable / expression-stack stores in <clinit> (which sets static fields). docs/
 (wordSize vs BytesPerWord slot addressing) is the reference for this bug class. This
 is the 2nd C-9 layer's root class; once fixed, boot should pass fn_id 47 and the
 code-5 handler fix (layer 1) can finally be validated on MinMove.
+
+## O. ROOT CAUSE (2026-06-03): the boot SIGILL is the unfinished L47b (×8 vs ×16 locals)
+
+Source audit per docs/38 landed the root cause. The §N "frame-slot stride error
+overwriting saved-LR" is the **documented, never-completed L47b bug**:
+
+- Purecap interpreter slots are 16 B (hold caps), but `LogBytesPerWord=3` (×8).
+  `logStackElementSize` was fixed to 4 (patch 0112) for the expr-stack side, BUT the
+  **variable-index LOCALS accessors stay at ×8** as a deliberate stopgap to keep the
+  build self-consistent: templateTable_aarch64.cpp `iaddress(Register r)` (line 72,
+  comment "still ×8, tracked as L47b"), `laddress`/`faddress`/`aaddress`, and the
+  `lload/dload/lstore/dstore` `sub(r,rlocals,idx,uxtw,LogBytesPerWord)` forms.
+- frame_aarch64.hpp: `return_addr_offset = 1` -> saved-LR at rfp + 1*wordSize =
+  rfp+16. A ×8-strided variable-index local store during a class `<clinit>` lands on
+  the wrong 16-B slot; the layout puts the saved-LR exactly one mis-strided slot
+  away, so the slot gets an SP/stack value -> `leave()` restores lr=SP -> ret-to-
+  stack (the observed crash). Same bug class (class-3 layout/size), same component
+  (interpreter locals), consistent with the full §J-§N evidence chain.
+- docs/38 predicted this class is "latent, scale-dependent corruption... invisible on
+  constant-index fast paths, only bites on variable-index access" — exactly a
+  <clinit> using a variable-index local.
+
+THE FIX = complete L47b (spec in docs/38 §"L47b — the systematic fix"):
+  1. The ~12 `__ ldr/str(dst, iaddress(r))` call sites (templateTable lines
+     632/640/643/650/682/694/728/849/1014/1051/1552/1554): compute the slot address
+     first via `lea(scratch, Address(rlocals, r, lsl logStackElementSize))` (lea has
+     no shift constraint; an 8-byte ldr can't use lsl #4 directly -> "bad shift"),
+     then load/store at offset 0. For OOP locals (aaddress) the load is a 16-B cap
+     load, so `cap_ldr c,[base,idx,lsl#4]` is legal and can stay scaled.
+  2. `lload/dload/lstore/dstore`: `sub(..., LogBytesPerWord)` -> `logStackElementSize`.
+  3. Audit interp_masm (e.g. :1925) for `lsl(logStackElementSize)` used as a scaled-
+     load shift on an 8-byte access -> same lea treatment.
+Do (1)-(3) atomically (keep locals self-consistent). This is a real codegen refactor
++ build + boot + test cycle (NOT just analysis). Once it boots past fn_id 47, the
+code-5 handler fix (layer 1) can finally be validated on MinMove, then the StoplessGC
+move. NB: this L47b bug is a Zero/template-interpreter PORT artifact — a fresh
+CHERI-native GC design (the project's actual contribution) never inherits it.
