@@ -726,3 +726,41 @@ re-armed pre-String.<clinit>) is the reusable, gdb-free way to get full trapfram
 stack + cap-register state on any boot crash. Diagnostic source changes
 (instanceKlass clinit hook, the dumper) are kept as WIP records, not in the apply
 series, until boot is validated end-to-end.
+
+## U. Faulting branch = ret/br to sender_sp; dispatch path intact (2026-06-03)
+
+Built in-process disassembly into the crash dumper (gdb via the system gdbstub
+CANNOT read this process's userspace — when the hung process isn't the current
+CPU context, TTBR0 differs and reads return "unmapped"; the dumper runs IN the
+java address space with cap access, so it reads code/data by re-addressing any
+tagged register cap whose bounds cover the target). Findings (ASLR off, stable):
+
+- The invoke return-entry @0x428f5df0 disassembles cleanly and ends with the
+  bytecode dispatch `br x9` (0x428f5e5c): ldrb w8,[rbcp,#step]! ; addw w9,w8,#0x900
+  ; lslw w9,#4 ; ldr x9,[rdispatch,w9] ; br x9. All cap-correct (C-6 fixes intact).
+- The dispatch TABLE (rdispatch=0x422749c0) is VALID: entries are real handlers
+  (0x428faca8, 0x428fad28, ...). So a `br x9` from the table cannot yield a stack
+  value. Therefore the faulting branch is NOT the dispatch.
+- rbcp=0x590050d0, rmethod=0x590051c0 are in metaspace (NOT codecache — the old
+  0x59xxxxxx=codecache guess was wrong; these registers are fine).
+- The crash branch target = 0x426bd010 = sender_sp = esp = CSP. c9(rscratch2)=
+  sender_sp is just our remove_activation `cap_ldr_imm(rscratch2,rfp,sender_sp)`
+  leftover (coincidental). By elimination the faulting branch is `ret(lr)` (or a
+  stub ret) with lr(c30)=sender_sp.
+- BUT c8(rscratch1)=0x428f5df0 (a return-entry addr) is inconsistent with the
+  template _return's `cap_clear_bit0(lr,rscratch1)` having just run (it would
+  make rscratch1==lr.addr==target). So either the faulting ret is a NON-template
+  path (call_stub/native/method-handle ret, no cap_clear_bit0), or c8 is stale
+  from a prior successful _return (which DID return to 0x428f5df0).
+- Wide stack window: the caller frame (rfp~0x426bd030: saved_fp=0x426bd100,
+  saved_lr=0x428f5df0, sender_sp slot=0x426bd010) is INTACT. leave() did NOT run
+  for the crashing frame (c29=0x426bd100 is not 0 and not derivable from a leave
+  off any frame whose [rfp+16]=0x426bd010), so the crash is BEFORE leave() or in a
+  non-_return path.
+
+OPEN: identify the exact ret/br. Static forensics is exhausted (ELR=post-branch
+target; branch PC not preserved). Decisive next step needs the java process as
+gdb's CURRENT context to single-step: break on the KERNEL EL0 instruction-abort
+handler (TTBR0 still = java there) and step the few instrs before the fault, OR
+add a `brk #0` to the dumper so gdb stops in java context. The §S remove_activation
+fix remains correct and necessary (it fixed the CSP-tag-strip half).

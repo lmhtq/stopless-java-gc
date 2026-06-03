@@ -373,13 +373,13 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
        been incremented by 32, so the crashing callee frame base was CSP-32 and
        its saved-LR slot (rfp+16) was at CSP-16. Dump a window around it. */
     fprintf(stderr, "[stopless]   stack window (via CSP cap):\n");
-    for (long off = -48; off <= 96; off += 8) {
+    for (long off = -256; off <= 160; off += 8) {
         unsigned long a = spA + off;
         unsigned long w = stopless_stk_rd(csp, a);
         const char *mark = "";
-        if (off == -16) mark = "  <== callee saved-LR slot (CSP-16)";
-        else if (off == -32) mark = "  <== callee saved-FP slot (CSP-32)";
-        else if (off == 0)   mark = "  <== CSP";
+        if (off == 0)   mark = "  <== CSP=sender_sp";
+        /* flag any slot that == sender_sp (0x...d010): a corrupt saved-LR */
+        else if (w == spA) mark = "  <== holds CSP/sender_sp value!";
         fprintf(stderr, "[stopless]     [%#lx] (CSP%+ld) = %#018lx%s\n", a, off, w, mark);
     }
     /* Full cap-register file: tag + address for x0..x30. Reveals which
