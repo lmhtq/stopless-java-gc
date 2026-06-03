@@ -428,3 +428,42 @@ purecap; test empirically. (2) DEEPER DIAG: set a HW breakpoint at the specific
 codecache stub PC (find it by scanning the codecache for the cap_blr/ret pattern, or
 break at cap_trampoline_dispatch=0x41abf0cc and read CLR to locate the caller stub),
 single-step the epilogue at EL0 where userspace memory IS readable.
+
+## M. B2 EL0 single-step — BACKTRACE + the build is template-interpreter, not pure Zero
+
+Caught the fault at EL0 via `hbreak *0x4267c010` (HW bp; needs `file kernel.full`
+loaded first or gdb mis-parses the morello 'g' packet -> "Truncated register 37").
+At EL0, userspace memory IS readable -> walked the FP chain + symbolized.
+
+SYMBOLIZED C++ BACKTRACE (frames 2-7, real C frames; libjvm base 0x41600000):
+  JNI_CreateJavaVM_inner (jni.cpp:3626)
+   -> InstanceKlass::initialize_impl (instanceKlass.cpp:1186)
+   -> InstanceKlass::call_class_initializer
+   -> [generated code 0x428b...] running a class <clinit>   -> crash
+So the JVM is running a class STATIC INITIALIZER (<clinit>) and the RETURN from the
+generated code corrupts x30(LR): the frame's saved LR on the stack is INTACT
+([fp+16]=0x428b5df0, valid code), but the x30 REGISTER = 0x4267c010 (== SP) at the
+`ret` -> branch to stack -> ifetch abort. So x30 is clobbered to an SP value before
+ret (not a metadata-loss; the call_stub callee-saved restore is already cap-correct
+via cap_ldp_imm, §stubGenerator).
+
+GENERATED CODE IDENTITY (disassembled at EL0, ASLR off):
+  0x428b5dec: `br x9`     (bytecode-dispatch-to-next-handler)
+  0x428b01bc: `blr x4`    (method-entry call)
+These are TEMPLATE-INTERPRETER idioms. **This "Zero VM" build is actually running
+template-interpreter generated code** (br-x9 dispatch), which is WHY it emits the
+aarch64 StubGenerator/call_VM_leaf trampoline stubs that a pure-Zero C++ interpreter
+would not (resolves the long-standing "why does Zero generate aarch64 stubs?"
+puzzle in §C). The 0x428a8000-0x448a8000 (32 MB) region is the interpreter/stub
+code; codecache proper is 0x54bc0000-0x5d3c0000.
+
+NET: the boot crash is **x30/LR clobbered to SP on return from a class <clinit>** in
+the template-interpreter's method-return / call path on purecap. Fix direction:
+disassemble frame-0's generated return routine to find the instruction that sets x30
+from sp (e.g. a `mov c30,csp`-like or a frame-restore that loads x30 from the wrong
+slot), or audit templateInterpreterGenerator's return-entry / the call_stub's
+`blr c_rarg4` (line 330) return handling for a wordSize(16)-vs-8 LR-slot bug. Now
+fully tractable at EL0 (HW bp in the specific generated routine; memory readable).
+This is the THIRD distinct C-9 layer: (1) handler code-5 [FIXED], (2) the boot SIGILL
+[here, characterized to template-interpreter <clinit>-return x30 corruption], and the
+StoplessGC move itself [untestable until boot works].
