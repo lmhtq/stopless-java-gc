@@ -188,6 +188,59 @@ All uncommitted-but-preserved; reasonable to keep:
   - Seed `_cap_trampoline_addr` in the Zero branch (necessary but not sufficient —
     see C; the seeding-timing fix is future work).
 
+## G. OBSERVABILITY BREAKTHROUGH (2026-06-03) — QEMU exception log works
+
+The §C claim "undiagnosable in this environment" is now **partly lifted**. The
+docs/41 §D-recommended route works: **QEMU's own exception log via the HMP monitor**,
+no guest debugger needed.
+
+**Method (reproducible):**
+1. Launch the guest directly (not via cheribuild) mirroring its QEMU cmdline, adding
+   a monitor socket: `-monitor unix:/tmp/qmon.sock,server,nowait` and `-L
+   .../sdk/share/qemu -bios edk2-aarch64-code.fd` (drop the optional `-virtfs`/`smb`
+   shares — boot doesn't need them). Script: `/tmp/launch_qemu_dbg.sh`.
+2. Boot fully (sshd on :10005), THEN toggle logging at runtime via the monitor
+   (keeps the log to just the java run): connect the unix socket, send
+   `logfile /tmp/qemu_trap.log` then `log int,guest_errors,unimp`. (`/tmp/qmon.py`
+   sends HMP commands over the socket.)
+3. `ssh` run `java -version` (crashes), then `log none`.
+4. Analyze `/tmp/qemu_trap.log` — `int` logs every exception with EC/ESR/ELR/PSTATE.
+
+**Findings:**
+- **This QEMU's Morello model is INCOMPLETE.** It raises `EXCP_UDEF` (exception 1
+  "Undefined Instruction", ESR EC=0x00 "Unknown") for Morello instructions it does
+  not decode — **confirmed for `scbnds`** (set-capability-bounds, `0xc2d03815`). The
+  **CheriBSD kernel emulates** these in its undef handler and returns to **ELR+4**
+  (survivable). 662 of 663 undefs in a `java -version` run are EC=0x07 benign
+  lazy-FP-enable traps (return to ELR = retry). So instruction-coverage gaps are
+  masked by kernel emulation — until one the kernel can't emulate.
+- **libjvm.so runtime base = `0x41600000`** (12.3 MB stripped; `.text` segment at
+  `0x419ef000`, file off `0x3df000`; full mapping `0x41600000-0x422a9000`). To map a
+  runtime PC to a symbol: `llvm-symbolizer --obj=<unstripped build libjvm.so>
+  $((pc-0x41600000))`. (Stripping preserves offsets, so the unstripped build copy
+  symbolizes the deployed stripped one.) NOTE base is ASLR'd — re-derive per run via
+  `truss` (grep the `open("…/libjvm.so")` then its big `mmap`).
+- **The crash is NOT in libjvm proper.** java's last libjvm-range exception is a
+  **SVC (syscall)** at `0x41717…` (the `[C6TRAMP] fn_id 47` `write`); after that it
+  enters a **codecache stub and faults there** — consistent with the §C trampoline
+  `cap_blr` hypothesis. No "Undefined Instruction" exception in the log is fatal
+  (all emulated or FP-retry), so the fatal fault is in the codecache execution path
+  (a mis-branch / ifetch, NOT a missing opcode).
+
+**Still to pin (now TRACTABLE with the method above):** the exact codecache fault.
+EL0 PC bands seen: `0x40` (32k, low libs), `0x41` (9k, libc+libjvm), `0x42` (2.3k —
+**candidate codecache / high libs**, last activity @line 157022), plus 2 signal-
+trampoline deliveries (`0xfffffffff000`, lines 171332/172871). Next pass: find the
+anonymous RWX **codecache** mmap range (via `truss` — a large `MAP_ANON|PROT_EXEC`
+mmap) and grep the log for the last exception with ELR in that range; that ELR is
+the faulting `cap_blr`/stub instruction. Then disassemble the codecache (dump it
+from the guest, or regenerate the stub) to see the offending instruction.
+
+> Net: the boot blocker is most plausibly a **codecache cap-branch fault** (the §C
+> seeding-timing or a mode/bounds issue on the stub), NOT a missing-opcode problem —
+> though this QEMU's incomplete Morello coverage (scbnds) means a real-hardware /
+> Morello-FVP run is also worth trying as a cross-check.
+
 ## F. Environment state (rebuilt this session, consistent)
 - `cheribsd` pinned at `bb0e87e`; sysroot `rootfs-morello-purecap` + disk-image +
   libjvm all rebuilt consistently from it. Guest boots CheriBSD fine (sshd on
