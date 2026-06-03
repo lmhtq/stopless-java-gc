@@ -134,3 +134,4 @@
 #       OOM path. See docs/c4/{design,impl_notes,test}.md.
 0085-stopless-arena-allocate-wire.patch
 0131-c9-zero-seed-cap-trampoline-addr.patch
+0132-c9-sigdiag-cap-dump-in-posix-signal-handler.patch

@@ -1,0 +1,43 @@
+diff --git a/src/hotspot/os/posix/signals_posix.cpp b/src/hotspot/os/posix/signals_posix.cpp
+index d800fa3381a..68282521215 100644
+--- a/src/hotspot/os/posix/signals_posix.cpp
++++ b/src/hotspot/os/posix/signals_posix.cpp
+@@ -571,6 +571,38 @@ int JVM_HANDLE_XXX_SIGNAL(int sig, siginfo_t* info,
+   PosixSignals::unblock_error_signals();
+ 
+   ucontext_t* const uc = (ucontext_t*) ucVoid;
++
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 boot-SIGILL diagnostic: dump the faulting capability-register state the
++  // instant ANY synchronous error signal arrives, before crash protection /
++  // reporting (which is failing — "no core: bad address"). Env-gated so normal
++  // runs are unaffected. Metadata-only (no deref) → fault-safe. Reveals the
++  // faulting PCC (and its A64/C64 mode flag), CSP, CLR, and the scratch regs the
++  // codecache trampoline uses (c16=rscratch1 holds the loaded trampoline cap).
++  if ((sig == SIGILL || sig == SIGSEGV || sig == SIGBUS) &&
++      ::getenv("STOPLESS_SIGDIAG") != NULL) {
++    ::fprintf(stderr, "[SIGDIAG] sig=%d si_code=%d si_addr=%p\n",
++              sig, info ? info->si_code : -1, info ? info->si_addr : NULL);
++    #define STOPLESS_DC(nm, v) do { void* _c = (void*)(__uintcap_t)(v);          \
++        ::fprintf(stderr, "  %-4s tag=%d addr=%#lx base=%#lx top=%#lx "          \
++            "perms=%#lx flags=%d(C64=%d)\n", nm,                                 \
++            (int)__builtin_cheri_tag_get(_c),                                    \
++            (unsigned long)__builtin_cheri_address_get(_c),                      \
++            (unsigned long)__builtin_cheri_base_get(_c),                         \
++            (unsigned long)(__builtin_cheri_base_get(_c)+__builtin_cheri_length_get(_c)), \
++            (unsigned long)__builtin_cheri_perms_get(_c),                        \
++            (int)__builtin_cheri_flags_get(_c),                                  \
++            (int)(__builtin_cheri_flags_get(_c) & 1)); } while (0)
++    STOPLESS_DC("PCC", uc->uc_mcontext.mc_capregs.cap_elr);
++    STOPLESS_DC("CSP", uc->uc_mcontext.mc_capregs.cap_sp);
++    STOPLESS_DC("CLR", uc->uc_mcontext.mc_capregs.cap_lr);
++    STOPLESS_DC("c16", uc->uc_mcontext.mc_capregs.cap_x[16]);
++    STOPLESS_DC("c17", uc->uc_mcontext.mc_capregs.cap_x[17]);
++    #undef STOPLESS_DC
++    ::fflush(stderr);
++  }
++#endif
++
+   Thread* const t = Thread::current_or_null_safe();
+ 
+   // Handle JFR thread crash protection.

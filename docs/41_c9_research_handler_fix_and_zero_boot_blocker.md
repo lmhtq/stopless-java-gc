@@ -283,3 +283,32 @@ the QEMU gdbstub (`-s`), set a HW breakpoint on the kernel's signal-post path or
 process's sigtramp, read the corrupt cap; (2) instrument HotSpot's SIGILL/SIGSEGV
 handler to dump full cap-register state on first entry (one build cycle); (3) run on
 the Morello FVP / real hardware where instruction coverage is complete.
+
+## I. Signal-handler instrumentation (2026-06-03) — fault is UNDELIVERABLE
+
+Instrumented HotSpot's generic signal handler entry (`JVM_HANDLE_XXX_SIGNAL` in
+os/posix/signals_posix.cpp, env-gated `STOPLESS_SIGDIAG`) to dump cap-register state
+(PCC/CSP/CLR/c16/c17) the instant any SIGILL/SIGSEGV/SIGBUS arrives. Patch 0132.
+
+Result: **`[SIGDIAG]` never prints.** Neither HotSpot's handler nor the cap_runtime
+ctor SIGILL handler (installed at libjvm load, even with `-Xrs`) is ever entered on
+the fatal signal. Conclusion — the fatal fault is **UNDELIVERABLE**:
+- It occurs BEFORE signal handlers are installed (fn_id 47 = stub gen in
+  init_globals, before os::init_2 / stopless_handler_install — consistent with
+  "[Stopless] SIGPROT handler installed" never printing pre-crash), AND
+- It corrupts capability machine state (CSP) so the kernel can deliver the signal
+  to NO handler and cannot write a core ("no core — bad address").
+
+So it is terminate-by-default, and the corruption (not a clean illegal opcode) is
+the root — which is why no fatal `Undefined Instruction` appears in the `-d int` log.
+
+**Tools now exhausted: exception log AND handler instrumentation both defeated by
+the corruption/pre-init timing.** The ONE remaining viable tool is a **machine-level
+debugger via the QEMU gdbstub** (`-s -S`), which is independent of guest signal
+delivery and handler installation: build a Morello/aarch64-aware gdb on the host
+(cheribuild has a gdb target; the `--upstream-gdb/*` options exist), attach to the
+gdbstub, set a HW watchpoint on the thread CSP / the `_cap_trampoline_addr` slot or a
+HW breakpoint at the first codecache stub entry, single-step the cap_blr, and read
+the exact instruction + capability that corrupts state. That is the concrete next
+step; everything else (addresses, ruled-out hypotheses) is now in place to make it
+fast.
