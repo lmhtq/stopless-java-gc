@@ -795,3 +795,23 @@ NEXT: find that ret's address (disassemble the call_stub @~0x428f0140 and the
 native/MH entries via the dispatch/stub tables) -> `hbreak` it -> single-step the
 ret and read lr's SOURCE slot to see why it = sender_sp. Tooling: scripts/
 catch_landing.gdb (hbreak landing) is the template; swap the address to the ret.
+
+## W. call_stub §S-class fix; -Xint same crash => pure-interp runtime-call path (2026-06-03)
+
+Fixed a genuine §S-class bug in generate_call_stub param-passing (stubGenerator_
+aarch64.cpp ~302): the stock `sub(rscratch1,sp,..)` + `andr(sp,..)` write CSP via
+INTEGER ops, stripping its tag; for a no-param call (a static <clinit>) `mov(r13,sp)`
+then stores an UNTAGGED sender_sp into the entry frame. Fixed: cap-SUB the
+(32-aligned) param delta from CSP preserving the tag. CONFIRMED this is NOT the boot
+crash (the crash is a deeper interp callee whose sender_sp comes from
+jump_from_interpreted, tagged) — same crash signature after the fix. Kept as a
+correctness fix.
+
+`-Xint` (pure interpreter, no C1/compiler-thread/adapter) -> IDENTICAL crash
+(ELR=0x426bd010). So the faulting `ret(lr=sender_sp)` is in the INTERPRETER, and it
+is NOT the template _return (x8≠lr rules out cap_clear_bit0), NOT call_stub, NOT
+dispatch, NOT compiled/adapter. Remaining strong suspect: the RUNTIME-CALL path
+(`call_VM`/`call_VM_base`) taken by String.<clinit>'s first `anewarray` (BCI 5) /
+`new` (BCI 11) / first-exec resolution — a non-_return path with its own
+return-address/frame handling that could leave lr=sender_sp. NEXT: audit
+MacroAssembler::call_VM_base (interpreter runtime-call glue) on purecap.
