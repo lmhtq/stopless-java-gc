@@ -764,3 +764,34 @@ gdb's CURRENT context to single-step: break on the KERNEL EL0 instruction-abort
 handler (TTBR0 still = java there) and step the few instrs before the fault, OR
 add a `brk #0` to the dumper so gdb stops in java context. The §S remove_activation
 fix remains correct and necessary (it fixed the CSP-tag-strip half).
+
+## V. gdb HW-breakpoint confirms: faulting branch is a `ret` to sender_sp (2026-06-03)
+
+Honored the "single-step via gdb" plan, but discovered the system gdbstub can't
+read this process's userspace once it's descheduled (wrong TTBR0), and a program
+`brk #0` is NOT reported to gdb by QEMU (it became a guest SIGTRAP -> died). The
+working technique: a gdb HARDWARE breakpoint (`hbreak`) at a known VA fires
+regardless of current TTBR0, trapping gdb WITH the java process current. Use the
+Morello-capable gdb at third_party/output/upstream-gdb/bin/gdb (the system
+/usr/bin/gdb 12.1 can't parse the Morello 'g' packet — "Truncated register 37").
+
+`hbreak *0x426bd010` (the crash LANDING address; ASLR off) fired exactly once,
+catching the branch the instant it landed on the stack, java context current:
+    pc = x30(lr) = x9 = x13 = x20 = sp = 0x426bd010 (= sender_sp)
+    x8(rscratch1) = 0x428f5df0   (a return-entry addr, NOT a small bytecode)
+    x29(fp) = 0x426bd100 (intact)
+Conclusions (now firm):
+ - NOT the dispatch `br x9`: that path does `ldrb w8,[rbcp]` first, so x8 would be
+   a small bytecode; x8=0x428f5df0 instead.
+ - It is a `ret` (target = x30 = sender_sp).
+ - NOT the template `_return`: its `cap_clear_bit0(lr,rscratch1)` runs immediately
+   before `ret(lr)` and sets rscratch1 = lr.addr; here x8(rscratch1)=0x428f5df0 ≠
+   lr(0x426bd010), so no cap_clear_bit0 preceded this ret. x8 is leftover from a
+   PRIOR successful _return (which returned to the invoke return-entry 0x428f5df0).
+ => the faulting `ret` is a NON-template path: call_stub / native wrapper /
+    method-handle / i2c-c2i adapter `ret`, whose lr was restored as sender_sp.
+
+NEXT: find that ret's address (disassemble the call_stub @~0x428f0140 and the
+native/MH entries via the dispatch/stub tables) -> `hbreak` it -> single-step the
+ret and read lr's SOURCE slot to see why it = sender_sp. Tooling: scripts/
+catch_landing.gdb (hbreak landing) is the template; swap the address to the ret.
