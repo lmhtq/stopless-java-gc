@@ -815,3 +815,39 @@ dispatch, NOT compiled/adapter. Remaining strong suspect: the RUNTIME-CALL path
 `new` (BCI 11) / first-exec resolution — a non-_return path with its own
 return-address/frame handling that could leave lr=sender_sp. NEXT: audit
 MacroAssembler::call_VM_base (interpreter runtime-call glue) on purecap.
+
+## X. RT trace localizes crash to first interp->interp->interp call; return-entry stride fix (2026-06-03)
+
+Instrumented InterpreterRuntime (_new/anewarray/resolve_from_cache) with prints.
+String.<clinit> trace before the crash (pure -Xint):
+    [CLINIT-RUN] java.lang.String
+    resolve_from_cache putstatic        (BCI1 COMPACT_STRINGS)
+    anewarray size=0 enter/exit OK      (BCI5 ObjectStreamField[0])
+    resolve_from_cache putstatic        (BCI8 serialPersistentFields)
+    _new enter                          (BCI11 new CaseInsensitiveComparator)
+    resolve_from_cache invokespecial    (BCI15 -> CaseInsensitiveComparator.<init>)
+    resolve_from_cache invokespecial    (CIC.<init> BCI1 -> Object.<init>)
+    <CRASH>
+So the crash is the FIRST interp->interp->interp call/return chain
+(String.<clinit> -> CaseInsensitiveComparator.<init> -> Object.<init>), a ret/br to
+sender_sp (0x426bd010). It is NOT _return (x8=rscratch1=0x428f5df0 ≠ lr, so no
+cap_clear_bit0 preceded it), NOT the dispatch br x9 (x8 not a bytecode), NOT
+jump_from_interpreted's `br rscratch1` (x8≠target), NOT call_stub, NOT compiled
+(-Xint identical).
+
+Found+fixed (genuine, but NOT the immediate crash — confirmed by no address shift):
+the invoke RETURN-ENTRY's machine-SP reconstruction (generate_return_entry_for) used
+stride ×8 (+roundup16) while generate_fixed_frame uses ×16 (logStackElementSize). Mis-
+restores the caller CSP by (max_stack+monitor+2)*8 after EVERY interpreted return —
+fixed to ×16. (Not reached before the current crash, so the boot crash is unchanged;
+kept as a correctness fix that would otherwise bite once we get past the current one.)
+
+THREE §S-class cap bugs now fixed (remove_activation §S, call_stub §W, return-entry
+§X) — all real, none the immediate boot crash. The immediate crash (ret/br to
+sender_sp in the first nested call) still eludes exact pinpointing: static analysis
+exhausted; gdb stepi-trace impractical (slow gdbstub + the crash precedes every
+breakpoint I can place by symbol). DECISIVE next options: (a) build a fastdebug JVM
+and use -XX:+TraceBytecodes (last bytecode before crash = culprit, exact); (b) hbreak
+at the resolve_from_cache RETURN into the invokespecial template and stepi the small
+call->entry->return window; (c) add a per-method-entry C++ print (Method name) to
+identify which method's entry/return faults.
