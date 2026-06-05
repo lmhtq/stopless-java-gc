@@ -872,3 +872,34 @@ is in that small pure-interp window (return-entry restore/CSP-reconstruct/dispat
 or CIC.<init>'s own subsequent _return). This is the FIRST empty-method return in the
 whole boot. Tracing it: hbreak *0x428f5df0 if $x12(rmethod)==0x590051c0 (fires only on
 Object.<init>'s return), then stepi the ~30-instr window.
+
+## Z. ★ ROOT CAUSE FOUND & FIXED: cap_clear_bit0 SCVALUE base off-by-one-bit (2026-06-06)
+
+THE boot blocker. `MacroAssembler::cap_clear_bit0(Cn=lr, tmp=rscratch1)` (used by
+every interpreted `_return` to clear PSTATE.C64 bit0 from the return sentry) emitted
+SCVALUE with base constant `0xC2C14000`. The TRUE SCVALUE encoding (verified with the
+Morello assembler — `llvm-mc`/clang: `scvalue c30,c30,x8` = 0xc2c843de,
+`scvalue c30,c30,x9` = 0xc2c943de) has Rm in bits[20:16] and base `0xC2C04000`. The
+extra set bit (0x10000) meant `Rm = tmp->encoding() | 1`. For tmp = rscratch1 = x8
+(EVEN), Rm became x9 = rscratch2. So:
+    andr(x8, lr, ~1)          ; x8 = correct bit0-cleared return address
+    scvalue(lr, lr, x9)       ; lr.address = x9  (NOT x8!)
+and x9 (rscratch2) holds sender_sp right after remove_activation (it is the
+sender_sp the remove_activation tail cap-LDRs). So `ret(lr)` jumped to sender_sp — a
+stack address. EVERY interpreted _return was affected; it surfaced at the FIRST one
+in boot: java.lang.Object.<init> during java.lang.String.<clinit>.
+
+This perfectly explains the long-standing puzzle "x8(=0x428f5df0, the return-entry)
+≠ lr(=0x426bd010, sender_sp) at the landing, so it's not _return": x8 WAS the correct
+address cap_clear_bit0 computed; the buggy scvalue used x9 instead. It is the
+template _return after all.
+
+FIX: 0xC2C14000U -> 0xC2C04000U in BOTH cap_clear_bit0 AND cap_lea_global
+(macroAssembler_aarch64.hpp). cap_lea_global has the same base typo (manifests only
+when its tmp is an even register).
+
+How it eluded earlier C-phases: this code path (template _return's cap_clear_bit0 with
+an even rscratch1) is only exercised by an INTERPRETED Java method return; the
+C-5..C-8 tests (java -version reaching argument parsing, HelloGC) crashed/finished
+before the first interpreted return, or the earlier no-call microbenches avoided it.
+The three §S/§W/§X fixes were real but secondary cap bugs on the same return path.
