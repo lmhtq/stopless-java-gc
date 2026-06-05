@@ -851,3 +851,24 @@ and use -XX:+TraceBytecodes (last bytecode before crash = culprit, exact); (b) h
 at the resolve_from_cache RETURN into the invokespecial template and stepi the small
 call->entry->return window; (c) add a per-method-entry C++ print (Method name) to
 identify which method's entry/return faults.
+
+## Y. FAULTING METHOD = java.lang.Object.<init> (empty); decoded via gdb (2026-06-06)
+
+Used the landing hbreak (0x426bd010) + libjvm DWARF offsets to decode the frame
+Method* names (Method::_constMethod@16 -> ConstMethod::_constants@16 /
+_name_index@58 -> ConstantPool[base=128 + idx*16] -> Symbol::_length@4/_body@6;
+holder via ConstantPool::_pool_holder@48 -> Klass::_name@32). Result:
+  FAULTING popped frame  M=0x590051c0  class=java/lang/Object             method=<init>
+  caller frame           M=0x595561c0  class=java/lang/String$CaseInsensitiveComparator method=<init>
+  + a java/lang/String frame (String.<clinit>).
+
+So the crash is on the return path of **java.lang.Object.<init>** — THE canonical
+empty method (bytecode = just `return`; on aarch64 `case empty` falls to
+generate_normal_entry, so it uses normal_entry + the template _return). Since
+x8(rscratch1)=0x428f5df0 = a return-entry addr = Object.<init>'s _return
+cap_clear_bit0 output, Object.<init> _returns CLEANLY to CaseInsensitiveComparator.
+<init>'s invoke return-entry (0x428f5df0); the crash (ret/br to sender_sp 0x426bd010)
+is in that small pure-interp window (return-entry restore/CSP-reconstruct/dispatch,
+or CIC.<init>'s own subsequent _return). This is the FIRST empty-method return in the
+whole boot. Tracing it: hbreak *0x428f5df0 if $x12(rmethod)==0x590051c0 (fires only on
+Object.<init>'s return), then stepi the ~30-instr window.
