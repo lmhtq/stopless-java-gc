@@ -1,0 +1,40 @@
+diff --git a/src/hotspot/share/oops/instanceKlass.cpp b/src/hotspot/share/oops/instanceKlass.cpp
+index 2e9a5125014..18eca6a63e0 100644
+--- a/src/hotspot/share/oops/instanceKlass.cpp
++++ b/src/hotspot/share/oops/instanceKlass.cpp
+@@ -1502,6 +1502,13 @@ Method* InstanceKlass::class_initializer() const {
+   return NULL;
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// C-9 boot-crash diag (docs/41 §R): re-arm the sigaltstack crash dumper in
++// libstopless_gc.a after HotSpot signal init. Declared at namespace scope
++// (block-scope linkage specs are illegal in C++).
++extern "C" void stopless_install_crash_diag(void);
++#endif
++
+ void InstanceKlass::call_class_initializer(TRAPS) {
+   if (ReplayCompiles &&
+       (ReplaySuppressInitializers == 1 ||
+@@ -1521,6 +1528,21 @@ void InstanceKlass::call_class_initializer(TRAPS) {
+     ls.print_cr("%s (" INTPTR_FORMAT ")", h_method() == NULL ? "(no method)" : "", p2i(this));
+   }
+   if (h_method() != NULL) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 boot-SIGILL diag (docs/41 §J-§Q): the crash is a corrupted saved-LR
++    // (lr=SP) on RETURN from a class <clinit> in the template interpreter. Print
++    // each <clinit> class before running it; the LAST one printed before the
++    // "Illegal instruction" is the culprit class. Printed BEFORE the call so it
++    // survives the crash.
++    { ResourceMark rm(THREAD);
++      fprintf(stderr, "[CLINIT-RUN] %s\n", external_name()); fflush(stderr); }
++    // Re-arm our sigaltstack crash dumper right before the FIRST <clinit>
++    // (java.lang.String). This runs AFTER HotSpot's signal init, so it
++    // overrides HotSpot's SIGILL/SIGSEGV handlers and catches the ret-to-stack
++    // boot crash on its own stack (HotSpot's reporter dies on the corrupt stack
++    // and emits no hs_err — see docs/41 §R). Idempotent.
++    stopless_install_crash_diag();
++#endif
+     JavaCallArguments args; // No arguments
+     JavaValue result(T_VOID);
+     JavaCalls::call(&result, h_method, &args, CHECK); // Static call (no args)

@@ -1,0 +1,292 @@
+diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+index 7abb2205414..0fa2a8f17dd 100644
+--- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
+@@ -336,9 +336,20 @@ void MacroAssembler::set_last_Java_frame(Register last_java_sp,
+                                          Register scratch) {
+ 
+   if (last_java_pc->is_valid()) {
+-      str(last_java_pc, Address(rthread,
+-                                JavaThread::frame_anchor_offset()
+-                                + JavaFrameAnchor::last_Java_pc_offset()));
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #41: the JavaFrameAnchor last_Java_{pc,sp,fp} slots hold
++    // capabilities; integer str strips their tags, so C++ frame walking
++    // (frame::interpreter_frame_method() etc.) later dereferences a
++    // tag-0 fp/sp and faults. Use cap-STR. High-leverage: every VM call
++    // sets this anchor.
++    cap_str_imm(last_java_pc, rthread,
++                in_bytes(JavaThread::frame_anchor_offset()
++                         + JavaFrameAnchor::last_Java_pc_offset()));
++#else
++    str(last_java_pc, Address(rthread,
++                              JavaThread::frame_anchor_offset()
++                              + JavaFrameAnchor::last_Java_pc_offset()));
++#endif
+     }
+ 
+   // determine last_java_sp register
+@@ -349,11 +360,19 @@ void MacroAssembler::set_last_Java_frame(Register last_java_sp,
+     last_java_sp = esp;
+   }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  cap_str_imm(last_java_sp, rthread, in_bytes(JavaThread::last_Java_sp_offset()));
++#else
+   str(last_java_sp, Address(rthread, JavaThread::last_Java_sp_offset()));
++#endif
+ 
+   // last_java_fp is optional
+   if (last_java_fp->is_valid()) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_str_imm(last_java_fp, rthread, in_bytes(JavaThread::last_Java_fp_offset()));
++#else
+     str(last_java_fp, Address(rthread, JavaThread::last_Java_fp_offset()));
++#endif
+   }
+ }
+ 
+@@ -364,9 +383,17 @@ void MacroAssembler::set_last_Java_frame(Register last_java_sp,
+   assert(last_java_pc != NULL, "must provide a valid PC");
+ 
+   adr(scratch, last_java_pc);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #41: last_Java_pc is a capability; cap-STR preserves its tag
++  // for C++ frame walking (which derives the CodeBlob from this pc).
++  cap_str_imm(scratch, rthread,
++              in_bytes(JavaThread::frame_anchor_offset()
++                       + JavaFrameAnchor::last_Java_pc_offset()));
++#else
+   str(scratch, Address(rthread,
+                        JavaThread::frame_anchor_offset()
+                        + JavaFrameAnchor::last_Java_pc_offset()));
++#endif
+ 
+   set_last_Java_frame(last_java_sp, last_java_fp, noreg, scratch);
+ }
+@@ -955,14 +982,29 @@ void MacroAssembler::call_VM(Register oop_result,
+ 
+ 
+ void MacroAssembler::get_vm_result(Register oop_result, Register java_thread) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #51: the call_VM oop result (e.g. the object from `new`) is a
++  // 16-byte capability; an 8-byte ldr drops its tag so the returned oop
++  // faults on first use. cap-LDR preserves it. High-leverage: every
++  // call_VM that returns an oop (new, newarray, ldc, resolution, ...).
++  cap_ldr_imm(oop_result, java_thread, in_bytes(JavaThread::vm_result_offset()));
++#else
+   ldr(oop_result, Address(java_thread, JavaThread::vm_result_offset()));
++#endif
+   str(zr, Address(java_thread, JavaThread::vm_result_offset()));
+   verify_oop(oop_result, "broken oop in call_VM_base");
+ }
+ 
+ void MacroAssembler::get_vm_result_2(Register metadata_result, Register java_thread) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #51: the metadata result (Method*/Klass*) is a capability too.
++  cap_ldr_imm(metadata_result, java_thread, in_bytes(JavaThread::vm_result_2_offset()));
++  str(zr, Address(java_thread, JavaThread::vm_result_2_offset()));
++  return;
++#else
+   ldr(metadata_result, Address(java_thread, JavaThread::vm_result_2_offset()));
+   str(zr, Address(java_thread, JavaThread::vm_result_2_offset()));
++#endif
+ }
+ 
+ void MacroAssembler::align(int modulus) {
+@@ -1513,6 +1555,10 @@ Address MacroAssembler::argument_address(RegisterOrConstant arg_slot,
+   }
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++extern int cap_trampoline_id_for(address fn);
++#endif
++
+ void MacroAssembler::call_VM_leaf_base(address entry_point,
+                                        int number_of_arguments,
+                                        Label *retaddr) {
+@@ -1520,8 +1566,49 @@ void MacroAssembler::call_VM_leaf_base(address entry_point,
+ 
+   stp(rscratch1, rmethod, Address(pre(sp, -2 * wordSize)));
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #25 (Option C): codecache PCC bounds cannot reach libjvm.so
++  // .text; route through cap_trampoline_dispatch (whose cap is seeded
++  // in Thread::_cap_trampoline_addr from C++ space).
++  // ABI: c0 = fn_id, c1..c5 = original c0..c4.
++  //
++  // C-6 fix #27: shift a FIXED FIVE registers c0..c4 → c1..c5,
++  // UNCONDITIONALLY, regardless of number_of_arguments. The naive
++  // "shift number_of_arguments regs" was WRONG: call_VM_base invokes
++  // call_VM_leaf_base with the JavaThread* already in c_rarg0 PLUS
++  // number_of_arguments additional args in c_rarg1.., so the true
++  // count of occupied arg registers is number_of_arguments+1 in that
++  // path but number_of_arguments in the leaf path. Shifting a fixed 5
++  // (the max the dispatch's a0..a4 can carry) handles both uniformly,
++  // since real args always occupy a prefix of c0... Extra shifted
++  // garbage in high regs is harmless — the runtime fn ignores args
++  // beyond its arity. (No HotSpot runtime call uses >5 cap args incl.
++  // the thread.)
++  guarantee(number_of_arguments <= 4,
++            "call_VM path: thread + up to 4 args must fit in c0..c4");
++  for (int i = 4; i >= 0; i--) {
++    Register src = as_Register(i);     // c(i)
++    Register dst = as_Register(i + 1); // c(i+1)
++    mov(dst, src);                     // cap-MOV preserves tags (patch 0090)
++  }
++  // Put fn_id (a small int) into w0. The cap metadata on c0 is then
++  // irrelevant — the trampoline only reads the integer fn_id.
++  int fn_id = cap_trampoline_id_for(entry_point);
++  movw(as_Register(0), (unsigned)fn_id);
++  // Load the trampoline cap from rthread (which holds a wide cap to
++  // Thread*). cap-LDR preserves the loaded cap's tag/bounds/perms.
++  cap_ldr_imm(rscratch1, rthread,
++              in_bytes(Thread::cap_trampoline_addr_offset()));
++  // C-6 fix #26: MUST use cap-BLR. Integer `blr Xn` keeps the current
++  // PCC bounds (codecache) and only updates PC; jumping to libjvm.so
++  // .text then faults PROT_CHERI_BOUNDS on ifetch. cap-BLR installs
++  // rscratch1 as the new PCC (with libjvm.so bounds) and seals the
++  // return address into CLR as a sentry (RET unseals on return).
++  cap_blr(rscratch1);
++#else
+   mov(rscratch1, entry_point);
+   blr(rscratch1);
++#endif
+   if (retaddr)
+     bind(*retaddr);
+ 
+@@ -2775,7 +2862,8 @@ RegSet MacroAssembler::call_clobbered_registers() {
+ }
+ 
+ void MacroAssembler::push_call_clobbered_registers_except(RegSet exclude) {
+-  int step = 4 * wordSize;
++  // CHERI: SIMD T1D stride is 4 * 8B = 32B, not 4 * wordSize (would be 64 on purecap).
++  int step = 4 * BytesPerLong;
+   push(call_clobbered_registers() - exclude, sp);
+   sub(sp, sp, step);
+   mov(rscratch1, -step);
+@@ -2793,7 +2881,7 @@ void MacroAssembler::pop_call_clobbered_registers_except(RegSet exclude) {
+   for (int i = 0; i < 32; i += 4) {
+     if (i <= v7->encoding() || i >= v16->encoding())
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+-          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * wordSize)));
++          as_FloatRegister(i+3), T1D, Address(post(sp, 4 * BytesPerLong)));
+   }
+ 
+   reinitialize_ptrue();
+@@ -2810,7 +2898,7 @@ void MacroAssembler::push_CPU_state(bool save_vectors, bool use_sve,
+       sve_str(as_FloatRegister(i), Address(sp, i));
+     }
+   } else {
+-    int step = (save_vectors ? 8 : 4) * wordSize;
++    int step = (save_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     mov(rscratch1, -step);
+     sub(sp, sp, step);
+     for (int i = 28; i >= 4; i -= 4) {
+@@ -2829,7 +2917,7 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, bool use_sve,
+     }
+     add(sp, sp, sve_vector_size_in_bytes * FloatRegisterImpl::number_of_registers);
+   } else {
+-    int step = (restore_vectors ? 8 : 4) * wordSize;
++    int step = (restore_vectors ? 8 : 4) * BytesPerLong;  // CHERI: SIMD stride not pointer
+     for (int i = 0; i <= 28; i += 4)
+       ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
+           as_FloatRegister(i+3), restore_vectors ? T2D : T1D, Address(post(sp, step)));
+@@ -3856,13 +3944,41 @@ void MacroAssembler::kernel_crc32c(Register crc, Register buf, Register len,
+ }
+ 
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++extern int cap_data_id_for(address global);
++
++void MacroAssembler::lea_libjvm_global(Register dst, address global) {
++  // Register the global (codegen time, where `global` is a valid C++
++  // cap) and load its capability from the Thread-seeded cap_data_table:
++  //   dst = *(Thread::_cap_data_base)            ; &table[0]
++  //   dst = *(dst + (id-1)*16)                   ; table[id-1] = &global
++  int id = cap_data_id_for(global);
++  cap_ldr_imm(dst, rthread, in_bytes(Thread::cap_data_base_offset()));
++  cap_ldr_imm(dst, dst, (id - 1) * 16);
++}
++#endif
++
+ SkipIfEqual::SkipIfEqual(
+     MacroAssembler* masm, const bool* flag_addr, bool value) {
+   _masm = masm;
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #32: generated code in the codecache cannot reach a libjvm.so
++  // global flag at runtime — PCC-relative adrp yields a codecache-bounds
++  // cap (PROT_CHERI_BOUNDS) and DDC is null in purecap processes. But
++  // every flag guarded by SkipIfEqual is parsed during JVM init, BEFORE
++  // the interpreter/stub code is generated, and is constant thereafter.
++  // So resolve the comparison at CODEGEN time (here flag_addr is a valid
++  // C++ cap) and emit a static branch: if the flag already equals `value`
++  // the guarded block is dead, so branch over it; otherwise fall through.
++  if (*flag_addr == value) {
++    _masm->b(_label);
++  }
++#else
+   uint64_t offset;
+   _masm->adrp(rscratch1, ExternalAddress((address)flag_addr), offset);
+   _masm->ldrb(rscratch1, Address(rscratch1, offset));
+   _masm->cbzw(rscratch1, _label);
++#endif
+ }
+ 
+ SkipIfEqual::~SkipIfEqual() {
+@@ -3904,9 +4020,20 @@ void MacroAssembler::load_method_holder_cld(Register rresult, Register rmethod)
+ }
+ 
+ void MacroAssembler::load_method_holder(Register holder, Register method) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 fix (docs/41 §AC): chained metadata pointers are 16-byte capabilities;
++  // integer ldr strips each tag, so the next deref (and clinit_barrier's
++  // init-state byte read on the holder) faults PROT_CHERI_TAG. cap-LDR each.
++  // Fired on the invokestatic class-init barrier (resolve_cache_and_index ->
++  // load_method_holder) running in a class <clinit> after String's.
++  cap_ldr_imm(holder, method, in_bytes(Method::const_offset()));                      // ConstMethod*
++  cap_ldr_imm(holder, holder, in_bytes(ConstMethod::constants_offset()));             // ConstantPool*
++  cap_ldr_imm(holder, holder, ConstantPool::pool_holder_offset_in_bytes());           // InstanceKlass*
++#else
+   ldr(holder, Address(method, Method::const_offset()));                      // ConstMethod*
+   ldr(holder, Address(holder, ConstMethod::constants_offset()));             // ConstantPool*
+   ldr(holder, Address(holder, ConstantPool::pool_holder_offset_in_bytes())); // InstanceKlass*
++#endif
+ }
+ 
+ void MacroAssembler::load_klass(Register dst, Register src) {
+@@ -3914,7 +4041,15 @@ void MacroAssembler::load_klass(Register dst, Register src) {
+     ldrw(dst, Address(src, oopDesc::klass_offset_in_bytes()));
+     decode_klass_not_null(dst);
+   } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 L54: with -UseCompressedClassPointers the Klass* lives in the
++    // oop header as a full 16-byte capability (markWord 8 + 8 pad, klass
++    // at offset 16). A plain 8-byte ldr strips its tag, so every later
++    // deref (access_flags, vtable, ...) faults. cap-LDR preserves the tag.
++    cap_ldr_imm(dst, src, oopDesc::klass_offset_in_bytes());
++#else
+     ldr(dst, Address(src, oopDesc::klass_offset_in_bytes()));
++#endif
+   }
+ }
+ 
+@@ -3942,10 +4077,18 @@ void MacroAssembler::resolve_weak_handle(Register rresult, Register rtmp) {
+ 
+ void MacroAssembler::load_mirror(Register dst, Register method, Register tmp) {
+   const int mirror_offset = in_bytes(Klass::java_mirror_offset());
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #22: chained pointer loads need cap-LDR to preserve tags.
++  cap_ldr_imm(dst, rmethod, in_bytes(Method::const_offset()));
++  cap_ldr_imm(dst, dst, in_bytes(ConstMethod::constants_offset()));
++  cap_ldr_imm(dst, dst, ConstantPool::pool_holder_offset_in_bytes());
++  cap_ldr_imm(dst, dst, mirror_offset);
++#else
+   ldr(dst, Address(rmethod, Method::const_offset()));
+   ldr(dst, Address(dst, ConstMethod::constants_offset()));
+   ldr(dst, Address(dst, ConstantPool::pool_holder_offset_in_bytes()));
+   ldr(dst, Address(dst, mirror_offset));
++#endif
+   resolve_oop_handle(dst, tmp);
+ }
+ 

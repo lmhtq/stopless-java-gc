@@ -1,0 +1,40 @@
+diff --git a/src/hotspot/share/interpreter/interpreterRuntime.cpp b/src/hotspot/share/interpreter/interpreterRuntime.cpp
+index d66ed24d862..ed4d234f775 100644
+--- a/src/hotspot/share/interpreter/interpreterRuntime.cpp
++++ b/src/hotspot/share/interpreter/interpreterRuntime.cpp
+@@ -216,6 +216,9 @@ JRT_END
+ // Allocation
+ 
+ JRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* current, ConstantPool* pool, int index))
++#ifdef __CHERI_PURE_CAPABILITY__
++  fprintf(stderr, "[RT] _new enter\n"); fflush(stderr);
++#endif
+   Klass* k = pool->klass_at(index, CHECK);
+   InstanceKlass* klass = InstanceKlass::cast(k);
+ 
+@@ -251,9 +254,15 @@ JRT_END
+ 
+ 
+ JRT_ENTRY(void, InterpreterRuntime::anewarray(JavaThread* current, ConstantPool* pool, int index, jint size))
++#ifdef __CHERI_PURE_CAPABILITY__
++  fprintf(stderr, "[RT] anewarray enter size=%d\n", (int)size); fflush(stderr);
++#endif
+   Klass*    klass = pool->klass_at(index, CHECK);
+   objArrayOop obj = oopFactory::new_objArray(klass, size, CHECK);
+   current->set_vm_result(obj);
++#ifdef __CHERI_PURE_CAPABILITY__
++  fprintf(stderr, "[RT] anewarray exit ok\n"); fflush(stderr);
++#endif
+ JRT_END
+ 
+ 
+@@ -940,6 +949,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
+ // cpCache entry.  This doesn't safepoint, but the helper routines safepoint.
+ // This function will check for redefinition!
+ JRT_ENTRY(void, InterpreterRuntime::resolve_from_cache(JavaThread* current, Bytecodes::Code bytecode)) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  fprintf(stderr, "[RT] resolve_from_cache enter bc=%s\n", Bytecodes::name(bytecode)); fflush(stderr);
++#endif
+   switch (bytecode) {
+   case Bytecodes::_getstatic:
+   case Bytecodes::_putstatic:
