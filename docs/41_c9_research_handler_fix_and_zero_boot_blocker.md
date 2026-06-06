@@ -931,3 +931,26 @@ Next: port generate_native_entry's call/return sequences + frame stp's.
 Tooling: /tmp/bdt.sh (build+deploy+test), crash dumper ELR auto-disasm. The openjdk
 source changes are live in the working tree and persisted as
 patches/openjdk-jdk17/WIP-c9chase-*.record.
+
+## AH. Native entry fully ported; boot at clinit #3 (2026-06-06)
+
+generate_native_entry is now cap-ported end-to-end and the first native method call
+COMPLETES (§AF/§AG): signature handler (cap_ldr + cap_blr; the generated handler
+cap-RETs), mirror oop store + handle/JNIEnv cap-add, native function (cap_ldr r10 +
+direct unsatisfied compare matching x86 + cap_blr — the cross-region call into the
+native lib works and returns), post-call handle reset (cap_ldr active_handles), oop
+result store, and the result handler (integer blr within the codecache-wide PCC + the
+generated result-handler stub clears the C64 bit0 and integer-rets). Key learning: a
+codecache-internal call uses integer blr + cap_clear_bit0 (one wide PCC); a call to a
+properly-formed code CAP (signature handler from Method::_signature_handler) uses
+cap_blr + cap-RET; a `lea`-derived stub address is NOT a valid cap so cap_blr on it
+faults (tag-0 PCC).
+
+Boot progress: String.<clinit> -> clinit #2 (its first NATIVE method, fully executed)
+-> clinit #3. The crash is now a tag-0 oop null-check (`ldr xzr,[c2]`) in a general
+bytecode template at 0x4290414c — an oop flowed through the expression stack/locals
+with its tag stripped by a not-yet-ported template. This is the broader
+template-oop-handling tail (aload/astore/dup/getfield/aastore/invoke-receiver paths);
+each surfaces the same integer-ldr/str-of-a-cap class and is fixed the same way with
+/tmp/bdt.sh + the ELR-auto-disasm dumper. ~14 cap fixes landed this session
+(§S/§W/§X/§Z/§AA-§AG); the dominant blocker (SCVALUE §Z) is fixed.
