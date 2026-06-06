@@ -426,18 +426,27 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
                  _hi=_lo+(unsigned long)cheri_length_get(_b);                  \
                  if(_a>=_lo && _a+(nbytes)<=_hi){ _p=cheri_address_set(_b,_a); break; }}}\
             _p; })
-        unsigned long code_targets[] = {
-            0x428f5df0UL,           /* rscratch1 leftover = invoke return-entry */
-            (unsigned long)cheri_address_get((void*)(__uintcap_t)cr->cap_x[25]), /* rmonitors code */
-        };
-        for (unsigned t = 0; t < sizeof(code_targets)/sizeof(code_targets[0]); t++) {
-            unsigned long ca = code_targets[t];
-            fprintf(stderr, "[stopless]   ---- code words @ 0x%lx ----\n", ca);
-            for (int w = 0; w < 64; w++) {
-                void *p = COVER(ca + w*4, 4);
+        /* Disassemble around the FAULTING PC (ELR) and decode the faulting
+           instruction's base register so the tag-0 capability is obvious. */
+        unsigned long elr_a = (unsigned long)cheri_address_get((void *)(__uintcap_t)cr->cap_elr);
+        {
+            fprintf(stderr, "[stopless]   ---- code words @ ELR 0x%lx (<== is the fault) ----\n", elr_a);
+            for (long off = -0x20; off <= 0x20; off += 4) {
+                void *p = COVER(elr_a + off, 4);
                 unsigned int insn = p ? *(volatile unsigned int *)p : 0xDEAD0000;
-                fprintf(stderr, "[stopless]     0x%lx: %08x%s\n",
-                        ca + w*4, insn, p ? "" : " (no-cover)");
+                fprintf(stderr, "[stopless]     0x%lx (%+ld): %08x%s\n",
+                        elr_a + off, off, insn,
+                        (off == 0) ? "  <== ELR" : (p ? "" : " (no-cover)"));
+            }
+            void *pf = COVER(elr_a, 4);
+            if (pf) {
+                unsigned int fi = *(volatile unsigned int *)pf;
+                unsigned rn = (fi >> 5) & 0x1f;     /* base reg of ld/st = bits[9:5] */
+                unsigned rt = fi & 0x1f;
+                void *base = (rn <= 30) ? (void *)(__uintcap_t)cr->cap_x[rn] : NULL;
+                fprintf(stderr, "[stopless]   faulting insn=%08x  Rn(base)=c%u tag=%d addr=%#lx  Rt=c%u\n",
+                        fi, rn, base ? (int)cheri_tag_get(base) : -1,
+                        base ? (unsigned long)cheri_address_get(base) : 0, rt);
             }
         }
         /* What rbcp(c22), rmethod(c12), rcpool(c26) point at, and the dispatch table. */
@@ -462,6 +471,19 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
        process stays alive at the crash with stable addresses (run with ASLR
        off) — a system gdbstub can then attach and disassemble the live interp
        code (gdb bypasses capability checks) to pin the faulting branch. */
+    if (getenv("STOPLESS_BRK_ON_CRASH")) {
+        /* Trap an ALREADY-ATTACHED system gdb (qemu gdbstub :1234) right here,
+           IN this process's address space (TTBR0 = java), so gdb can read/
+           disassemble the live interp code and walk the real frames — which it
+           cannot do once the process is descheduled. We are post-fault (in the
+           SIGSEGV handler on the altstack), so this pins the frame state, not
+           the faulting instruction itself; use it to identify the faulting
+           ret's address, then re-run with a breakpoint there to single-step. */
+        fprintf(stderr, "[stopless] BRK for gdb (pid=%d). java-context now current.\n",
+                (int)getpid());
+        fflush(stderr);
+        __asm__ volatile("brk #0");
+    }
     if (getenv("STOPLESS_HANG_ON_CRASH")) {
         fprintf(stderr, "[stopless] HANGING for gdb (pid=%d). attach :1234.\n",
                 (int)getpid());
@@ -494,7 +516,10 @@ stopless_install_crash_diag(void)
     sa.sa_sigaction = stopless_crash_dumper;
     sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
     sigemptyset(&sa.sa_mask);
-    int sigs[] = { SIGILL, SIGSEGV, SIGBUS, 34 /*SIGPROT*/, SIGTRAP };
+    /* NOTE: deliberately NOT SIGTRAP — the crash dumper emits `brk #0` (when
+       STOPLESS_BRK_ON_CRASH is set) to stop an attached gdb IN this process's
+       address space; catching SIGTRAP here would recurse instead. */
+    int sigs[] = { SIGILL, SIGSEGV, SIGBUS, 34 /*SIGPROT*/ };
     for (unsigned i = 0; i < sizeof(sigs) / sizeof(sigs[0]); i++)
         sigaction(sigs[i], &sa, NULL);
     fprintf(stderr, "[stopless] crash diag re-armed on altstack (SA_ONSTACK)\n");
