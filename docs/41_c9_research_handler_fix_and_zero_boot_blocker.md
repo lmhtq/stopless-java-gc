@@ -903,3 +903,31 @@ an even rscratch1) is only exercised by an INTERPRETED Java method return; the
 C-5..C-8 tests (java -version reaching argument parsing, HelloGC) crashed/finished
 before the first interpreted return, or the earlier no-call microbenches avoided it.
 The three §S/§W/§X fixes were real but secondary cap bugs on the same return path.
+
+## AE. Post-SCVALUE iterative cap-fault chase (2026-06-06)
+
+With the SCVALUE root cause fixed, java -version (-Xint, Epsilon) advances one
+latent cap-strip at a time. Built a build-deploy-test loop (/tmp/bdt.sh) + made the
+crash dumper auto-disassemble around ELR and decode the faulting load/store base
+register tag, so each fault is one-glance diagnosable. Fixes landed (all the same
+classes: integer ldr/str/stp of a capability strips the tag; integer `andr/ret` on
+csp; C64 bit0 on a branch; codecache-vs-libjvm PCC bounds on cross-region returns):
+
+  §AA call_stub: result-pointer integer ldr -> cap_ldr_imm (result store deref'd tag-0)
+  §AB call_stub: integer `ret x30` -> cap-RET (ret c30) returning to libjvm (bounds + C64)
+  §AC load_resolved_method_at_index: f1/f2 Method* integer ldr -> cap_ldr_imm
+  §AC load_method_holder: Method->ConstMethod->ConstantPool->pool_holder chain -> cap_ldr_imm
+  §AD generate_native_entry: integer `andr(sp,esp,-16)` -> cap mov (CSP tag)
+
+Boot progress: String.<clinit> SIGSEGV  ->  String.<clinit> completes  ->  call_stub
+return to libjvm  ->  clinit #2 (2nd class init)  ->  its invokestatic clinit-barrier
+->  the NATIVE method entry. Current frontier: generate_native_entry is a large area
+the C-6 work did NOT port (frame stp's at lines 865/867, the blr to the signature/
+native/result handlers, C64 mode bits on those calls/returns, cross-region PCC). The
+current fault is a SIGBUS at an odd PC (0x428f98d1) — a C64 bit0 set on a return into
+the native-entry code after an integer `blr` (needs cap_blr / cap-RET, same as §AB).
+Next: port generate_native_entry's call/return sequences + frame stp's.
+
+Tooling: /tmp/bdt.sh (build+deploy+test), crash dumper ELR auto-disasm. The openjdk
+source changes are live in the working tree and persisted as
+patches/openjdk-jdk17/WIP-c9chase-*.record.
