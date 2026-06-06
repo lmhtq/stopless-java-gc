@@ -1,0 +1,21 @@
+diff --git a/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp b/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
+index f5970adc412..07a81226516 100644
+--- a/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
+@@ -180,7 +180,16 @@ void InterpreterRuntime::SignatureHandlerGenerator::generate(uint64_t fingerprin
+ 
+   // return result handler
+   __ lea(r0, ExternalAddress(Interpreter::result_handler(method()->result_type())));
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AF: this generated signature handler is cap-BLR'd from the native entry,
++  // so lr is a sealed return sentry. The stock integer `ret lr` lands on an odd PC
++  // (C64 bit0) -> SIGBUS, and clearing bit0 + integer ret keeps the HANDLER's PCC
++  // (wrong bounds). Use a cap-RET (`ret c30`=0xc2c253c0): it unseals the sentry,
++  // restoring the native-entry PCC bounds and PSTATE.C64 mode.
++  __ emit_int32(0xC2C25000U | (30U << 5));   // ret c30 (cap-RET)
++#else
+   __ ret(lr);
++#endif
+ 
+   __ flush();
+ }

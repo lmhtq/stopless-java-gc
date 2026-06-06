@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
-index e20cffd5767..20c4c405bd5 100644
+index e20cffd5767..8f47f0f6608 100644
 --- a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
 @@ -435,7 +435,13 @@ address TemplateInterpreterGenerator::generate_return_entry_for(TosState state,
@@ -280,7 +280,7 @@ index e20cffd5767..20c4c405bd5 100644
  
    // initialize fixed part of activation frame
    generate_fixed_frame(true);
-@@ -1202,12 +1362,29 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+@@ -1202,16 +1362,44 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
    const Register result_handler = r19;
  
    // allocate space for parameters
@@ -310,7 +310,127 @@ index e20cffd5767..20c4c405bd5 100644
  
    // get signature handler
    {
-@@ -1413,8 +1590,14 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+     Label L;
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 §AF: the signature handler is a code CAPABILITY (a generated stub);
++    // integer ldr strips its tag so the cap-BLR below faults. cap-LDR it.
++    __ cap_ldr_imm(t, rmethod, in_bytes(Method::signature_handler_offset()));
++    __ cbnz(t, L);
++    __ call_VM(noreg,
++               CAST_FROM_FN_PTR(address,
++                                InterpreterRuntime::prepare_native_call),
++               rmethod);
++    __ cap_ldr_imm(t, rmethod, in_bytes(Method::signature_handler_offset()));
++#else
+     __ ldr(t, Address(rmethod, Method::signature_handler_offset()));
+     __ cbnz(t, L);
+     __ call_VM(noreg,
+@@ -1219,6 +1407,7 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+                                 InterpreterRuntime::prepare_native_call),
+                rmethod);
+     __ ldr(t, Address(rmethod, Method::signature_handler_offset()));
++#endif
+     __ bind(L);
+   }
+ 
+@@ -1234,7 +1423,15 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+   // However, large signatures cannot be cached and are generated
+   // each time here.  The slow-path generator can do a GC on return,
+   // so we must reload it after the call.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AF: integer `blr t` keeps the current PCC and bakes the C64 mode bit
++  // into the return addr; the handler's RET then lands on an odd PC -> SIGBUS.
++  // cap-BLR installs t as PCC (its bounds + mode) and a proper sealed return
++  // sentry, so the handler's cap-RET returns cleanly.
++  __ cap_blr(t);
++#else
+   __ blr(t);
++#endif
+   __ get_method(rmethod);        // slow path can do a GC, reload rmethod
+ 
+ 
+@@ -1249,17 +1446,44 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+     // get mirror
+     __ load_mirror(t, rmethod);
+     // copy mirror into activation frame
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 §AG: the mirror is an oop CAPABILITY; integer str strips its tag in the
++    // frame slot and integer add strips rfp's tag forming the handle, so the JNI
++    // call derefs a tag-0 handle/oop. cap-STR the oop and cap-ADD the handle.
++    __ cap_str_imm(t, rfp, frame::interpreter_frame_oop_temp_offset * wordSize);
++    __ cap_add_imm(c_rarg1, rfp, frame::interpreter_frame_oop_temp_offset * wordSize);
++#else
+     __ str(t, Address(rfp, frame::interpreter_frame_oop_temp_offset * wordSize));
+     // pass handle to mirror
+     __ add(c_rarg1, rfp, frame::interpreter_frame_oop_temp_offset * wordSize);
++#endif
+     __ bind(L);
+   }
+ 
+   // get native function entry point in r10
+   {
+     Label L;
+-    __ ldr(r10, Address(rmethod, Method::native_function_offset()));
+     address unsatisfied = (SharedRuntime::native_method_throw_unsatisfied_link_error_entry());
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 §AG: r10 is the native function CODE cap (cap-BLR'd below) — cap-LDR
++    // it. The stock aarch64 `mov(rscratch2,unsatisfied); ldr(rscratch2,rscratch2)`
++    // dereferences the unsatisfied-link entry, but that entry is a C64 CODE
++    // address (bit0 set) which can't be read as data (DDC can't cover it) and is
++    // semantically wrong — x86 compares the native_function pointer DIRECTLY to
++    // the entry (cmpptr(rax, unsatisfied.addr()), no deref). Match x86: load the
++    // entry address and compare r10 to it directly.
++    __ cap_ldr_imm(r10, rmethod, in_bytes(Method::native_function_offset()));
++    __ mov(rscratch2, unsatisfied);
++    __ cmp(r10, rscratch2);
++    __ br(Assembler::NE, L);
++    __ call_VM(noreg,
++               CAST_FROM_FN_PTR(address,
++                                InterpreterRuntime::prepare_native_call),
++               rmethod);
++    __ get_method(rmethod);
++    __ cap_ldr_imm(r10, rmethod, in_bytes(Method::native_function_offset()));
++#else
++    __ ldr(r10, Address(rmethod, Method::native_function_offset()));
+     __ mov(rscratch2, unsatisfied);
+     __ ldr(rscratch2, rscratch2);
+     __ cmp(r10, rscratch2);
+@@ -1270,11 +1494,18 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+                rmethod);
+     __ get_method(rmethod);
+     __ ldr(r10, Address(rmethod, Method::native_function_offset()));
++#endif
+     __ bind(L);
+   }
+ 
+   // pass JNIEnv
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AG: JNIEnv* = &thread->_jni_environment; integer add strips rthread's
++  // cap tag, so the native function derefs a tag-0 JNIEnv. cap-ADD preserves it.
++  __ cap_add_imm(c_rarg0, rthread, in_bytes(JavaThread::jni_environment_offset()));
++#else
+   __ add(c_rarg0, rthread, in_bytes(JavaThread::jni_environment_offset()));
++#endif
+ 
+   // Set the last Java PC in the frame anchor to be the return address from
+   // the call to the native method: this will allow the debugger to
+@@ -1300,7 +1531,15 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+   __ stlrw(rscratch1, rscratch2);
+ 
+   // Call the native method.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AG: the native function lives OUTSIDE the codecache PCC bounds; integer
++  // blr keeps codecache PCC -> bounds fault. cap-BLR installs r10 (the native
++  // function cap, cap-LDR'd above) as PCC and a sealed return sentry back to
++  // native_return.
++  __ cap_blr(r10);
++#else
+   __ blr(r10);
++#endif
+   __ bind(native_return);
+   __ get_method(rmethod);
+   // result potentially in r0 or v0
+@@ -1413,8 +1652,14 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
  
    // restore bcp to have legal interpreter frame, i.e., bci == 0 <=>
    // rbcp == code_base()
@@ -325,7 +445,7 @@ index e20cffd5767..20c4c405bd5 100644
    // handle exceptions (exception handling will handle unlocking!)
    {
      Label L;
-@@ -1480,9 +1663,15 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+@@ -1480,9 +1725,15 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
    __ blr(result_handler);
  
    // remove activation
@@ -341,7 +461,7 @@ index e20cffd5767..20c4c405bd5 100644
    // remove frame anchor
    __ leave();
  
-@@ -1509,6 +1698,8 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1509,6 +1760,8 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
  
    // rscratch1: sender sp
    address entry_point = __ pc();
@@ -350,7 +470,7 @@ index e20cffd5767..20c4c405bd5 100644
  
    const Address constMethod(rmethod, Method::const_offset());
    const Address access_flags(rmethod, Method::access_flags_offset());
-@@ -1518,7 +1709,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1518,7 +1771,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
  
    // get parameter size (always needed)
    // need to load the const method first
@@ -366,7 +486,7 @@ index e20cffd5767..20c4c405bd5 100644
    __ load_unsigned_short(r2, size_of_parameters);
  
    // r2: size of parameters
-@@ -1530,8 +1729,18 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1530,8 +1791,18 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
    generate_stack_overflow_check();
  
    // compute beginning of parameters (rlocals)
@@ -385,7 +505,7 @@ index e20cffd5767..20c4c405bd5 100644
  
    __ mov(rscratch1, esp);
  
-@@ -1555,7 +1764,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1555,7 +1826,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
  
    // Padding between locals and fixed part of activation frame to ensure
    // SP is always 16-byte aligned.
@@ -401,7 +521,7 @@ index e20cffd5767..20c4c405bd5 100644
  
    // And the base dispatch table
    __ get_dispatch();
-@@ -1656,6 +1873,32 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1656,6 +1935,32 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
      generate_counter_overflow(continue_after_compile);
    }
  
@@ -434,7 +554,7 @@ index e20cffd5767..20c4c405bd5 100644
    return entry_point;
  }
  
-@@ -1698,7 +1941,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1698,7 +2003,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
               c_rarg1);
  
    // Calculate stack limit
@@ -446,7 +566,7 @@ index e20cffd5767..20c4c405bd5 100644
    __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
    __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 4);
    __ ldr(rscratch2,
-@@ -1755,7 +2002,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1755,7 +2064,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
      // Compute size of arguments for saving when returning to
      // deoptimized caller
      __ get_method(r0);
@@ -458,7 +578,7 @@ index e20cffd5767..20c4c405bd5 100644
      __ load_unsigned_short(r0, Address(r0, in_bytes(ConstMethod::
                                                      size_of_parameters_offset())));
      __ lsl(r0, r0, Interpreter::logStackElementSize);
-@@ -1790,7 +2041,13 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1790,7 +2103,13 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
                         /* notify_jvmdi */ false);
  
    // Restore the last_sp and null it out
@@ -472,7 +592,7 @@ index e20cffd5767..20c4c405bd5 100644
    __ str(zr, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
  
    __ restore_bcp();
-@@ -1831,7 +2088,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1831,7 +2150,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
  #endif // INCLUDE_JVMTI
  
    // Restore machine SP
