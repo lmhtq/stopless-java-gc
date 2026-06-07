@@ -463,6 +463,47 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
                 fprintf(stderr, "[stopless]     +%d = 0x%lx%s\n", k*8, v, p ? "" : " (no-cover)");
             }
         }
+        /* C-9 receiver-strip hunt: dump the bytecode stream around rbcp(c22),
+           byte-granular, BACKWARD + forward. *rbcp is the executing bytecode;
+           the bytes just before it are the ones that PUSHED the (tag-0)
+           operand the current bytecode is choking on — letting us name the
+           producer (aaload? getfield? invoke return? ldc?) without guessing. */
+        {
+            unsigned long bcp = (unsigned long)cheri_address_get((void*)(__uintcap_t)cr->cap_x[22]);
+            fprintf(stderr, "[stopless]   ---- bytecodes @ rbcp=0x%lx (<== is *rbcp) ----\n", bcp);
+            for (int off = -24; off <= 8; off++) {
+                void *p = COVER(bcp + off, 1);
+                int b = p ? *(volatile unsigned char *)p : -1;
+                fprintf(stderr, "[stopless]     [%+d] = 0x%02x%s%s\n",
+                        off, b & 0xff, off == 0 ? "  <== *rbcp" : "",
+                        p ? "" : " (no-cover)");
+            }
+        }
+        /* C-9 receiver-strip hunt #2: print the capability TAG of the `this`
+           local (rlocals=c24, slot 0) and the top expression-stack slots
+           (esp=c20). If `this` is tagged (tag=1) but the receiver copied onto
+           the expr stack is tag=0, the pushing bytecode template stripped it. */
+        {
+            struct { int reg; int n; const char *nm; } slots[] = {
+                {24, 0, "rlocals[0]=this"}, {24, -16, "rlocals[-16]"},
+                {24, -32, "rlocals[-32]"},
+                {20, 0, "esp[0]"}, {20, 16, "esp[16]"}, {20, 32, "esp[32]"},
+                {20, 48, "esp[48]"},
+            };
+            for (unsigned s = 0; s < sizeof(slots)/sizeof(slots[0]); s++) {
+                unsigned long a = (unsigned long)cheri_address_get(
+                    (void*)(__uintcap_t)cr->cap_x[slots[s].reg]) + (long)slots[s].n;
+                void *p = COVER(a, 16);
+                if (p) {
+                    void *v = *(void * volatile *)p;
+                    fprintf(stderr, "[stopless]   %-16s @0x%lx = tag=%d addr=0x%lx\n",
+                            slots[s].nm, a, (int)cheri_tag_get(v),
+                            (unsigned long)cheri_address_get(v));
+                } else {
+                    fprintf(stderr, "[stopless]   %-16s @0x%lx (no-cover)\n", slots[s].nm, a);
+                }
+            }
+        }
         #undef COVER
     }
     fprintf(stderr, "[stopless] ===== END CRASH DUMP =====\n");

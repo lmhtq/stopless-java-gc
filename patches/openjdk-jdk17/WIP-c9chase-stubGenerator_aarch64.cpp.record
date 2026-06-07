@@ -1,0 +1,282 @@
+diff --git a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+index c92f0cf05bd..d00a66eb237 100644
+--- a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
+@@ -227,11 +227,38 @@ class StubGenerator: public StubCodeGenerator {
+ 
+     // set up frame and move sp to end of save area
+     __ enter();
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #11: __ sub(sp, rfp, imm) defaults to integer SUB encoding
++    // (0xd1xxxxxx) which is ILLEGAL in C64 mode. Emit Morello cap-SUB
++    // (0x028xxxxx) directly. Pattern: 0x02800000 | (sh<<22) | (imm12<<10)
++    // | (Rn<<5) | Rd. For imm = -sp_after_call_off * wordSize = 26 * 16 = 0x1A0,
++    // Rd=31 (csp), Rn=29 (rfp): 0x02800000 | (0x1A0<<10) | (29<<5) | 31
++    // = 0x028683BF (verified vs clang).
++    {
++      unsigned imm12 = (unsigned)(-sp_after_call_off * wordSize) & 0xFFF;
++      __ emit_int32(0x02800000 | (imm12 << 10) | (29 << 5) | 31);
++    }
++#else
+     __ sub(sp, rfp, -sp_after_call_off * wordSize);
++#endif
+ 
+     // save register parameters and Java scratch/global registers
+     // n.b. we save thread even though it gets installed in
+     // rthread because we want to sanity check rthread later
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #12: Assembler::str/stp emit integer-only encodings.
++    // For cap-typed values we must emit Morello cap-STR/cap-STP.
++    __ cap_str_imm(c_rarg7, rfp, thread_off         * wordSize);
++    __ strw       (c_rarg6, parameter_size);  // 32-bit data; integer OK
++    __ cap_stp_imm(c_rarg4, c_rarg5, rfp, entry_point_off  * wordSize);
++    __ cap_stp_imm(c_rarg2, c_rarg3, rfp, result_type_off  * wordSize);
++    __ cap_stp_imm(c_rarg0, c_rarg1, rfp, call_wrapper_off * wordSize);
++    __ cap_stp_imm(r20, r19, rfp, r20_off * wordSize);
++    __ cap_stp_imm(r22, r21, rfp, r22_off * wordSize);
++    __ cap_stp_imm(r24, r23, rfp, r24_off * wordSize);
++    __ cap_stp_imm(r26, r25, rfp, r26_off * wordSize);
++    __ cap_stp_imm(r28, r27, rfp, r28_off * wordSize);
++#else
+     __ str(c_rarg7,  thread);
+     __ strw(c_rarg6, parameter_size);
+     __ stp(c_rarg4, c_rarg5,  entry_point);
+@@ -243,12 +270,14 @@ class StubGenerator: public StubCodeGenerator {
+     __ stp(r24, r23,   r24_save);
+     __ stp(r26, r25,   r26_save);
+     __ stp(r28, r27,   r28_save);
++#endif
+ 
+     __ stpd(v9,  v8,   d9_save);
+     __ stpd(v11, v10,  d11_save);
+     __ stpd(v13, v12,  d13_save);
+     __ stpd(v15, v14,  d15_save);
+ 
++
+     // install Java thread in global register now we have saved
+     // whatever value it held
+     __ mov(rthread, c_rarg7);
+@@ -271,8 +300,26 @@ class StubGenerator: public StubCodeGenerator {
+ #endif
+     // pass parameters if any
+     __ mov(esp, sp);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 fix (§S-class): the stock `sub(rscratch1,sp,..)` + `andr(sp,..)` strip
++    // CSP's capability tag (integer ops writing sp). For a no-param call (e.g. a
++    // static <clinit>) the push loop is skipped, so the only effect is that
++    // `mov(r13,sp)` below stores an UNTAGGED sender_sp into the entry frame; a
++    // later cap-LDR of that slot (remove_activation) then yields a tag-0 CSP.
++    // Compute the (32-aligned) parameter-area delta and cap-SUB it from CSP,
++    // preserving the tag. CSP is 32-aligned here (enter + the cap-sub above), so
++    // aligning the delta keeps CSP aligned.
++    __ lslw(rscratch1, c_rarg6, LogBytesPerWord);      // params * 8
++    __ add(rscratch1, rscratch1, 2 * wordSize - 1);
++    __ andr(rscratch1, rscratch1, -2 * wordSize);      // round up the DELTA
++    __ neg(rscratch1, rscratch1);                      // -delta
++    // add csp, csp, rscratch1, uxtx  (cap-add reg, preserves CSP tag; csp=#31)
++    __ emit_int32(0xC2A06000U | ((unsigned)rscratch1->encoding() << 16)
++                  | (31U << 5) | 31U);
++#else
+     __ sub(rscratch1, sp, c_rarg6, ext::uxtw, LogBytesPerWord); // Move SP out of the way
+     __ andr(sp, rscratch1, -2 * wordSize);
++#endif
+ 
+     BLOCK_COMMENT("pass parameters if any");
+     Label parameters_done;
+@@ -281,10 +328,27 @@ class StubGenerator: public StubCodeGenerator {
+     __ cbzw(c_rarg6, parameters_done);
+ 
+     address loop = __ pc();
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: each JavaCall argument occupies a 16-byte (wordSize) slot in the
++    // JavaCallArguments buffer; an OOP argument (e.g. the receiver `this` of an
++    // instance method invoked via JavaCalls) is a full capability there. The
++    // stock integer `ldr`+`push` copies only the low 8 bytes and drops the tag,
++    // so the callee sees a tag-0 `this` that faults on first deref (the super-
++    // <init> receiver null-check). cap-LDR/cap-STR the full 16-byte slot. (Int/
++    // long args are tag-0 in memory, so cap-LDR copies them verbatim too.)
++    // Static <clinit> calls have no params and skip this loop entirely.
++    __ cap_ldr_imm(rscratch1, c_rarg5, 0);
++    __ cap_add_imm(c_rarg5, c_rarg5, (unsigned)wordSize);   // post-incr src by 16
++    __ subsw(c_rarg6, c_rarg6, 1);
++    __ cap_sub_imm(esp, esp, (unsigned)wordSize);           // pre-decr dst by 16
++    __ cap_str_imm(rscratch1, esp, 0);                      // store full 16B cap
++    __ br(Assembler::GT, loop);
++#else
+     __ ldr(rscratch1, Address(__ post(c_rarg5, wordSize)));
+     __ subsw(c_rarg6, c_rarg6, 1);
+     __ push(rscratch1);
+     __ br(Assembler::GT, loop);
++#endif
+ 
+     __ BIND(parameters_done);
+ 
+@@ -293,6 +357,11 @@ class StubGenerator: public StubCodeGenerator {
+     //      r13: sender sp
+     BLOCK_COMMENT("call Java function");
+     __ mov(r13, sp);
++    // C-6 fix #17 (replaces #16): bit-0 mode bit on c_rarg4 is now set
++    // by C++ side (javaCalls.cpp) using cheri_address_set, NOT here via
++    // cap-ADD. Stub-emit cap-ADD #1 produced a cap whose BLR resulted in
++    // ifetch from misaligned PC (SIGBUS alignment), while cheri_address_set
++    // works correctly. Probably cheri_address_set also updates cap flags.
+     __ blr(c_rarg4);
+ 
+     // we do this here because the notify will already have been done
+@@ -312,7 +381,16 @@ class StubGenerator: public StubCodeGenerator {
+     // T_OBJECT, T_LONG, T_FLOAT or T_DOUBLE is treated as T_INT)
+     // n.b. this assumes Java returns an integral result in r0
+     // and a floating result in j_farg0
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 fix (docs/41 §AA): the JavaValue* result pointer was saved cap-wide
++    // (cap_stp_imm in the prologue); the stock integer `ldr` strips its tag, so
++    // the result store below (strw/str/strs/strd [j_rarg2]) derefs a tag-0 cap
++    // -> SIGPROT. This fired returning from java.lang.String.<clinit> (T_VOID
++    // still stores r0). cap-LDR preserves the result-pointer tag.
++    __ cap_ldr_imm(j_rarg2, rfp, result_off * wordSize);
++#else
+     __ ldr(j_rarg2, result);
++#endif
+     Label is_long, is_float, is_double, exit;
+     __ ldr(j_rarg1, result_type);
+     __ cmp(j_rarg1, (u1)T_OBJECT);
+@@ -330,7 +408,11 @@ class StubGenerator: public StubCodeGenerator {
+     __ BIND(exit);
+ 
+     // pop parameters
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_sub_imm(esp, rfp, (unsigned)(-sp_after_call_off * wordSize));
++#else
+     __ sub(esp, rfp, -sp_after_call_off * wordSize);
++#endif
+ 
+ #ifdef ASSERT
+     // verify that threads correspond
+@@ -354,6 +436,21 @@ class StubGenerator: public StubCodeGenerator {
+     __ ldpd(v11, v10,  d11_save);
+     __ ldpd(v9,  v8,   d9_save);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #14: cap-LDP for callee-saved register restore (mirror
++    // of cap-STP fix in prologue).
++    __ cap_ldp_imm(r28, r27, rfp, r28_off * wordSize);
++    __ cap_ldp_imm(r26, r25, rfp, r26_off * wordSize);
++    __ cap_ldp_imm(r24, r23, rfp, r24_off * wordSize);
++    __ cap_ldp_imm(r22, r21, rfp, r22_off * wordSize);
++    __ cap_ldp_imm(r20, r19, rfp, r20_off * wordSize);
++
++    __ cap_ldp_imm(c_rarg0, c_rarg1, rfp, call_wrapper_off * wordSize);
++    __ ldrw(c_rarg2, result_type);   // 32-bit int load OK
++    __ cap_ldr_imm(c_rarg3, rfp, method_off * wordSize);
++    __ cap_ldp_imm(c_rarg4, c_rarg5, rfp, entry_point_off * wordSize);
++    __ cap_ldp_imm(c_rarg6, c_rarg7, rfp, parameter_size_off * wordSize);
++#else
+     __ ldp(r28, r27,   r28_save);
+     __ ldp(r26, r25,   r26_save);
+     __ ldp(r24, r23,   r24_save);
+@@ -365,10 +462,26 @@ class StubGenerator: public StubCodeGenerator {
+     __ ldr(c_rarg3,  method);
+     __ ldp(c_rarg4, c_rarg5,  entry_point);
+     __ ldp(c_rarg6, c_rarg7,  parameter_size);
++#endif
+ 
+     // leave frame and return to caller
+     __ leave();
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 fix (docs/41 §AB): the call_stub returns to JavaCalls in libjvm.so,
++    // OUTSIDE the codecache PCC bounds it currently runs under. The stock
++    // integer `ret x30` keeps the current (codecache) PCC and only updates the
++    // PC -> PROT_CHERI_BOUNDS on the libjvm return target. lr is the sealed
++    // return SENTRY from the cap_blr into the call_stub (so cap_clear_bit0's
++    // SCVALUE must NOT touch it — that unseals/untags it). Use a cap-RET
++    // (`ret c30` = 0xC2C253C0): it unseals the sentry, installs it as the new
++    // PCC (libjvm bounds), and restores PSTATE.C64 from the sentry's mode bit —
++    // fixing both the bounds and the odd-PC (SIGBUS) in one go. Verified vs
++    // clang: `ret c30` = 0xc2c253c0. Fires returning from the top interpreted
++    // frame (String.<clinit>).
++    __ emit_int32(0xC2C25000U | (30U << 5));   // ret c30 (cap-RET)
++#else
+     __ ret(lr);
++#endif
+ 
+     // handle return types different from T_INT
+ 
+@@ -384,6 +497,33 @@ class StubGenerator: public StubCodeGenerator {
+     __ strd(j_farg0, Address(j_rarg2, 0));
+     __ br(Assembler::AL, exit);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++    {
++      // C-6 diag: scan full call_stub buffer for integer-encoded
++      // instructions that need cap variants.
++      uint32_t* p = (uint32_t*)aarch64_entry;
++      uint32_t* end = (uint32_t*)__ pc();
++      int total = (int)(end - p);
++      fprintf(stderr, "[C6CSSCAN] call_stub 0x%p..0x%p (%d insns), suspect integer encodings:\n",
++              aarch64_entry, end, total);
++      int suspect_count = 0;
++      for (int i = 0; i < total; i++) {
++        uint32_t insn = p[i];
++        unsigned top = insn >> 24;
++        bool susp = (top == 0xa9 || top == 0xa8 || top == 0xa7 || top == 0xa6 ||
++                     top == 0xf9 || top == 0xf8 ||
++                     top == 0xd1 || top == 0x91 || top == 0x51 || top == 0xd0 ||
++                     top == 0xaa);
++        if (susp && suspect_count < 20) {
++          fprintf(stderr, "  +%03d: 0x%08x (top=0x%02x)\n", i*4, insn, top);
++          suspect_count++;
++        }
++      }
++      fprintf(stderr, "[C6CSSCAN] total suspect=%d\n", suspect_count);
++      fflush(stderr);
++    }
++#endif
++
+     return start;
+   }
+ 
+@@ -4910,7 +5050,7 @@ class StubGenerator: public StubCodeGenerator {
+     __ cbnz(tmp1, NOT_EQUAL);
+     __ ldp(tmp1, tmp3, Address(__ post(a1, 2 * wordSize)));
+     __ eor(tmp5, tmp5, tmp6);
+-    __ sub(cnt1, cnt1, 8 * wordSize);
++    __ sub(cnt1, cnt1, 8 * BytesPerLong);
+     __ eor(tmp7, tmp7, tmp8);
+     __ ldp(tmp2, tmp4, Address(__ post(a2, 2 * wordSize)));
+     // tmp6 is not used. MacroAssembler::subs is used here (rather than
+@@ -4938,9 +5078,9 @@ class StubGenerator: public StubCodeGenerator {
+       __ prfm(Address(a1, SoftwarePrefetchHintDistance));
+       __ prfm(Address(a2, SoftwarePrefetchHintDistance));
+     }
+-    __ ld1(v0, v1, v2, v3, __ T2D, Address(__ post(a1, 4 * 2 * wordSize)));
+-    __ sub(cnt1, cnt1, 8 * wordSize);
+-    __ ld1(v4, v5, v6, v7, __ T2D, Address(__ post(a2, 4 * 2 * wordSize)));
++    __ ld1(v0, v1, v2, v3, __ T2D, Address(__ post(a1, 4 * 2 * BytesPerLong)));
++    __ sub(cnt1, cnt1, 8 * BytesPerLong);
++    __ ld1(v4, v5, v6, v7, __ T2D, Address(__ post(a2, 4 * 2 * BytesPerLong)));
+     __ subs(tmp1, cnt1, loopThreshold);
+     __ eor(v0, __ T16B, v0, v4);
+     __ eor(v1, __ T16B, v1, v5);
+@@ -5700,9 +5840,22 @@ class StubGenerator: public StubCodeGenerator {
+   }
+ 
+   void generate_string_indexof_stubs() {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6: skip string-indexof stub generation on CHERI purecap.
++    // generate_string_indexof_linear emits a sub immediate that
++    // doesn't fit the 12-bit add/sub field, so wrap_adds_subs_imm_insn
++    // falls back to mov(Rd, imm)+sub-reg, and the mov path trips the
++    // assembler imms-field guarantee (val=64 in a 6-bit field).
++    // Leaving these as nullptr makes the JIT fall back to the Java
++    // String.indexOf implementation — correct but unoptimized.
++    StubRoutines::aarch64::_string_indexof_linear_ll = nullptr;
++    StubRoutines::aarch64::_string_indexof_linear_uu = nullptr;
++    StubRoutines::aarch64::_string_indexof_linear_ul = nullptr;
++#else
+     StubRoutines::aarch64::_string_indexof_linear_ll = generate_string_indexof_linear(true, true);
+     StubRoutines::aarch64::_string_indexof_linear_uu = generate_string_indexof_linear(false, false);
+     StubRoutines::aarch64::_string_indexof_linear_ul = generate_string_indexof_linear(true, false);
++#endif
+   }
+ 
+   void inflate_and_store_2_fp_registers(bool generatePrfm,

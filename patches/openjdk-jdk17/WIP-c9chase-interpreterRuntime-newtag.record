@@ -1,0 +1,52 @@
+diff --git a/src/hotspot/share/interpreter/interpreterRuntime.cpp b/src/hotspot/share/interpreter/interpreterRuntime.cpp
+index d66ed24d862..e396c451e24 100644
+--- a/src/hotspot/share/interpreter/interpreterRuntime.cpp
++++ b/src/hotspot/share/interpreter/interpreterRuntime.cpp
+@@ -216,6 +216,9 @@ JRT_END
+ // Allocation
+ 
+ JRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* current, ConstantPool* pool, int index))
++#ifdef __CHERI_PURE_CAPABILITY__
++  fprintf(stderr, "[RT] _new enter\n"); fflush(stderr);
++#endif
+   Klass* k = pool->klass_at(index, CHECK);
+   InstanceKlass* klass = InstanceKlass::cast(k);
+ 
+@@ -240,6 +243,11 @@ JRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* current, ConstantPool* pool
+   //       If we have a breakpoint, then we don't rewrite
+   //       because the _breakpoint bytecode would be lost.
+   oop obj = klass->allocate_instance(CHECK);
++#ifdef __CHERI_PURE_CAPABILITY__
++  fprintf(stderr, "[RT] _new obj tag=%d addr=%p klass=%s\n",
++          (int)__builtin_cheri_tag_get((void*)(oopDesc*)obj),
++          (void*)(oopDesc*)obj, klass->external_name()); fflush(stderr);
++#endif
+   current->set_vm_result(obj);
+ JRT_END
+ 
+@@ -251,9 +259,15 @@ JRT_END
+ 
+ 
+ JRT_ENTRY(void, InterpreterRuntime::anewarray(JavaThread* current, ConstantPool* pool, int index, jint size))
++#ifdef __CHERI_PURE_CAPABILITY__
++  fprintf(stderr, "[RT] anewarray enter size=%d\n", (int)size); fflush(stderr);
++#endif
+   Klass*    klass = pool->klass_at(index, CHECK);
+   objArrayOop obj = oopFactory::new_objArray(klass, size, CHECK);
+   current->set_vm_result(obj);
++#ifdef __CHERI_PURE_CAPABILITY__
++  fprintf(stderr, "[RT] anewarray exit ok\n"); fflush(stderr);
++#endif
+ JRT_END
+ 
+ 
+@@ -940,6 +954,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
+ // cpCache entry.  This doesn't safepoint, but the helper routines safepoint.
+ // This function will check for redefinition!
+ JRT_ENTRY(void, InterpreterRuntime::resolve_from_cache(JavaThread* current, Bytecodes::Code bytecode)) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  fprintf(stderr, "[RT] resolve_from_cache enter bc=%s\n", Bytecodes::name(bytecode)); fflush(stderr);
++#endif
+   switch (bytecode) {
+   case Bytecodes::_getstatic:
+   case Bytecodes::_putstatic:

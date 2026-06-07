@@ -1,0 +1,617 @@
+diff --git a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
+index 4666b42b933..d73c4eafa88 100644
+--- a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
+@@ -70,11 +70,20 @@ static inline Address aaddress(int n) {
+ }
+ 
+ static inline Address iaddress(Register r) {
++  // C-6 L47b: locals slots are 16 bytes on purecap, so this SHOULD scale
++  // by logStackElementSize (4). But the Address is consumed by an 8-byte
++  // ldr/str whose addressing mode only permits shift 0 or 3 — it cannot
++  // scale by 16 in one instruction. Fixing requires pre-computing the
++  // slot address (lea) at every variable-index local use site. Left at 3
++  // (consistent with laddress below) to keep the build running; tracked
++  // as L47b (variable-index int/float/oop locals are still ×8).
+   return Address(rlocals, r, Address::lsl(3));
+ }
+ 
+ static inline Address laddress(Register r, Register scratch,
+                                InterpreterMacroAssembler* _masm) {
++  // Kept at ×8 to stay CONSISTENT with iaddress() above (same local index
++  // must map to the same address from both). L47b will move both to ×16.
+   __ lea(scratch, Address(rlocals, r, Address::lsl(3)));
+   return Address(scratch, Interpreter::local_offset_in_bytes(1));
+ }
+@@ -92,6 +101,20 @@ static inline Address aaddress(Register r) {
+   return iaddress(r);
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// C-9: materialize the TAGGED address of a (2-slot) local whose index is in
++// `idx` into `dst`: dst = rlocals - (idx << logStackElementSize). The C-6 #47b
++// integer `sub(dst, rlocals, idx, uxtw, N)` strips rlocals' capability tag, so
++// the following 8-byte ldr/str of the 16-byte-strided slot faults
++// PROT_CHERI_TAG. Negate the shifted index and cap-add (uxtx two's-complement)
++// to preserve the tag. Uses rscratch1.
++static inline void cap_local_addr_sub(InterpreterMacroAssembler* _masm, Register dst, Register idx) {
++  __ lsl(rscratch1, idx, Interpreter::logStackElementSize);
++  __ neg(rscratch1, rscratch1);
++  __ cap_add_reg(dst, rlocals, rscratch1);
++}
++#endif
++
+ static inline Address at_rsp() {
+   return Address(esp, 0);
+ }
+@@ -408,8 +431,19 @@ void TemplateTable::fast_aldc(bool wide)
+     Label notNull;
+ 
+     // Stash null_sentinel address to get its value later
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: `movptr` materializes the sentinel's global address from integer
++    // immediates (movz/movk) — a tag-0 value, so the following deref faults
++    // PROT_CHERI_TAG. (cap_lea_global is also unusable here: it derives from
++    // DDC, which is null in purecap.) Use the cap_data_table: register the
++    // libjvm global at codegen and load its real capability via the thread-
++    // seeded base, then cap-LDR the OopHandle it points at.
++    __ lea_libjvm_global(rarg, (address)Universe::the_null_sentinel_addr());
++    __ cap_ldr_imm(tmp, rarg, 0);
++#else
+     __ movptr(rarg, (uintptr_t)Universe::the_null_sentinel_addr());
+     __ ldr(tmp, Address(rarg));
++#endif
+     __ resolve_oop_handle(tmp);
+     __ cmpoop(result, tmp);
+     __ br(Assembler::NE, notNull);
+@@ -578,6 +612,14 @@ void TemplateTable::locals_index(Register reg, int offset)
+ {
+   __ ldrb(reg, at_bcp(offset));
+   __ neg(reg, reg);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #47b: locals slots are 16 bytes (logStackElementSize=4) but
++  // iaddress() addresses them with an 8-byte-scaled (lsl#3) load, whose
++  // addressing mode cannot scale by 16. Pre-multiply the (negated) index
++  // by 2 so lsl#3 yields the 16-byte stride:
++  //   reg = -index*2  →  [rlocals + reg<<3] = rlocals - index*16.
++  __ lsl(reg, reg, Interpreter::logStackElementSize - LogBytesPerWord);
++#endif
+ }
+ 
+ void TemplateTable::iload() {
+@@ -652,7 +694,11 @@ void TemplateTable::lload()
+ {
+   transition(vtos, ltos);
+   __ ldrb(r1, at_bcp(1));
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++#ifdef __CHERI_PURE_CAPABILITY__
++  cap_local_addr_sub(_masm, r1, r1);   // C-9: tag-preserving rlocals - (idx<<4)
++#else
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
++#endif
+   __ ldr(r0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -669,7 +715,11 @@ void TemplateTable::dload()
+ {
+   transition(vtos, dtos);
+   __ ldrb(r1, at_bcp(1));
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++#ifdef __CHERI_PURE_CAPABILITY__
++  cap_local_addr_sub(_masm, r1, r1);   // C-9: tag-preserving rlocals - (idx<<4)
++#else
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
++#endif
+   __ ldrd(v0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -677,13 +727,27 @@ void TemplateTable::aload()
+ {
+   transition(vtos, atos);
+   locals_index(r1);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #53: a reference local is a 16-byte oop capability; an 8-byte
++  // ldr drops the tag. The variable-index Address can't be scaled by 16
++  // in a single cap-LDR (addressing-mode limit), so compute the slot
++  // address via the (cap-aware) lea, then cap-LDR at offset 0.
++  __ lea(rscratch1, iaddress(r1));
++  __ cap_ldr_imm(r0, rscratch1, 0);
++#else
+   __ ldr(r0, iaddress(r1));
++#endif
+ }
+ 
+ void TemplateTable::locals_index_wide(Register reg) {
+   __ ldrh(reg, at_bcp(2));
+   __ rev16w(reg, reg);
+   __ neg(reg, reg);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #47b: see locals_index — pre-multiply the negated index by 2
++  // so the lsl#3 addressing in iaddress() yields the 16-byte slot stride.
++  __ lsl(reg, reg, Interpreter::logStackElementSize - LogBytesPerWord);
++#endif
+ }
+ 
+ void TemplateTable::wide_iload() {
+@@ -697,7 +761,11 @@ void TemplateTable::wide_lload()
+   transition(vtos, ltos);
+   __ ldrh(r1, at_bcp(2));
+   __ rev16w(r1, r1);
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++#ifdef __CHERI_PURE_CAPABILITY__
++  cap_local_addr_sub(_masm, r1, r1);   // C-9: tag-preserving rlocals - (idx<<4)
++#else
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
++#endif
+   __ ldr(r0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -715,7 +783,11 @@ void TemplateTable::wide_dload()
+   transition(vtos, dtos);
+   __ ldrh(r1, at_bcp(2));
+   __ rev16w(r1, r1);
+-  __ sub(r1, rlocals, r1, ext::uxtw, LogBytesPerWord);
++#ifdef __CHERI_PURE_CAPABILITY__
++  cap_local_addr_sub(_masm, r1, r1);   // C-9: tag-preserving rlocals - (idx<<4)
++#else
++  __ sub(r1, rlocals, r1, ext::uxtw, Interpreter::logStackElementSize); // C-6 #47b: 16B locals slots (arithmetic, no addr-mode constraint)
++#endif
+   __ ldrd(v0, Address(r1, Interpreter::local_offset_in_bytes(1)));
+ }
+ 
+@@ -894,7 +966,13 @@ void TemplateTable::dload(int n)
+ void TemplateTable::aload(int n)
+ {
+   transition(vtos, atos);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #53: a reference local is a 16-byte oop cap; cap-LDR it (the
++  // constant-index Address is base+offset, so cap_ldr → cap_ldr_imm).
++  __ cap_ldr(r0, iaddress(n));
++#else
+   __ ldr(r0, iaddress(n));
++#endif
+ }
+ 
+ void TemplateTable::aload_0() {
+@@ -1009,7 +1087,15 @@ void TemplateTable::astore()
+   transition(vtos, vtos);
+   __ pop_ptr(r0);
+   locals_index(r1);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: a reference local is a 16-byte oop cap; integer str strips the tag
++  // (so a later aload + null-check/monitorexit faults). lea the (cap-aware)
++  // slot address, then cap-STR. Mirror of aload() (C-6 #53).
++  __ lea(rscratch1, aaddress(r1));
++  __ cap_str_imm(r0, rscratch1, 0);
++#else
+   __ str(r0, aaddress(r1));
++#endif
+ }
+ 
+ void TemplateTable::wide_istore() {
+@@ -1101,9 +1187,18 @@ void TemplateTable::aastore() {
+   Label is_null, ok_is_subtype, done;
+   transition(vtos, vtos);
+   // stack: ..., array, index, value
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: the value and array are oops (16-byte caps) on the expression stack;
++  // integer ldr strips their tags so the length-check / store-check deref
++  // faults. cap-LDR the oops; the index stays a plain int.
++  __ cap_ldr(r0, at_tos());    // value
++  __ ldr(r2, at_tos_p1());     // index
++  __ cap_ldr(r3, at_tos_p2()); // array
++#else
+   __ ldr(r0, at_tos());    // value
+   __ ldr(r2, at_tos_p1()); // index
+   __ ldr(r3, at_tos_p2()); // array
++#endif
+ 
+   Address element_address(r3, r4, Address::uxtw(LogBytesPerHeapOop));
+ 
+@@ -1133,7 +1228,11 @@ void TemplateTable::aastore() {
+   __ bind(ok_is_subtype);
+ 
+   // Get the value we will store
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_ldr(r0, at_tos());   // C-9: reload the value oop as a full cap
++#else
+   __ ldr(r0, at_tos());
++#endif
+   // Now store using the appropriate barrier
+   do_oop_store(_masm, element_address, r0, IS_ARRAY);
+   __ b(done);
+@@ -1147,7 +1246,11 @@ void TemplateTable::aastore() {
+ 
+   // Pop stack arguments
+   __ bind(done);
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_add_imm(esp, esp, 3 * Interpreter::stackElementSize);   // C-9: keep esp tagged
++#else
+   __ add(esp, esp, 3 * Interpreter::stackElementSize);
++#endif
+ }
+ 
+ void TemplateTable::bastore()
+@@ -1220,26 +1323,49 @@ void TemplateTable::astore(int n)
+ {
+   transition(vtos, vtos);
+   __ pop_ptr(r0);
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_str(r0, iaddress(n));   // C-9: store the oop local as a full cap (see astore())
++#else
+   __ str(r0, iaddress(n));
++#endif
+ }
+ 
+ void TemplateTable::pop()
+ {
+   transition(vtos, vtos);
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_add_imm(esp, esp, Interpreter::stackElementSize);   // C-9: keep esp tagged
++#else
+   __ add(esp, esp, Interpreter::stackElementSize);
++#endif
+ }
+ 
+ void TemplateTable::pop2()
+ {
+   transition(vtos, vtos);
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_add_imm(esp, esp, 2 * Interpreter::stackElementSize);   // C-9: keep esp tagged
++#else
+   __ add(esp, esp, 2 * Interpreter::stackElementSize);
++#endif
+ }
+ 
+ void TemplateTable::dup()
+ {
+   transition(vtos, vtos);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #48: dup is type-agnostic and a slot may hold a 16-byte oop
++  // capability; an 8-byte ldr/str copy drops the tag/high bits, so the
++  // duplicated oop becomes a tag-0 value that faults when used (e.g. the
++  // invokespecial receiver in the new/dup/<init> idiom). Copy the FULL
++  // 16-byte slot with cap-LDR/cap-STR, decrementing esp by one slot.
++  __ cap_ldr(r0, Address(esp, 0));
++  __ cap_sub_imm(esp, esp, (unsigned)wordSize);
++  __ cap_str(r0, Address(esp, 0));
++#else
+   __ ldr(r0, Address(esp, 0));
+   __ push(r0);
++#endif
+   // stack: ..., a, a
+ }
+ 
+@@ -1781,7 +1907,14 @@ void TemplateTable::branch(bool is_jsr, bool is_wide)
+     __ sub(r1, rbcp, rscratch2);
+     __ push_i(r1);
+     // Adjust the bcp by the 16-bit displacement in r2
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: rbcp is a capability; an integer `add` strips its tag so the next
++    // dispatch ldrb faults. r2 is the sign-extended (64-bit) displacement, so
++    // a cap-add (uxtx, full 64-bit two's-complement) is correct both ways.
++    __ cap_add_reg(rbcp, rbcp, r2);
++#else
+     __ add(rbcp, rbcp, r2);
++#endif
+     __ dispatch_only(vtos, /*generate_poll*/true);
+     return;
+   }
+@@ -1789,7 +1922,11 @@ void TemplateTable::branch(bool is_jsr, bool is_wide)
+   // Normal (non-jsr) branch handling
+ 
+   // Adjust the bcp by the displacement in r2
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_add_reg(rbcp, rbcp, r2);   // C-9: cap-preserving rbcp += disp (see jsr above)
++#else
+   __ add(rbcp, rbcp, r2);
++#endif
+ 
+   assert(UseLoopCounter || !UseOnStackReplacement,
+          "on-stack-replacement requires loop counters");
+@@ -1966,9 +2103,17 @@ void TemplateTable::ret() {
+   locals_index(r1);
+   __ ldr(r1, aaddress(r1)); // get return bci, compute return bcp
+   __ profile_ret(r1, r2);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: rbcp must stay a tagged capability; rebuild it from the (cap) const
++  // with cap-LDR + cap-add so the following dispatch ldrb doesn't fault.
++  __ cap_ldr_imm(rbcp, rmethod, in_bytes(Method::const_offset()));
++  __ cap_add_reg(rbcp, rbcp, r1);
++  __ cap_add_imm(rbcp, rbcp, in_bytes(ConstMethod::codes_offset()));
++#else
+   __ ldr(rbcp, Address(rmethod, Method::const_offset()));
+   __ lea(rbcp, Address(rbcp, r1));
+   __ add(rbcp, rbcp, in_bytes(ConstMethod::codes_offset()));
++#endif
+   __ dispatch_next(vtos, 0, /*generate_poll*/true);
+ }
+ 
+@@ -1977,9 +2122,15 @@ void TemplateTable::wide_ret() {
+   locals_index_wide(r1);
+   __ ldr(r1, aaddress(r1)); // get return bci, compute return bcp
+   __ profile_ret(r1, r2);
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_ldr_imm(rbcp, rmethod, in_bytes(Method::const_offset()));   // C-9: see ret()
++  __ cap_add_reg(rbcp, rbcp, r1);
++  __ cap_add_imm(rbcp, rbcp, in_bytes(ConstMethod::codes_offset()));
++#else
+   __ ldr(rbcp, Address(rmethod, Method::const_offset()));
+   __ lea(rbcp, Address(rbcp, r1));
+   __ add(rbcp, rbcp, in_bytes(ConstMethod::codes_offset()));
++#endif
+   __ dispatch_next(vtos, 0, /*generate_poll*/true);
+ }
+ 
+@@ -2009,7 +2160,14 @@ void TemplateTable::tableswitch() {
+   __ bind(continue_execution);
+   __ rev32(r3, r3);
+   __ load_unsigned_byte(rscratch1, Address(rbcp, r3, Address::sxtw(0)));
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: cap-preserving rbcp += sign-extended switch offset (cap_add_reg is
++  // uxtx/full-64-bit, so sign-extend r3 to 64 bits first).
++  __ sxtw(r3, r3);
++  __ cap_add_reg(rbcp, rbcp, r3);
++#else
+   __ add(rbcp, rbcp, r3, ext::sxtw);
++#endif
+   __ dispatch_only(vtos, /*generate_poll*/true);
+   // handle default
+   __ bind(default_case);
+@@ -2058,7 +2216,12 @@ void TemplateTable::fast_linearswitch() {
+   // continue execution
+   __ bind(continue_execution);
+   __ rev32(r3, r3);
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ sxtw(r3, r3);                  // C-9: see tableswitch
++  __ cap_add_reg(rbcp, rbcp, r3);
++#else
+   __ add(rbcp, rbcp, r3, ext::sxtw);
++#endif
+   __ ldrb(rscratch1, Address(rbcp, 0));
+   __ dispatch_only(vtos, /*generate_poll*/true);
+ }
+@@ -2157,7 +2320,12 @@ void TemplateTable::fast_binaryswitch() {
+   __ profile_switch_case(i, key, array);
+   __ rev32(j, j);
+   __ load_unsigned_byte(rscratch1, Address(rbcp, j, Address::sxtw(0)));
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ sxtw(j, j);                    // C-9: cap-preserving rbcp += switch offset
++  __ cap_add_reg(rbcp, rbcp, j);
++#else
+   __ lea(rbcp, Address(rbcp, j, Address::sxtw(0)));
++#endif
+   __ dispatch_only(vtos, /*generate_poll*/true);
+ 
+   // default case -> j = default offset
+@@ -2166,7 +2334,12 @@ void TemplateTable::fast_binaryswitch() {
+   __ ldrw(j, Address(array, -2 * BytesPerInt));
+   __ rev32(j, j);
+   __ load_unsigned_byte(rscratch1, Address(rbcp, j, Address::sxtw(0)));
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ sxtw(j, j);                    // C-9: cap-preserving rbcp += switch offset
++  __ cap_add_reg(rbcp, rbcp, j);
++#else
+   __ lea(rbcp, Address(rbcp, j, Address::sxtw(0)));
++#endif
+   __ dispatch_only(vtos, /*generate_poll*/true);
+ }
+ 
+@@ -2180,7 +2353,9 @@ void TemplateTable::_return(TosState state)
+   if (_desc->bytecode() == Bytecodes::_return_register_finalizer) {
+     assert(state == vtos, "only valid state");
+ 
+-    __ ldr(c_rarg1, aaddress(0));
++    // C-6 L54: receiver `this` from local 0 is an oop; load as a capability
++    // so its tag survives for the load_klass below.
++    __ cap_ldr(c_rarg1, aaddress(0));
+     __ load_klass(r3, c_rarg1);
+     __ ldrw(r3, Address(r3, Klass::access_flags_offset()));
+     Label skip_register_finalizer;
+@@ -2205,6 +2380,14 @@ void TemplateTable::_return(TosState state)
+   }
+ 
+   __ remove_activation(state);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L59: the JavaCalls call_stub entered the top interpreted frame via
++  // `blr x4` running in C64, which baked PSTATE.C64 (bit0=1) into the return
++  // sentry now in lr. RET sets PC = lr.address without clearing bit0, so the
++  // return lands on an odd PC -> ifetch SIGBUS. Clear bit0 (no-op for returns
++  // to interpreted callers, whose return-entry addresses are already even).
++  __ cap_clear_bit0(lr, rscratch1);
++#endif
+   __ ret(lr);
+ }
+ 
+@@ -2299,10 +2482,18 @@ void TemplateTable::load_field_cp_cache_entry(Register obj,
+ 
+   // klass overwrite register
+   if (is_static) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #42: f1 (holder Klass*) and the java_mirror are caps;
++    // integer ldr strips the tag and the following deref faults.
++    __ cap_ldr_imm(obj, cache, in_bytes(cp_base_offset +
++                                        ConstantPoolCacheEntry::f1_offset()));
++    __ cap_ldr_imm(obj, obj, in_bytes(Klass::java_mirror_offset()));
++#else
+     __ ldr(obj, Address(cache, in_bytes(cp_base_offset +
+                                         ConstantPoolCacheEntry::f1_offset())));
+     const int mirror_offset = in_bytes(Klass::java_mirror_offset());
+     __ ldr(obj, Address(obj, mirror_offset));
++#endif
+     __ resolve_oop_handle(obj);
+   }
+ }
+@@ -2336,9 +2527,17 @@ void TemplateTable::load_invoke_cp_cache_entry(int byte_no,
+ 
+   size_t index_size = (is_invokedynamic ? sizeof(u4) : sizeof(u2));
+   resolve_cache_and_index(byte_no, cache, index, index_size);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #42: the resolved Method* (f1, or f2 for invokevirtual) is a
++  // cap; integer ldr strips the tag and dispatch faults.
++  __ cap_ldr_imm(method, cache, method_offset);
++#else
+   __ ldr(method, Address(cache, method_offset));
++#endif
+ 
+   if (itable_index != noreg) {
++    // itable_index comes from f2: a plain integer index (vtable/itable
++    // slot) for the virtual/interface case — an integer load is correct.
+     __ ldr(itable_index, Address(cache, index_offset));
+   }
+   __ ldrw(flags, Address(cache, flags_offset));
+@@ -3176,8 +3375,23 @@ void TemplateTable::prepare_invoke(int byte_no,
+     // const int receiver_is_at_end      = -1;  // back off one slot to get receiver
+     // Address recv_addr = __ argument_address(recv, no_return_pc_pushed_yet + receiver_is_at_end);
+     // __ movptr(recv, recv_addr);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #45/#47: integer add strips esp's cap tag → cap-add. And
++    // the expression-stack slot is stackElementSize (16) bytes on purecap,
++    // so the shift is logStackElementSize (4), not the hardcoded 3.
++    __ lsl(rscratch2, recv, Interpreter::logStackElementSize);
++    __ cap_add_reg(rscratch1, esp, rscratch2);
++#else
+     __ add(rscratch1, esp, recv, ext::uxtx, 3); // FIXME: uxtb here?
++#endif
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #48: the receiver is a 16-byte oop capability on the
++    // expression stack; an 8-byte ldr drops the tag → the receiver
++    // null-check (and the call) faults. cap-LDR the full oop.
++    __ cap_ldr(recv, Address(rscratch1, -Interpreter::expr_offset_in_bytes(1)));
++#else
+     __ ldr(recv, Address(rscratch1, -Interpreter::expr_offset_in_bytes(1)));
++#endif
+     __ verify_oop(recv);
+   }
+ 
+@@ -3188,8 +3402,18 @@ void TemplateTable::prepare_invoke(int byte_no,
+   // load return address
+   {
+     const address table_addr = (address) Interpreter::invoke_return_entry_table_for(code);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #46: the return-entry table is a libjvm.so .data global of
++    // 16-byte capability entries. (1) reach it via the data-cap table
++    // (codecache PCC can't address libjvm.so .data); (2) index with ×16
++    // (cap stride), not ×8; (3) cap-LDR the entry so lr is a valid
++    // return capability (the post-call interpreter continuation).
++    __ lea_libjvm_global(rscratch1, table_addr);
++    __ cap_ldr(lr, Address(rscratch1, rscratch2, Address::lsl(4)));
++#else
+     __ mov(rscratch1, table_addr);
+     __ ldr(lr, Address(rscratch1, rscratch2, Address::lsl(3)));
++#endif
+   }
+ }
+ 
+@@ -3786,8 +4010,16 @@ void TemplateTable::monitorenter()
+   // find a free slot in the monitor block (result in c_rarg1)
+   {
+     Label entry, loop, exit;
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: the monitor-block-top slot holds a capability to a BasicObjectLock
++    // on the stack; it is dereferenced in the loop, so cap-LDR it (integer ldr
++    // would give a tag-0 base that faults). c_rarg2 is only address-compared,
++    // so its lea may stay integer.
++    __ cap_ldr_imm(c_rarg3, rfp, frame::interpreter_frame_monitor_block_top_offset * wordSize);
++#else
+     __ ldr(c_rarg3, monitor_block_top); // points to current entry,
+                                         // starting with top-most entry
++#endif
+     __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
+ 
+     __ b(entry);
+@@ -3803,7 +4035,11 @@ void TemplateTable::monitorenter()
+     // if same object then stop searching
+     __ br(Assembler::EQ, exit);
+     // otherwise advance to next entry
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_add_imm(c_rarg3, c_rarg3, entry_size);   // C-9: keep c_rarg3 a tagged cap (deref'd)
++#else
+     __ add(c_rarg3, c_rarg3, entry_size);
++#endif
+     __ bind(entry);
+     // check if bottom reached
+     __ cmp(c_rarg3, c_rarg2);
+@@ -3819,6 +4055,29 @@ void TemplateTable::monitorenter()
+   {
+     Label entry, loop;
+     // 1. compute new pointers            // rsp: old expression stack top
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: esp/sp/the expression-stack-bottom pointer and every shifted
++    // expression-stack slot are capabilities. Integer sub/ldr/str strip esp's
++    // tag (so the lock store + later push/pop fault) and truncate any shifted
++    // oop to a tag-0 8-byte value. Use cap ops + a full-16-byte cap copy loop.
++    __ cap_ldr_imm(c_rarg1, rfp, frame::interpreter_frame_initial_sp_offset * wordSize);
++    __ cap_sub_imm(esp, esp, entry_size);         // move expression stack top
++    __ cap_sub_imm(c_rarg1, c_rarg1, entry_size); // move expression stack bottom
++    __ mov(c_rarg3, esp);                 // set start value for copy loop
++    __ cap_str_imm(c_rarg1, rfp, frame::interpreter_frame_initial_sp_offset * wordSize);
++
++    __ cap_sub_imm(sp, sp, entry_size);   // make room for the monitor
++
++    __ b(entry);
++    // 2. move expression stack contents
++    __ bind(loop);
++    __ cap_ldr_imm(c_rarg2, c_rarg3, entry_size); // load full 16B slot from old loc
++    __ cap_str_imm(c_rarg2, c_rarg3, 0);          // store it at new location
++    __ cap_add_imm(c_rarg3, c_rarg3, wordSize);   // advance to next slot
++    __ bind(entry);
++    __ cmp(c_rarg3, c_rarg1);        // check if bottom reached
++    __ br(Assembler::NE, loop);      // if not at bottom then copy next slot
++#else
+     __ ldr(c_rarg1, monitor_block_bot);   // c_rarg1: old expression stack bottom
+     __ sub(esp, esp, entry_size);         // move expression stack top
+     __ sub(c_rarg1, c_rarg1, entry_size); // move expression stack bottom
+@@ -3838,6 +4097,7 @@ void TemplateTable::monitorenter()
+     __ cmp(c_rarg3, c_rarg1);        // check if bottom reached
+     __ br(Assembler::NE, loop);      // if not at bottom then
+                                      // copy next word
++#endif
+   }
+ 
+   // call run-time routine
+@@ -3848,10 +4108,15 @@ void TemplateTable::monitorenter()
+   // handling for async. exceptions work correctly.
+   // The object has already been poped from the stack, so the
+   // expression stack looks correct.
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_add_imm(rbcp, rbcp, 1);   // C-9: keep rbcp a tagged cap (next dispatch derefs it)
++  // store object — the BasicObjectLock obj field holds the oop capability
++  __ cap_str_imm(r0, c_rarg1, BasicObjectLock::obj_offset_in_bytes());
++#else
+   __ increment(rbcp);
+-
+   // store object
+   __ str(r0, Address(c_rarg1, BasicObjectLock::obj_offset_in_bytes()));
++#endif
+   __ lock_object(c_rarg1);
+ 
+   // check to make sure this monitor doesn't cause stack overflow after locking
+@@ -3882,8 +4147,15 @@ void TemplateTable::monitorexit()
+   // find matching slot
+   {
+     Label entry, loop;
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: monitor-block-top holds a capability to a BasicObjectLock that is
++    // dereferenced below; cap-LDR it (and cap-advance) so the obj compare
++    // doesn't fault. c_rarg2 is only address-compared (lea stays integer).
++    __ cap_ldr_imm(c_rarg1, rfp, frame::interpreter_frame_monitor_block_top_offset * wordSize);
++#else
+     __ ldr(c_rarg1, monitor_block_top); // points to current entry,
+                                         // starting with top-most entry
++#endif
+     __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
+                                         // of monitor block
+     __ b(entry);
+@@ -3895,7 +4167,11 @@ void TemplateTable::monitorexit()
+     // if same object then stop searching
+     __ br(Assembler::EQ, found);
+     // otherwise advance to next entry
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_add_imm(c_rarg1, c_rarg1, entry_size);
++#else
+     __ add(c_rarg1, c_rarg1, entry_size);
++#endif
+     __ bind(entry);
+     // check if bottom reached
+     __ cmp(c_rarg1, c_rarg2);

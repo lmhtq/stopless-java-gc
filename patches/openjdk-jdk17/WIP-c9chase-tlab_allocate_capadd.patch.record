@@ -1,0 +1,97 @@
+diff --git a/src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp
+index a4a2b142039..b746817ae3d 100644
+--- a/src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp
+@@ -58,11 +58,23 @@ void BarrierSetAssembler::load_at(MacroAssembler* masm, DecoratorSet decorators,
+           __ decode_heap_oop(dst);
+         }
+       } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++        // C-6 fix #43: an uncompressed oop is a 16-byte capability;
++        // integer ldr strips the tag and any later use of the loaded
++        // oop as a base faults. cap-LDR preserves the cap. High-leverage:
++        // every oop field/array/native load goes through here.
++        __ cap_ldr(dst, src);
++#else
+         __ ldr(dst, src);
++#endif
+       }
+     } else {
+       assert(in_native, "why else?");
++#ifdef __CHERI_PURE_CAPABILITY__
++      __ cap_ldr(dst, src);
++#else
+       __ ldr(dst, src);
++#endif
+     }
+     break;
+   }
+@@ -95,11 +107,22 @@ void BarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators
+         }
+         __ strw(val, dst);
+       } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++        // C-6 fix #43: store the full 16-byte oop capability (cap-STR).
++        // val may be zr (null store) — czr writes a null cap, which is
++        // the intended null oop.
++        __ cap_str(val, dst);
++#else
+         __ str(val, dst);
++#endif
+       }
+     } else {
+       assert(in_native, "why else?");
++#ifdef __CHERI_PURE_CAPABILITY__
++      __ cap_str(val, dst);
++#else
+       __ str(val, dst);
++#endif
+     }
+     break;
+   }
+@@ -140,18 +163,45 @@ void BarrierSetAssembler::tlab_allocate(MacroAssembler* masm, Register obj,
+ 
+   // verify_tlab();
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #50: the TLAB top is a heap capability; an 8-byte ldr drops
++  // its tag so every TLAB-allocated object (and the stored-back top) is
++  // tag-0, faulting when the object is later used as an oop. cap-LDR the
++  // top (obj inherits the TLAB's bounds — acceptable for correctness),
++  // and cap-STR the bumped top. The tlab_end load stays integer (only
++  // compared by address). High-leverage: all fast-path allocations.
++  __ cap_ldr_imm(obj, rthread, in_bytes(JavaThread::tlab_top_offset()));
++#else
+   __ ldr(obj, Address(rthread, JavaThread::tlab_top_offset()));
++#endif
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: the bumped `end` is stored back as the new tlab_top and becomes the
++  // NEXT allocation's `obj`. An integer `lea` (= add) of the capability `obj`
++  // strips its tag, so every allocation after the first in a TLAB returns a
++  // tag-0 oop that faults when used (e.g. the invokespecial receiver). Use a
++  // cap-preserving add so `end` keeps obj's (TLAB) bounds + tag.
++  if (var_size_in_bytes == noreg) {
++    __ cap_add_imm(end, obj, con_size_in_bytes);
++  } else {
++    __ cap_add_reg(end, obj, var_size_in_bytes);
++  }
++#else
+   if (var_size_in_bytes == noreg) {
+     __ lea(end, Address(obj, con_size_in_bytes));
+   } else {
+     __ lea(end, Address(obj, var_size_in_bytes));
+   }
++#endif
+   __ ldr(rscratch1, Address(rthread, JavaThread::tlab_end_offset()));
+   __ cmp(end, rscratch1);
+   __ br(Assembler::HI, slow_case);
+ 
+   // update the tlab top pointer
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_str_imm(end, rthread, in_bytes(JavaThread::tlab_top_offset()));
++#else
+   __ str(end, Address(rthread, JavaThread::tlab_top_offset()));
++#endif
+ 
+   // recover var_size_in_bytes if necessary
+   if (var_size_in_bytes == end) {

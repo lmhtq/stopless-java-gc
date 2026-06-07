@@ -1,0 +1,421 @@
+diff --git a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
+index 1db103730f1..0c374715713 100644
+--- a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
+@@ -49,8 +49,16 @@
+ void InterpreterMacroAssembler::narrow(Register result) {
+ 
+   // Get method->_constMethod->_result_type
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L55: Method* and ConstMethod* in the frame are 16-byte capabilities;
++  // cap-LDR so their tags survive the chained deref (frame_method_offset is
++  // negative, so cap_ldr_imm emits the unscaled cap-LDUR form).
++  cap_ldr_imm(rscratch1, rfp, frame::interpreter_frame_method_offset * wordSize);
++  cap_ldr_imm(rscratch1, rscratch1, in_bytes(Method::const_offset()));
++#else
+   ldr(rscratch1, Address(rfp, frame::interpreter_frame_method_offset * wordSize));
+   ldr(rscratch1, Address(rscratch1, Method::const_offset()));
++#endif
+   ldrb(rscratch1, Address(rscratch1, ConstMethod::result_type_offset()));
+ 
+   Label done, notBool, notByte, notChar;
+@@ -169,9 +177,16 @@ void InterpreterMacroAssembler::get_unsigned_2_byte_index_at_bcp(
+ }
+ 
+ void InterpreterMacroAssembler::get_dispatch() {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #34: PCC-relative adrp to the libjvm.so dispatch table yields
++  // an out-of-range (tag-cleared) cap from the codecache. Load the
++  // pre-seeded dispatch-table capability from the thread instead.
++  cap_ldr_imm(rdispatch, rthread, in_bytes(Thread::cap_dispatch_offset()));
++#else
+   uint64_t offset;
+   adrp(rdispatch, ExternalAddress((address)Interpreter::dispatch_table()), offset);
+   lea(rdispatch, Address(rdispatch, offset));
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::get_cache_index_at_bcp(Register index,
+@@ -209,13 +224,26 @@ void InterpreterMacroAssembler::get_cache_and_index_at_bcp(Register cache,
+   assert_different_registers(cache, index);
+   assert_different_registers(cache, rcpool);
+   get_cache_index_at_bcp(index, bcp_offset, index_size);
++#ifndef __CHERI_PURE_CAPABILITY__
+   assert(sizeof(ConstantPoolCacheEntry) == 4 * wordSize, "adjust code below");
++#endif
+   // convert from field index to ConstantPoolCacheEntry
+   // aarch64 already has the cache in rcpool so there is no need to
+   // install it in cache. instead we pre-add the indexed offset to
+   // rcpool and return it in cache. All clients of this method need to
+   // be modified accordingly.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #39/#42: integer add(cache, rcpool, index, LSL, 5) strips
++  // rcpool's cap tag → cap-add instead. AND the entry stride is NOT 32
++  // on CHERI: ConstantPoolCacheEntry is padded to 64 bytes (power-of-2,
++  // because _f1 is a 16-byte cap) so the shift is log2(64)=6, not 5.
++  // Derive it from size_in_bytes() so it tracks the struct.
++  const int cpce_log = exact_log2(in_bytes(ConstantPoolCacheEntry::size_in_bytes()));
++  lsl(rscratch1, index, cpce_log);
++  cap_add_reg(cache, rcpool, rscratch1);
++#else
+   add(cache, rcpool, index, Assembler::LSL, 5);
++#endif
+ }
+ 
+ 
+@@ -243,6 +271,17 @@ void InterpreterMacroAssembler::get_cache_entry_pointer_at_bcp(Register cache,
+                                                                size_t index_size) {
+   assert(cache != tmp, "must use different register");
+   get_cache_index_at_bcp(tmp, bcp_offset, index_size);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #42: the cpcache pointer is a capability and the entry stride
++  // is the (padded) 64-byte size (shift = log2(size)), not 32. Use
++  // cap-LDR to read rcpool from the frame, then cap-ADD the header and
++  // the index*stride so the resulting entry pointer keeps its cap tag.
++  const int cpce_log = exact_log2(in_bytes(ConstantPoolCacheEntry::size_in_bytes()));
++  cap_ldr_imm(cache, rfp, frame::interpreter_frame_cache_offset * wordSize);
++  cap_add_imm(cache, cache, in_bytes(ConstantPoolCache::base_offset()));
++  lsl(tmp, tmp, cpce_log);
++  cap_add_reg(cache, cache, tmp);
++#else
+   assert(sizeof(ConstantPoolCacheEntry) == 4 * wordSize, "adjust code below");
+   // convert from field index to ConstantPoolCacheEntry index
+   // and from word offset to byte offset
+@@ -251,16 +290,27 @@ void InterpreterMacroAssembler::get_cache_entry_pointer_at_bcp(Register cache,
+   // skip past the header
+   add(cache, cache, in_bytes(ConstantPoolCache::base_offset()));
+   add(cache, cache, tmp, Assembler::LSL, 2 + LogBytesPerWord);  // construct pointer to cache entry
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::get_method_counters(Register method,
+                                                     Register mcs, Label& skip) {
+   Label has_counters;
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #30: MethodCounters* is a cap; integer ldr strips the tag
++  // and the subsequent counter increment via mcs base faults.
++  cap_ldr_imm(mcs, method, in_bytes(Method::method_counters_offset()));
++  cbnz(mcs, has_counters);
++  call_VM(noreg, CAST_FROM_FN_PTR(address,
++          InterpreterRuntime::build_method_counters), method);
++  cap_ldr_imm(mcs, method, in_bytes(Method::method_counters_offset()));
++#else
+   ldr(mcs, Address(method, Method::method_counters_offset()));
+   cbnz(mcs, has_counters);
+   call_VM(noreg, CAST_FROM_FN_PTR(address,
+           InterpreterRuntime::build_method_counters), method);
+   ldr(mcs, Address(method, Method::method_counters_offset()));
++#endif
+   cbz(mcs, skip); // No MethodCounters allocated, OutOfMemory
+   bind(has_counters);
+ }
+@@ -272,8 +322,18 @@ void InterpreterMacroAssembler::load_resolved_reference_at_index(
+ 
+   get_constant_pool(result);
+   // load pointer for resolved_references[] objArray
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: ConstantPool::_cache (ConstantPoolCache*) and the cache's
++  // _resolved_references (an OopHandle = capability) are 16-byte caps; the
++  // stock integer ldr strips the tag, so the 2nd load derefs a tag-0 cache
++  // pointer (PROT_CHERI_TAG fault). Fired in fast_aldc (ldc of a String/Class
++  // constant) during early class init. cap-LDR the metadata + handle.
++  cap_ldr_imm(result, result, ConstantPool::cache_offset_in_bytes());
++  cap_ldr_imm(result, result, ConstantPoolCache::resolved_references_offset_in_bytes());
++#else
+   ldr(result, Address(result, ConstantPool::cache_offset_in_bytes()));
+   ldr(result, Address(result, ConstantPoolCache::resolved_references_offset_in_bytes()));
++#endif
+   resolve_oop_handle(result, tmp);
+   // Add in the index
+   add(index, index, arrayOopDesc::base_offset_in_bytes(T_OBJECT) >> LogBytesPerHeapOop);
+@@ -298,7 +358,16 @@ void InterpreterMacroAssembler::load_resolved_method_at_index(int byte_no,
+        ? ConstantPoolCacheEntry::f2_offset()
+        : ConstantPoolCacheEntry::f1_offset()));
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 fix (docs/41 §AC): f1/f2 in the ConstantPoolCacheEntry is a 16-byte
++  // Method* capability; the stock integer ldr strips its tag, so the caller's
++  // `jump_from_interpreted`/method deref through it faults PROT_CHERI_TAG. This
++  // fired on the first resolved invokestatic/invokespecial AFTER the resolving
++  // boot phase (e.g. in a VM-bootstrap method run after String.<clinit>).
++  cap_ldr_imm(method, cache, method_offset); // get f1 Method* (cap)
++#else
+   ldr(method, Address(cache, method_offset)); // get f1 Method*
++#endif
+ }
+ 
+ // Generate a subtype check: branch to ok_is_subtype if sub_klass is a
+@@ -329,7 +398,15 @@ void InterpreterMacroAssembler::gen_subtype_check(Register Rsub_klass,
+ // Java Expression Stack
+ 
+ void InterpreterMacroAssembler::pop_ptr(Register r) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #49: a reference/oop on the expression stack is a 16-byte
++  // capability; an 8-byte ldr drops its tag. cap-LDR the full slot, then
++  // bump esp by one (16-byte) slot. High-leverage: every atos/oop pop.
++  cap_ldr_imm(r, esp, 0);
++  cap_add_imm(esp, esp, (unsigned)wordSize);
++#else
+   ldr(r, post(esp, wordSize));
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::pop_i(Register r) {
+@@ -341,7 +418,14 @@ void InterpreterMacroAssembler::pop_l(Register r) {
+ }
+ 
+ void InterpreterMacroAssembler::push_ptr(Register r) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #49: push the full 16-byte oop capability (decrement esp by
++  // one slot, cap-STR) so the reference keeps its tag on the stack.
++  cap_sub_imm(esp, esp, (unsigned)wordSize);
++  cap_str_imm(r, esp, 0);
++#else
+   str(r, pre(esp, -wordSize));
++#endif
+  }
+ 
+ void InterpreterMacroAssembler::push_i(Register r) {
+@@ -405,11 +489,23 @@ void InterpreterMacroAssembler::push(TosState state) {
+ 
+ // Helpers for swap and dup
+ void InterpreterMacroAssembler::load_ptr(int n, Register val) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AI: an oop at expression-stack depth n is a 16-byte capability;
++  // integer ldr strips its tag (push_ptr/pop_ptr were ported in C-6 #49 but
++  // these depth-n accessors — used by dup/swap and the invoke receiver — were
++  // not), so the subsequent null-check/deref faults. cap-LDR the full slot.
++  cap_ldr_imm(val, esp, Interpreter::expr_offset_in_bytes(n));
++#else
+   ldr(val, Address(esp, Interpreter::expr_offset_in_bytes(n)));
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::store_ptr(int n, Register val) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  cap_str_imm(val, esp, Interpreter::expr_offset_in_bytes(n));
++#else
+   str(val, Address(esp, Interpreter::expr_offset_in_bytes(n)));
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::load_float(Address src) {
+@@ -424,7 +520,14 @@ void InterpreterMacroAssembler::prepare_to_jump_from_interpreted() {
+   // set sender sp
+   mov(r13, sp);
+   // record last_sp
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L57: store esp as a full capability so the matching cap-LDR on the
++  // return path restores a tagged expression-stack pointer (an integer str
++  // would drop the tag bit in tag-memory).
++  cap_str_imm(esp, rfp, frame::interpreter_frame_last_sp_offset * wordSize);
++#else
+   str(esp, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
++#endif
+ }
+ 
+ // Jump to from_interpreted entry of a call unless single stepping is possible
+@@ -478,6 +581,37 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
+     tbnz(rscratch2, exact_log2(SafepointMechanism::poll_bit()), safepoint);
+   }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #37: the dispatch table holds `address` entries which are
++  // 16-byte capabilities in purecap, but the stock indexing uses uxtw(3)
++  // (×8), so odd bytecodes read the metadata half of an entry (a value
++  // like 0xfc5fc000...) instead of the handler PC and br lands in
++  // garbage. We need ×16 indexing — but the hardware register-offset
++  // addressing mode only allows a shift of 0 or log2(access size)=3 for
++  // an 8-byte ldr (assembler_aarch64.hpp:539 guarantee). So pre-scale
++  // the (element) index by 16 with an explicit lsl and use shift 0. The
++  // 8-byte ldr then reads the entry's address half = the handler PC, and
++  // br (integer) reaches it within the codecache PCC.
++  // distance_from_dispatch_table already returns an ELEMENT count.
++  if (table == Interpreter::dispatch_table(state)) {
++    addw(rscratch2, rscratch1, Interpreter::distance_from_dispatch_table(state));
++    lslw(rscratch2, rscratch2, 4);
++    ldr(rscratch2, Address(rdispatch, rscratch2, Address::uxtw(0)));
++  } else {
++    mov(rscratch2, (address)table);
++    lslw(rscratch1, rscratch1, 4);
++    ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(0)));
++  }
++  br(rscratch2);
++
++  if (needs_thread_local_poll) {
++    bind(safepoint);
++    lea(rscratch2, ExternalAddress((address)safepoint_table));
++    lslw(rscratch1, rscratch1, 4);
++    ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(0)));
++    br(rscratch2);
++  }
++#else
+   if (table == Interpreter::dispatch_table(state)) {
+     addw(rscratch2, rscratch1, Interpreter::distance_from_dispatch_table(state));
+     ldr(rscratch2, Address(rdispatch, rscratch2, Address::uxtw(3)));
+@@ -493,6 +627,7 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
+     ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(3)));
+     br(rscratch2);
+   }
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::dispatch_only(TosState state, bool generate_poll) {
+@@ -565,7 +700,14 @@ void InterpreterMacroAssembler::remove_activation(
+   strb(zr, do_not_unlock_if_synchronized); // reset the flag
+ 
+  // get method access flags
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L55: Method* in the frame is a 16-byte capability; cap-LDR (unscaled
++  // cap-LDUR, negative frame offset) so the access_flags deref below has a
++  // tagged base.
++  cap_ldr_imm(r1, rfp, frame::interpreter_frame_method_offset * wordSize);
++#else
+   ldr(r1, Address(rfp, frame::interpreter_frame_method_offset * wordSize));
++#endif
+   ldr(r2, Address(r1, Method::access_flags_offset()));
+   tbz(r2, exact_log2(JVM_ACC_SYNCHRONIZED), unlocked);
+ 
+@@ -627,8 +769,14 @@ void InterpreterMacroAssembler::remove_activation(
+     bind(restart);
+     // We use c_rarg1 so that if we go slow path it will be the correct
+     // register for unlock_object to pass to VM directly
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: monitor-block-top is a capability to a BasicObjectLock that the loop
++    // dereferences; cap-LDR + cap-advance it. r19 is only address-compared.
++    cap_ldr_imm(c_rarg1, rfp, frame::interpreter_frame_monitor_block_top_offset * wordSize);
++#else
+     ldr(c_rarg1, monitor_block_top); // points to current entry, starting
+                                      // with top-most entry
++#endif
+     lea(r19, monitor_block_bot);  // points to word before bottom of
+                                   // monitor block
+     b(entry);
+@@ -665,7 +813,11 @@ void InterpreterMacroAssembler::remove_activation(
+     ldr(rscratch1, Address(c_rarg1, BasicObjectLock::obj_offset_in_bytes()));
+     cbnz(rscratch1, exception);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_add_imm(c_rarg1, c_rarg1, entry_size); // C-9: keep c_rarg1 a tagged cap
++#else
+     add(c_rarg1, c_rarg1, entry_size); // otherwise advance to next entry
++#endif
+     bind(entry);
+     cmp(c_rarg1, r19); // check if bottom reached
+     br(Assembler::NE, loop); // if not at bottom then check this entry
+@@ -682,8 +834,18 @@ void InterpreterMacroAssembler::remove_activation(
+ 
+   // remove activation
+   // get sender esp
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 fix (docs/41 §S): sender_sp is a CAPABILITY (the caller's expression-
++  // stack pointer, saved cap-wide in generate_fixed_frame). The stock integer
++  // `ldr` strips its tag; the `mov esp` + `andr sp` below then propagate an
++  // UNTAGGED value into CSP, so the caller resumes with a tag-0 SP and the next
++  // return rets to a stack address — the java.lang.String.<clinit> boot crash
++  // (PC==LR==SP==stack addr, CSP tag=0 base=0 top=MAX). cap-LDR preserves it.
++  cap_ldr_imm(rscratch2, rfp, frame::interpreter_frame_sender_sp_offset * wordSize);
++#else
+   ldr(rscratch2,
+       Address(rfp, frame::interpreter_frame_sender_sp_offset * wordSize));
++#endif
+   if (StackReservedPages > 0) {
+     // testing if reserved zone needs to be re-enabled
+     Label no_reserved_zone_enabling;
+@@ -704,14 +866,25 @@ void InterpreterMacroAssembler::remove_activation(
+   }
+ 
+   // restore sender esp
++#ifdef __CHERI_PURE_CAPABILITY__
++  cap_add_imm(esp, rscratch2, 0);   // cap-mov esp <- sender_sp (preserve tag)
++#else
+   mov(esp, rscratch2);
++#endif
+   // remove frame anchor
+   leave();
+   // If we're returning to interpreted code we will shortly be
+   // adjusting SP to allow some space for ESP.  If we're returning to
+   // compiled code the saved sender SP was saved in sender_sp, so this
+   // restores it.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // esp (=sender_sp) is already 16-aligned (stackElementSize=16), so a
++  // cap-preserving copy is equivalent to the stock `andr sp,esp,-16` align
++  // but keeps CSP's tag/bounds (the integer andr yields a tag-0 CSP).
++  cap_add_imm(sp, esp, 0);
++#else
+   andr(sp, esp, -16);
++#endif
+ }
+ 
+ // Lock object
+@@ -745,7 +918,14 @@ void InterpreterMacroAssembler::lock_object(Register lock_reg)
+     Label slow_case;
+ 
+     // Load object pointer into obj_reg %c_rarg3
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: the lock record's obj field holds the oop capability (stored via
++    // cap-STR in monitorenter); integer ldr strips its tag so the mark-word
++    // load / cmpxchg below derefs a tag-0 oop and faults. cap-LDR it.
++    cap_ldr_imm(obj_reg, lock_reg, obj_offset);
++#else
+     ldr(obj_reg, Address(lock_reg, obj_offset));
++#endif
+ 
+     if (DiagnoseSyncOnValueBasedClasses != 0) {
+       load_klass(tmp, obj_reg);
+@@ -867,7 +1047,13 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
+     lea(swap_reg, Address(lock_reg, BasicObjectLock::lock_offset_in_bytes()));
+ 
+     // Load oop into obj_reg(%c_rarg3)
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: obj_reg is the CAS base for the header swap-back, so it must be a
++    // tagged oop cap (stored via cap-STR in monitorenter); cap-LDR it.
++    cap_ldr_imm(obj_reg, lock_reg, BasicObjectLock::obj_offset_in_bytes());
++#else
+     ldr(obj_reg, Address(lock_reg, BasicObjectLock::obj_offset_in_bytes()));
++#endif
+ 
+     // Free entry
+     str(zr, Address(lock_reg, BasicObjectLock::obj_offset_in_bytes()));
+@@ -887,7 +1073,11 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
+     cmpxchg_obj_header(swap_reg, header_reg, obj_reg, rscratch1, done, /*fallthrough*/NULL);
+ 
+     // Call the runtime routine for slow case.
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_str_imm(obj_reg, lock_reg, BasicObjectLock::obj_offset_in_bytes()); // restore obj (full cap)
++#else
+     str(obj_reg, Address(lock_reg, BasicObjectLock::obj_offset_in_bytes())); // restore obj
++#endif
+     call_VM_leaf(CAST_FROM_FN_PTR(address, InterpreterRuntime::monitorexit), lock_reg);
+ 
+     bind(done);
+@@ -1635,6 +1825,29 @@ void InterpreterMacroAssembler::call_VM_base(Register oop_result,
+ // interpreter specific
+   restore_bcp();
+   restore_locals();
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #28: rmethod = r12 is a caller-saved temporary, so it is
++  // clobbered across the call_VM (the C runtime / trampoline leaves a
++  // tag-0 integer in it). Stock AArch64 leaves the integer value intact
++  // by luck and callers that use `method` after call_VM see the right
++  // address — but on CHERI a tag-0 base faults PROT_CHERI_TAG on first
++  // use. Reload rmethod with a tagged cap from the frame, mirroring the
++  // bcp/locals restores above.
++  get_method(rmethod);
++  // C-6 L57: esp (r20, expression-stack pointer) also returns from the
++  // call detagged — stock HotSpot relies on it being callee-saved, but the
++  // codecache<->libjvm trampoline boundary drops the tag. Its ADDRESS is
++  // intact and lies within the native stack capability (csp), so rebuild a
++  // tagged esp = csp + (esp_addr - csp_addr). Without this, the first
++  // [esp] cap-load/store after a resolve call_VM (e.g. putfield storing an
++  // oop) SIGPROTs. csp's bounds cover the whole stack, which is correct for
++  // an expression-stack pointer.
++  mov(rscratch1, sp);              // rscratch1 = csp address (integer)
++  sub(rscratch2, esp, rscratch1);  // delta = esp_addr - csp_addr
++  // add esp, csp, rscratch2  (cap-add reg: Cd=esp #20, Cn=csp #31, Xm=rscratch2)
++  emit_int32(0xC2A06000U | ((unsigned)rscratch2->encoding() << 16)
++             | (31U << 5) | (unsigned)esp->encoding());
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::profile_obj_type(Register obj, const Address& mdo_addr) {
