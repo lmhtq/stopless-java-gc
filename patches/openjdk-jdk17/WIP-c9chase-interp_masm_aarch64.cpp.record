@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
-index 1db103730f1..0c374715713 100644
+index 1db103730f1..7201d723813 100644
 --- a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
 @@ -49,8 +49,16 @@
@@ -128,7 +128,38 @@ index 1db103730f1..0c374715713 100644
    resolve_oop_handle(result, tmp);
    // Add in the index
    add(index, index, arrayOopDesc::base_offset_in_bytes(T_OBJECT) >> LogBytesPerHeapOop);
-@@ -298,7 +358,16 @@ void InterpreterMacroAssembler::load_resolved_method_at_index(int byte_no,
+@@ -282,11 +342,30 @@ void InterpreterMacroAssembler::load_resolved_reference_at_index(
+ 
+ void InterpreterMacroAssembler::load_resolved_klass_at_offset(
+                              Register cpool, Register index, Register klass, Register temp) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: cpool, _resolved_klasses (Array<Klass*>*) and the Klass* are all
++  // capabilities; integer add/ldr strip their tags so the resolved-klass deref
++  // faults (fired in the fast-path `new` of a resolved class). Shift the index
++  // into the operand register (cap_add_reg is uxtx) and cap-LDR each link.
++  // NOTE: in purecap a ConstantPool slot (intptr_t) and an Array<Klass*>
++  // element (Klass* cap) are BOTH 16 bytes, so index by ×16 (exact_log2 of the
++  // 16-byte cap slot), not LogBytesPerWord (×8) — else the final cap-LDR hits
++  // an 8-aligned address and faults SIGBUS (alignment).
++  const int LogCapBytes = exact_log2(wordSize);   // wordSize == 16 in purecap
++  lsl(temp, index, LogCapBytes);
++  cap_add_reg(temp, cpool, temp);                  // temp = &cpool[index]
++  ldrh(temp, Address(temp, sizeof(ConstantPool))); // temp = resolved_klass_index (u2)
++  cap_ldr_imm(klass, cpool, ConstantPool::resolved_klasses_offset_in_bytes());
++  lsl(temp, temp, LogCapBytes);
++  cap_add_reg(klass, klass, temp);                 // klass = &_resolved_klasses[idx]
++  cap_ldr_imm(klass, klass, Array<Klass*>::base_offset_in_bytes());
++#else
+   add(temp, cpool, index, LSL, LogBytesPerWord);
+   ldrh(temp, Address(temp, sizeof(ConstantPool))); // temp = resolved_klass_index
+   ldr(klass, Address(cpool,  ConstantPool::resolved_klasses_offset_in_bytes())); // klass = cpool->_resolved_klasses
+   add(klass, klass, temp, LSL, LogBytesPerWord);
+   ldr(klass, Address(klass, Array<Klass*>::base_offset_in_bytes()));
++#endif
+ }
+ 
+ void InterpreterMacroAssembler::load_resolved_method_at_index(int byte_no,
+@@ -298,7 +377,16 @@ void InterpreterMacroAssembler::load_resolved_method_at_index(int byte_no,
         ? ConstantPoolCacheEntry::f2_offset()
         : ConstantPoolCacheEntry::f1_offset()));
  
@@ -145,7 +176,7 @@ index 1db103730f1..0c374715713 100644
  }
  
  // Generate a subtype check: branch to ok_is_subtype if sub_klass is a
-@@ -329,7 +398,15 @@ void InterpreterMacroAssembler::gen_subtype_check(Register Rsub_klass,
+@@ -329,7 +417,15 @@ void InterpreterMacroAssembler::gen_subtype_check(Register Rsub_klass,
  // Java Expression Stack
  
  void InterpreterMacroAssembler::pop_ptr(Register r) {
@@ -161,7 +192,7 @@ index 1db103730f1..0c374715713 100644
  }
  
  void InterpreterMacroAssembler::pop_i(Register r) {
-@@ -341,7 +418,14 @@ void InterpreterMacroAssembler::pop_l(Register r) {
+@@ -341,7 +437,14 @@ void InterpreterMacroAssembler::pop_l(Register r) {
  }
  
  void InterpreterMacroAssembler::push_ptr(Register r) {
@@ -176,7 +207,7 @@ index 1db103730f1..0c374715713 100644
   }
  
  void InterpreterMacroAssembler::push_i(Register r) {
-@@ -405,11 +489,23 @@ void InterpreterMacroAssembler::push(TosState state) {
+@@ -405,11 +508,23 @@ void InterpreterMacroAssembler::push(TosState state) {
  
  // Helpers for swap and dup
  void InterpreterMacroAssembler::load_ptr(int n, Register val) {
@@ -200,7 +231,7 @@ index 1db103730f1..0c374715713 100644
  }
  
  void InterpreterMacroAssembler::load_float(Address src) {
-@@ -424,7 +520,14 @@ void InterpreterMacroAssembler::prepare_to_jump_from_interpreted() {
+@@ -424,7 +539,14 @@ void InterpreterMacroAssembler::prepare_to_jump_from_interpreted() {
    // set sender sp
    mov(r13, sp);
    // record last_sp
@@ -215,7 +246,7 @@ index 1db103730f1..0c374715713 100644
  }
  
  // Jump to from_interpreted entry of a call unless single stepping is possible
-@@ -478,6 +581,37 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
+@@ -478,6 +600,37 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
      tbnz(rscratch2, exact_log2(SafepointMechanism::poll_bit()), safepoint);
    }
  
@@ -253,7 +284,7 @@ index 1db103730f1..0c374715713 100644
    if (table == Interpreter::dispatch_table(state)) {
      addw(rscratch2, rscratch1, Interpreter::distance_from_dispatch_table(state));
      ldr(rscratch2, Address(rdispatch, rscratch2, Address::uxtw(3)));
-@@ -493,6 +627,7 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
+@@ -493,6 +646,7 @@ void InterpreterMacroAssembler::dispatch_base(TosState state,
      ldr(rscratch2, Address(rscratch2, rscratch1, Address::uxtw(3)));
      br(rscratch2);
    }
@@ -261,7 +292,7 @@ index 1db103730f1..0c374715713 100644
  }
  
  void InterpreterMacroAssembler::dispatch_only(TosState state, bool generate_poll) {
-@@ -565,7 +700,14 @@ void InterpreterMacroAssembler::remove_activation(
+@@ -565,7 +719,14 @@ void InterpreterMacroAssembler::remove_activation(
    strb(zr, do_not_unlock_if_synchronized); // reset the flag
  
   // get method access flags
@@ -276,7 +307,7 @@ index 1db103730f1..0c374715713 100644
    ldr(r2, Address(r1, Method::access_flags_offset()));
    tbz(r2, exact_log2(JVM_ACC_SYNCHRONIZED), unlocked);
  
-@@ -627,8 +769,14 @@ void InterpreterMacroAssembler::remove_activation(
+@@ -627,8 +788,14 @@ void InterpreterMacroAssembler::remove_activation(
      bind(restart);
      // We use c_rarg1 so that if we go slow path it will be the correct
      // register for unlock_object to pass to VM directly
@@ -291,7 +322,7 @@ index 1db103730f1..0c374715713 100644
      lea(r19, monitor_block_bot);  // points to word before bottom of
                                    // monitor block
      b(entry);
-@@ -665,7 +813,11 @@ void InterpreterMacroAssembler::remove_activation(
+@@ -665,7 +832,11 @@ void InterpreterMacroAssembler::remove_activation(
      ldr(rscratch1, Address(c_rarg1, BasicObjectLock::obj_offset_in_bytes()));
      cbnz(rscratch1, exception);
  
@@ -303,7 +334,7 @@ index 1db103730f1..0c374715713 100644
      bind(entry);
      cmp(c_rarg1, r19); // check if bottom reached
      br(Assembler::NE, loop); // if not at bottom then check this entry
-@@ -682,8 +834,18 @@ void InterpreterMacroAssembler::remove_activation(
+@@ -682,8 +853,18 @@ void InterpreterMacroAssembler::remove_activation(
  
    // remove activation
    // get sender esp
@@ -322,7 +353,7 @@ index 1db103730f1..0c374715713 100644
    if (StackReservedPages > 0) {
      // testing if reserved zone needs to be re-enabled
      Label no_reserved_zone_enabling;
-@@ -704,14 +866,25 @@ void InterpreterMacroAssembler::remove_activation(
+@@ -704,14 +885,25 @@ void InterpreterMacroAssembler::remove_activation(
    }
  
    // restore sender esp
@@ -348,7 +379,7 @@ index 1db103730f1..0c374715713 100644
  }
  
  // Lock object
-@@ -745,7 +918,14 @@ void InterpreterMacroAssembler::lock_object(Register lock_reg)
+@@ -745,7 +937,14 @@ void InterpreterMacroAssembler::lock_object(Register lock_reg)
      Label slow_case;
  
      // Load object pointer into obj_reg %c_rarg3
@@ -363,7 +394,7 @@ index 1db103730f1..0c374715713 100644
  
      if (DiagnoseSyncOnValueBasedClasses != 0) {
        load_klass(tmp, obj_reg);
-@@ -867,7 +1047,13 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
+@@ -867,7 +1066,13 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
      lea(swap_reg, Address(lock_reg, BasicObjectLock::lock_offset_in_bytes()));
  
      // Load oop into obj_reg(%c_rarg3)
@@ -377,7 +408,7 @@ index 1db103730f1..0c374715713 100644
  
      // Free entry
      str(zr, Address(lock_reg, BasicObjectLock::obj_offset_in_bytes()));
-@@ -887,7 +1073,11 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
+@@ -887,7 +1092,11 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
      cmpxchg_obj_header(swap_reg, header_reg, obj_reg, rscratch1, done, /*fallthrough*/NULL);
  
      // Call the runtime routine for slow case.
@@ -389,7 +420,7 @@ index 1db103730f1..0c374715713 100644
      call_VM_leaf(CAST_FROM_FN_PTR(address, InterpreterRuntime::monitorexit), lock_reg);
  
      bind(done);
-@@ -1635,6 +1825,29 @@ void InterpreterMacroAssembler::call_VM_base(Register oop_result,
+@@ -1635,6 +1844,29 @@ void InterpreterMacroAssembler::call_VM_base(Register oop_result,
  // interpreter specific
    restore_bcp();
    restore_locals();
