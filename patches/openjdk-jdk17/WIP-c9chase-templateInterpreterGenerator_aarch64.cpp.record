@@ -1,0 +1,739 @@
+diff --git a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
+index e20cffd5767..695c4f1cd4e 100644
+--- a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
+@@ -435,7 +435,13 @@ address TemplateInterpreterGenerator::generate_return_entry_for(TosState state,
+   address entry = __ pc();
+ 
+   // Restore stack bottom in case i2c adjusted stack
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L57: esp (expression-stack pointer) is a capability; cap-LDR keeps its
++  // tag so later [esp] cap-loads/stores don't SIGPROT.
++  __ cap_ldr_imm(esp, rfp, frame::interpreter_frame_last_sp_offset * wordSize);
++#else
+   __ ldr(esp, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
++#endif
+   // and NULL it as marker that esp is now tos until next java call
+   __ str(zr, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
+   __ restore_bcp();
+@@ -455,9 +461,46 @@ address TemplateInterpreterGenerator::generate_return_entry_for(TosState state,
+   __ ldr(r1, Address(r1, ConstantPoolCache::base_offset() + ConstantPoolCacheEntry::flags_offset()));
+   __ andr(r1, r1, ConstantPoolCacheEntry::parameter_size_mask);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L58: pop the callee's parameter slots. Each operand slot is 16 bytes
++  // on purecap so the stride is logStackElementSize (x16), NOT the stock x8 —
++  // with x8 esp drifts 8 bytes per parameter and lands mid-slot, so the next
++  // atos cap-LDR faults SIGBUS (BUS_ADRALN). cap-add also preserves esp's tag.
++  // (e.g. `new;dup;invokespecial <init>;putstatic`: after <init> pops the
++  // 1-slot receiver, esp must advance 16 bytes back to the surviving ref.)
++  __ lsl(rscratch1, r1, Interpreter::logStackElementSize);  // param_size * 16
++  __ cap_add_reg(esp, esp, rscratch1);
++#else
+   __ add(esp, esp, r1, Assembler::LSL, 3);
++#endif
+ 
+   // Restore machine SP
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L55/L56: ConstMethod* is a 16-byte capability (cap-LDR for max_stack).
++  // The stock tail (ldr initial_sp; integer sub; andr sp,-16) strips csp's
++  // capability tag -> SIGPROT. Reconstruct csp from the initial_sp CAPABILITY.
++  //
++  // C-9 fix (docs/41 §X): the per-slot stride MUST be stackElementSize (×16 on
++  // purecap), the SAME as generate_fixed_frame's "Move SP out of the way"
++  // (lsl logStackElementSize). This code used the stock ×8 (+roundup16), so the
++  // CALLER's machine-SP was reconstructed (max_stack+monitor+2)*8 bytes TOO HIGH
++  // after every interpreted return — landing CSP inside the live expression
++  // stack. The next call_VM scratch save (`stp [csp,#-32]!`) then overwrote a
++  // frame slot, ultimately corrupting a saved-LR slot to a stack value and
++  // making the next ret jump to the stack (the java.lang.String.<clinit> boot
++  // crash, first interp->interp->interp return). ×16 is already 16-aligned, so
++  // the roundup16 hack is unnecessary.
++  __ cap_ldr_imm(rscratch1, rmethod, in_bytes(Method::const_offset()));
++  __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
++  __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 2);
++  __ lsl(rscratch1, rscratch1, Interpreter::logStackElementSize);  // * 16 (NOT ×8)
++  __ neg(rscratch1, rscratch1);                    // -delta
++  __ cap_ldr_imm(rscratch2, rfp,
++                 frame::interpreter_frame_initial_sp_offset * wordSize);
++  // add csp, rscratch2, rscratch1  (cap-add reg; preserves rscratch2 tag/bounds)
++  __ emit_int32(0xC2A06000U | ((unsigned)rscratch1->encoding() << 16)
++                | ((unsigned)rscratch2->encoding() << 5) | 31U);
++#else
+   __ ldr(rscratch1, Address(rmethod, Method::const_offset()));
+   __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
+   __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 2);
+@@ -465,6 +508,7 @@ address TemplateInterpreterGenerator::generate_return_entry_for(TosState state,
+          Address(rfp, frame::interpreter_frame_initial_sp_offset * wordSize));
+   __ sub(rscratch1, rscratch2, rscratch1, ext::uxtw, 3);
+   __ andr(sp, rscratch1, -16);
++#endif
+ 
+  __ check_and_handle_popframe(rthread);
+  __ check_and_handle_earlyret(rthread);
+@@ -486,7 +530,11 @@ address TemplateInterpreterGenerator::generate_deopt_entry_for(TosState state,
+   __ get_dispatch();
+ 
+   // Calculate stack limit
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_ldr_imm(rscratch1, rmethod, in_bytes(Method::const_offset()));
++#else
+   __ ldr(rscratch1, Address(rmethod, Method::const_offset()));
++#endif
+   __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
+   __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 2);
+   __ ldr(rscratch2,
+@@ -495,7 +543,13 @@ address TemplateInterpreterGenerator::generate_deopt_entry_for(TosState state,
+   __ andr(sp, rscratch1, -16);
+ 
+   // Restore expression stack pointer
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L57: esp (expression-stack pointer) is a capability; cap-LDR keeps its
++  // tag so later [esp] cap-loads/stores don't SIGPROT.
++  __ cap_ldr_imm(esp, rfp, frame::interpreter_frame_last_sp_offset * wordSize);
++#else
+   __ ldr(esp, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
++#endif
+   // NULL last_sp until next java call
+   __ str(zr, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
+ 
+@@ -558,12 +612,22 @@ address TemplateInterpreterGenerator::generate_result_handler_for(
+   case T_DOUBLE : /* nothing to do */        break;
+   case T_OBJECT :
+     // retrieve result from frame
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_ldr_imm(r0, rfp, frame::interpreter_frame_oop_temp_offset * wordSize); // oop cap
++#else
+     __ ldr(r0, Address(rfp, frame::interpreter_frame_oop_temp_offset*wordSize));
++#endif
+     // and verify it
+     __ verify_oop(r0);
+     break;
+   default       : ShouldNotReachHere();
+   }
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AG: this result handler is a codecache stub BLR'd (integer) from the
++  // native entry within the same (codecache-wide) PCC, so lr carries the C64
++  // bit0; clear it and integer-ret (the interpreter _return pattern).
++  __ cap_clear_bit0(lr, rscratch1);
++#endif
+   __ ret(lr);                                  // return from result handler
+   return entry;
+ }
+@@ -761,7 +825,13 @@ void TemplateInterpreterGenerator::lock_method() {
+     __ ldrw(r0, access_flags);
+     __ tst(r0, JVM_ACC_STATIC);
+     // get receiver (assume this is frequent case)
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: the receiver local is a 16-byte oop cap; cap-LDR it (integer ldr
++    // strips the tag, so the lock store + lock_object deref fault).
++    __ cap_ldr(r0, Address(rlocals, Interpreter::local_offset_in_bytes(0)));
++#else
+     __ ldr(r0, Address(rlocals, Interpreter::local_offset_in_bytes(0)));
++#endif
+     __ br(Assembler::EQ, done);
+     __ load_mirror(r0, rmethod);
+ 
+@@ -778,12 +848,24 @@ void TemplateInterpreterGenerator::lock_method() {
+   }
+ 
+   // add space for monitor & lock
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: sp/esp/monitor-block-top/the stored receiver are all capabilities;
++  // integer sub/str strip their tags so the lock + later monitorexit/
++  // remove_activation fault. Keep them cap-tagged.
++  __ cap_sub_imm(sp, sp, entry_size);    // add space for a monitor entry
++  __ cap_sub_imm(esp, esp, entry_size);
++  __ mov(rscratch1, esp);
++  __ cap_str_imm(rscratch1, rfp, frame::interpreter_frame_monitor_block_top_offset * wordSize);
++  // store object
++  __ cap_str_imm(r0, esp, BasicObjectLock::obj_offset_in_bytes());
++#else
+   __ sub(sp, sp, entry_size); // add space for a monitor entry
+   __ sub(esp, esp, entry_size);
+   __ mov(rscratch1, esp);
+   __ str(rscratch1, monitor_block_top);  // set new monitor block top
+   // store object
+   __ str(r0, Address(esp, BasicObjectLock::obj_offset_in_bytes()));
++#endif
+   __ mov(c_rarg1, esp); // object address
+   __ lock_object(c_rarg1);
+ }
+@@ -800,16 +882,50 @@ void TemplateInterpreterGenerator::lock_method() {
+ void TemplateInterpreterGenerator::generate_fixed_frame(bool native_call) {
+   // initialize fixed part of activation frame
+   if (native_call) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #35: esp (expression stack ptr) computed via integer sub of
++    // sp loses the cap tag → bytecode templates' [esp],#16 pops fault.
++    __ cap_sub_imm(esp, sp, 14 * wordSize);
++#else
+     __ sub(esp, sp, 14 *  wordSize);
++#endif
+     __ mov(rbcp, zr);
+     __ stp(esp, zr, Address(__ pre(sp, -14 * wordSize)));
+     // add 2 zero-initialized slots for native calls
+     __ stp(zr, zr, Address(sp, 12 * wordSize));
+   } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_sub_imm(esp, sp, 12 * wordSize);
++#else
+     __ sub(esp, sp, 12 *  wordSize);
++#endif
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #20: cap-LDR to preserve ConstMethod cap tag.
++    __ cap_ldr_imm(rscratch1, rmethod, in_bytes(Method::const_offset()));
++    // C-6 fix #33: integer add(rbcp, ConstMethod, codes_offset) strips
++    // the cap tag → rbcp tag-0 → the bytecode-dispatch ldrb [rbcp]!
++    // faults. cap-ADD preserves the ConstMethod capability for rbcp.
++    {
++      unsigned imm12 = (unsigned)in_bytes(ConstMethod::codes_offset());
++      __ emit_int32(0x02000000U | ((imm12 & 0xFFF) << 10)
++                    | ((unsigned)rscratch1->encoding() << 5)
++                    | (unsigned)rbcp->encoding());
++    }
++#else
+     __ ldr(rscratch1, Address(rmethod, Method::const_offset()));      // get ConstMethod
+     __ add(rbcp, rscratch1, in_bytes(ConstMethod::codes_offset())); // get codebase
++#endif
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #29: the interpreter frame slots are cap-sized (16B). The
++    // stock integer stp both strips cap tags AND uses an 8-byte stride
++    // that misplaces the second register relative to the cap-sized slot
++    // layout that get_method/restore_* (cap-LDR, 16B stride) read back.
++    // Use cap-STP throughout. esp + rbcp are both caps. Pre-index form
++    // (writeback) decrements sp by 12 cap-slots first.
++    __ cap_stp_sp_pre(esp, rbcp, -12 * wordSize);
++#else
+     __ stp(esp, rbcp, Address(__ pre(sp, -12 * wordSize)));
++#endif
+   }
+ 
+   if (ProfileInterpreter) {
+@@ -818,34 +934,88 @@ void TemplateInterpreterGenerator::generate_fixed_frame(bool native_call) {
+     __ cbz(rscratch1, method_data_continue);
+     __ lea(rscratch1, Address(rscratch1, in_bytes(MethodData::data_offset())));
+     __ bind(method_data_continue);
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_stp_sp(rscratch1, rmethod, 6 * wordSize);  // mdp + Method* (both caps)
++#else
+     __ stp(rscratch1, rmethod, Address(sp, 6 * wordSize));  // save Method* and mdp (method data pointer)
++#endif
+   } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_stp_sp(zr, rmethod, 6 * wordSize);         // null mdp + Method*
++#else
+     __ stp(zr, rmethod, Address(sp, 6 * wordSize));        // save Method* (no mdp)
++#endif
+   }
+ 
+   // Get mirror and store it in the frame as GC root for this Method*
+   __ load_mirror(r10, rmethod);
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_stp_sp(r10, zr, 4 * wordSize);               // mirror (oop cap) + null
++#else
+   __ stp(r10, zr, Address(sp, 4 * wordSize));
++#endif
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #21: chained pointer loads need cap-LDR to preserve cap tags.
++  __ cap_ldr_imm(rcpool, rmethod, in_bytes(Method::const_offset()));
++  __ cap_ldr_imm(rcpool, rcpool, in_bytes(ConstMethod::constants_offset()));
++  __ cap_ldr_imm(rcpool, rcpool, ConstantPool::cache_offset_in_bytes());
++#else
+   __ ldr(rcpool, Address(rmethod, Method::const_offset()));
+   __ ldr(rcpool, Address(rcpool, ConstMethod::constants_offset()));
+   __ ldr(rcpool, Address(rcpool, ConstantPool::cache_offset_in_bytes()));
++#endif
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_stp_sp(rlocals, rcpool, 2 * wordSize);       // rlocals + rcpool (both caps)
++#else
+   __ stp(rlocals, rcpool, Address(sp, 2 * wordSize));
++#endif
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_stp_sp(rfp, lr, 10 * wordSize);              // saved rfp + return addr (both caps)
++  // C-6 fix #23: lea = integer ADD via cap base → rfp tag=0. cap-ADD preserves tag.
++  __ emit_int32(0x02000000U | ((10U * (unsigned)wordSize) << 10) | (31U << 5) | 29U);
++#else
+   __ stp(rfp, lr, Address(sp, 10 * wordSize));
+   __ lea(rfp, Address(sp, 10 * wordSize));
++#endif
+ 
+   // set sender sp
+   // leave last_sp as null
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_stp_sp(zr, r13, 8 * wordSize);               // null last_sp + sender sp (cap)
++#else
+   __ stp(zr, r13, Address(sp, 8 * wordSize));
++#endif
+ 
+   // Move SP out of the way
+   if (! native_call) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #48 (replaces the L24 skip): this MUST run. It lowers the
++    // native stack (csp) below the interpreter expression stack by
++    // max_stack+monitor+2 slots. Skipping it (L24) left csp only ~32
++    // bytes above esp, so call_VM's `stp x8,x12,[csp,#-32]!` scratch save
++    // overwrote the expression-stack TOS — corrupting the invoke
++    // receiver. Compute count*stackElementSize (×16, not the stock ×8)
++    // and cap-SUB it from csp so the capability tag survives. csp encodes
++    // as register #31; cap-add(reg) with a negated offset = cap-sub.
++    // csp was 16-aligned and count*16 is a multiple of 16, so the result
++    // stays aligned (the stock integer `andr sp,-16` would strip the tag).
++    __ cap_ldr_imm(rscratch1, rmethod, in_bytes(Method::const_offset()));
++    __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
++    __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 2);
++    __ lsl(rscratch1, rscratch1, Interpreter::logStackElementSize); // * 16
++    __ neg(rscratch1, rscratch1);                                   // -(count*16)
++    // add csp, csp, rscratch1, uxtx  (cap-add reg, preserves csp's cap)
++    __ emit_int32(0xC2A06000U | ((unsigned)rscratch1->encoding() << 16)
++                  | (31U << 5) | 31U);
++#else
+     __ ldr(rscratch1, Address(rmethod, Method::const_offset()));
+     __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
+     __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 2);
+     __ sub(rscratch1, sp, rscratch1, ext::uxtw, 3);
+     __ andr(sp, rscratch1, -16);
++#endif
+   }
+ }
+ 
+@@ -1070,8 +1240,14 @@ void TemplateInterpreterGenerator::bang_stack_shadow_pages(bool native_call) {
+   const int start_page = native_call ? n_shadow_pages : 1;
+   const int page_size = os::vm_page_size();
+   for (int pages = start_page; pages <= n_shadow_pages ; pages++) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-6 fix #31: integer sub strips sp's cap tag → str faults. Use the
++    // cap-aware bang helper (cap-SUB preserves the stack capability).
++    __ bang_stack_with_offset(pages * page_size);
++#else
+     __ sub(rscratch2, sp, pages*page_size);
+     __ str(zr, Address(rscratch2));
++#endif
+   }
+ }
+ 
+@@ -1094,7 +1270,11 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+                                        size_of_parameters_offset());
+ 
+   // get parameter size (always needed)
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_ldr(r2, constMethod);   // ConstMethod* is a capability
++#else
+   __ ldr(r2, constMethod);
++#endif
+   __ load_unsigned_short(r2, size_of_parameters);
+ 
+   // Native calls don't need the stack size check since they have no
+@@ -1108,11 +1288,28 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+   // for natives the size of locals is zero
+ 
+   // compute beginning of parameters (rlocals)
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: mirror the normal-entry fix (#52) — integer add/sub strip esp's tag so
++  // every native-arg access via rlocals faults; and the param slot is 16 bytes
++  // (×16 via logStackElementSize), not the stock ×8.
++  __ lsl(rscratch1, r2, Interpreter::logStackElementSize);
++  __ cap_add_reg(rlocals, esp, rscratch1);
++  __ cap_sub_imm(rlocals, rlocals, (unsigned)wordSize);
++#else
+   __ add(rlocals, esp, r2, ext::uxtx, 3);
+   __ add(rlocals, rlocals, -wordSize);
++#endif
+ 
+   // Pull SP back to minimum size: this avoids holes in the stack
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 fix (docs/41 §AD): integer `andr sp` strips CSP's cap tag -> the native
++  // frame stp/later [csp] use faults. esp is 16-aligned (stackElementSize=16),
++  // so a cap-MOV is the aligning copy. This is the NATIVE method entry (the
++  // C-6 work ported generate_normal_entry but not generate_native_entry).
++  __ mov(sp, esp);
++#else
+   __ andr(sp, esp, -16);
++#endif
+ 
+   // initialize fixed part of activation frame
+   generate_fixed_frame(true);
+@@ -1202,16 +1399,44 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+   const Register result_handler = r19;
+ 
+   // allocate space for parameters
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_ldr_imm(t, rmethod, in_bytes(Method::const_offset()));
++#else
+   __ ldr(t, Address(rmethod, Method::const_offset()));
++#endif
+   __ load_unsigned_short(t, Address(t, ConstMethod::size_of_parameters_offset()));
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L57: allocate native parameter space. The stock sequence
++  // (integer sub esp-params*slot; andr sp,-16; mov esp,scratch) strips the
++  // capability tag from BOTH csp and esp, so the signature handler's later
++  // [esp] cap-loads SIGPROT. params*16 (logStackElementSize=4) is 16-aligned
++  // and esp is 16-aligned, so cap-sub keeps a 16-aligned, tagged pointer with
++  // no integer `and`. esp -= params*16 (cap), then csp = esp (cap-mov).
++  __ lsl(rscratch1, t, Interpreter::logStackElementSize);  // params * 16
++  __ neg(rscratch2, rscratch1);
++  __ cap_add_reg(esp, esp, rscratch2);   // esp = esp - params*16 (tagged)
++  __ cap_add_imm(sp, esp, 0);            // csp = esp (cap-mov via cap-add #0)
++#else
+   __ sub(rscratch1, esp, t, ext::uxtx, Interpreter::logStackElementSize);
+   __ andr(sp, rscratch1, -16);
+   __ mov(esp, rscratch1);
++#endif
+ 
+   // get signature handler
+   {
+     Label L;
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 §AF: the signature handler is a code CAPABILITY (a generated stub);
++    // integer ldr strips its tag so the cap-BLR below faults. cap-LDR it.
++    __ cap_ldr_imm(t, rmethod, in_bytes(Method::signature_handler_offset()));
++    __ cbnz(t, L);
++    __ call_VM(noreg,
++               CAST_FROM_FN_PTR(address,
++                                InterpreterRuntime::prepare_native_call),
++               rmethod);
++    __ cap_ldr_imm(t, rmethod, in_bytes(Method::signature_handler_offset()));
++#else
+     __ ldr(t, Address(rmethod, Method::signature_handler_offset()));
+     __ cbnz(t, L);
+     __ call_VM(noreg,
+@@ -1219,6 +1444,7 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+                                 InterpreterRuntime::prepare_native_call),
+                rmethod);
+     __ ldr(t, Address(rmethod, Method::signature_handler_offset()));
++#endif
+     __ bind(L);
+   }
+ 
+@@ -1234,7 +1460,15 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+   // However, large signatures cannot be cached and are generated
+   // each time here.  The slow-path generator can do a GC on return,
+   // so we must reload it after the call.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AF: integer `blr t` keeps the current PCC and bakes the C64 mode bit
++  // into the return addr; the handler's RET then lands on an odd PC -> SIGBUS.
++  // cap-BLR installs t as PCC (its bounds + mode) and a proper sealed return
++  // sentry, so the handler's cap-RET returns cleanly.
++  __ cap_blr(t);
++#else
+   __ blr(t);
++#endif
+   __ get_method(rmethod);        // slow path can do a GC, reload rmethod
+ 
+ 
+@@ -1249,17 +1483,44 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+     // get mirror
+     __ load_mirror(t, rmethod);
+     // copy mirror into activation frame
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 §AG: the mirror is an oop CAPABILITY; integer str strips its tag in the
++    // frame slot and integer add strips rfp's tag forming the handle, so the JNI
++    // call derefs a tag-0 handle/oop. cap-STR the oop and cap-ADD the handle.
++    __ cap_str_imm(t, rfp, frame::interpreter_frame_oop_temp_offset * wordSize);
++    __ cap_add_imm(c_rarg1, rfp, frame::interpreter_frame_oop_temp_offset * wordSize);
++#else
+     __ str(t, Address(rfp, frame::interpreter_frame_oop_temp_offset * wordSize));
+     // pass handle to mirror
+     __ add(c_rarg1, rfp, frame::interpreter_frame_oop_temp_offset * wordSize);
++#endif
+     __ bind(L);
+   }
+ 
+   // get native function entry point in r10
+   {
+     Label L;
+-    __ ldr(r10, Address(rmethod, Method::native_function_offset()));
+     address unsatisfied = (SharedRuntime::native_method_throw_unsatisfied_link_error_entry());
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 §AG: r10 is the native function CODE cap (cap-BLR'd below) — cap-LDR
++    // it. The stock aarch64 `mov(rscratch2,unsatisfied); ldr(rscratch2,rscratch2)`
++    // dereferences the unsatisfied-link entry, but that entry is a C64 CODE
++    // address (bit0 set) which can't be read as data (DDC can't cover it) and is
++    // semantically wrong — x86 compares the native_function pointer DIRECTLY to
++    // the entry (cmpptr(rax, unsatisfied.addr()), no deref). Match x86: load the
++    // entry address and compare r10 to it directly.
++    __ cap_ldr_imm(r10, rmethod, in_bytes(Method::native_function_offset()));
++    __ mov(rscratch2, unsatisfied);
++    __ cmp(r10, rscratch2);
++    __ br(Assembler::NE, L);
++    __ call_VM(noreg,
++               CAST_FROM_FN_PTR(address,
++                                InterpreterRuntime::prepare_native_call),
++               rmethod);
++    __ get_method(rmethod);
++    __ cap_ldr_imm(r10, rmethod, in_bytes(Method::native_function_offset()));
++#else
++    __ ldr(r10, Address(rmethod, Method::native_function_offset()));
+     __ mov(rscratch2, unsatisfied);
+     __ ldr(rscratch2, rscratch2);
+     __ cmp(r10, rscratch2);
+@@ -1270,11 +1531,18 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+                rmethod);
+     __ get_method(rmethod);
+     __ ldr(r10, Address(rmethod, Method::native_function_offset()));
++#endif
+     __ bind(L);
+   }
+ 
+   // pass JNIEnv
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AG: JNIEnv* = &thread->_jni_environment; integer add strips rthread's
++  // cap tag, so the native function derefs a tag-0 JNIEnv. cap-ADD preserves it.
++  __ cap_add_imm(c_rarg0, rthread, in_bytes(JavaThread::jni_environment_offset()));
++#else
+   __ add(c_rarg0, rthread, in_bytes(JavaThread::jni_environment_offset()));
++#endif
+ 
+   // Set the last Java PC in the frame anchor to be the return address from
+   // the call to the native method: this will allow the debugger to
+@@ -1300,7 +1568,15 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+   __ stlrw(rscratch1, rscratch2);
+ 
+   // Call the native method.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AG: the native function lives OUTSIDE the codecache PCC bounds; integer
++  // blr keeps codecache PCC -> bounds fault. cap-BLR installs r10 (the native
++  // function cap, cap-LDR'd above) as PCC and a sealed return sentry back to
++  // native_return.
++  __ cap_blr(r10);
++#else
+   __ blr(r10);
++#endif
+   __ bind(native_return);
+   __ get_method(rmethod);
+   // result potentially in r0 or v0
+@@ -1314,7 +1590,19 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+   // pushes change or anything else is added to the stack then the code in
+   // interpreter_frame_result must also change.
+   __ push(dtos);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: the native result may be an oop (a jobject = capability handle); the
++  // stock push(ltos) stores it with an integer str, dropping its tag, so the
++  // resolve_jobject below derefs a tag-0 handle (SIGPROT). Store the full
++  // 16-byte cap in the value (low) slot, keeping the 2-slot (32B) ltos
++  // footprint frame::interpreter_frame_result expects.
++  __ cap_sub_imm(esp, esp, wordSize);
++  __ str(zr, Address(esp));                 // high slot
++  __ cap_sub_imm(esp, esp, wordSize);
++  __ cap_str_imm(r0, esp, 0);               // low (value) slot = full cap
++#else
+   __ push(ltos);
++#endif
+ 
+   __ verify_sve_vector_length();
+ 
+@@ -1370,7 +1658,13 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+   }
+ 
+   // reset handle block
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AG: active_handles is a JNIHandleBlock* capability; integer ldr strips
++  // its tag so the `str zr,[t,top]` below faults. cap-LDR it.
++  __ cap_ldr_imm(t, rthread, in_bytes(JavaThread::active_handles_offset()));
++#else
+   __ ldr(t, Address(rthread, JavaThread::active_handles_offset()));
++#endif
+   __ str(zr, Address(t, JNIHandleBlock::top_offset_in_bytes()));
+ 
+   // If result is an oop unbox and store it in frame where gc will see it
+@@ -1382,9 +1676,18 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+     __ cmp(t, result_handler);
+     __ br(Assembler::NE, no_oop);
+     // Unbox oop result, e.g. JNIHandles::resolve result.
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_ldr_imm(r0, esp, 0);                                  // full cap (jobject handle)
++    __ cap_add_imm(esp, esp, 2 * Interpreter::stackElementSize); // pop ltos (2 slots)
++#else
+     __ pop(ltos);
++#endif
+     __ resolve_jobject(r0, rthread, t);
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_str_imm(r0, rfp, frame::interpreter_frame_oop_temp_offset * wordSize); // oop result cap
++#else
+     __ str(r0, Address(rfp, frame::interpreter_frame_oop_temp_offset*wordSize));
++#endif
+     // keep stack depth as expected by pushing oop which will eventually be discarded
+     __ push(ltos);
+     __ bind(no_oop);
+@@ -1413,8 +1716,14 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+ 
+   // restore bcp to have legal interpreter frame, i.e., bci == 0 <=>
+   // rbcp == code_base()
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L55: rbcp must stay a tagged capability for later bytecode loads.
++  __ cap_ldr_imm(rbcp, rmethod, in_bytes(Method::const_offset()));   // get ConstMethod*
++  __ cap_add_imm(rbcp, rbcp, in_bytes(ConstMethod::codes_offset())); // get codebase
++#else
+   __ ldr(rbcp, Address(rmethod, Method::const_offset()));   // get ConstMethod*
+   __ add(rbcp, rbcp, in_bytes(ConstMethod::codes_offset()));          // get codebase
++#endif
+   // handle exceptions (exception handling will handle unlocking!)
+   {
+     Label L;
+@@ -1477,12 +1786,20 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+   __ pop(ltos);
+   __ pop(dtos);
+ 
++  // C-9 §AG: result_handler is a codecache stub in the same (wide) PCC region;
++  // integer blr keeps the PCC and the stub clears the C64 bit0 + integer-rets.
+   __ blr(result_handler);
+ 
+   // remove activation
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L57: sender sp is a capability; cap-LDR preserves its tag.
++  __ cap_ldr_imm(esp, rfp,
++                 frame::interpreter_frame_sender_sp_offset * wordSize); // get sender sp
++#else
+   __ ldr(esp, Address(rfp,
+                     frame::interpreter_frame_sender_sp_offset *
+                     wordSize)); // get sender sp
++#endif
+   // remove frame anchor
+   __ leave();
+ 
+@@ -1509,6 +1826,8 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+ 
+   // rscratch1: sender sp
+   address entry_point = __ pc();
++  static int normal_entry_dumped = 0;
++  address normal_entry_dump_start = entry_point;
+ 
+   const Address constMethod(rmethod, Method::const_offset());
+   const Address access_flags(rmethod, Method::access_flags_offset());
+@@ -1518,7 +1837,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+ 
+   // get parameter size (always needed)
+   // need to load the const method first
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #18: integer LDR via cap base loads only the 64-bit address;
++  // result register has tag=0. Subsequent use of r3 as a cap base
++  // (`ldrh w2, [c3, #68]`) faults with PROT_CHERI_TAG. Use cap-LDR
++  // to preserve cap metadata of the loaded constMethod pointer.
++  __ cap_ldr_imm(r3, rmethod, in_bytes(Method::const_offset()));
++#else
+   __ ldr(r3, constMethod);
++#endif
+   __ load_unsigned_short(r2, size_of_parameters);
+ 
+   // r2: size of parameters
+@@ -1530,8 +1857,18 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+   generate_stack_overflow_check();
+ 
+   // compute beginning of parameters (rlocals)
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #52: rlocals = esp + size_of_parameters * stackElementSize,
++  // backed off one slot. Integer add/sub strip esp's cap tag (so every
++  // local access via rlocals faults), and the slot is 16 bytes (×16 via
++  // logStackElementSize), not the stock ×8. cap-add/cap-sub preserve it.
++  __ lsl(rscratch1, r2, Interpreter::logStackElementSize);
++  __ cap_add_reg(rlocals, esp, rscratch1);
++  __ cap_sub_imm(rlocals, rlocals, (unsigned)wordSize);
++#else
+   __ add(rlocals, esp, r2, ext::uxtx, 3);
+   __ sub(rlocals, rlocals, wordSize);
++#endif
+ 
+   __ mov(rscratch1, esp);
+ 
+@@ -1555,7 +1892,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+ 
+   // Padding between locals and fixed part of activation frame to ensure
+   // SP is always 16-byte aligned.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 fix #19: integer AND of sp clobbers cap tag → SIGPROT on later
++  // [csp, ...] use. Quick path: use cap-MOV. Assume rscratch1 already
++  // 16-byte aligned (esp is). TODO if breaks: SCVALUE for explicit
++  // address alignment while preserving cap tag/bounds.
++  __ mov(sp, rscratch1);
++#else
+   __ andr(sp, rscratch1, -16);
++#endif
+ 
+   // And the base dispatch table
+   __ get_dispatch();
+@@ -1656,6 +2001,32 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+     generate_counter_overflow(continue_after_compile);
+   }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  if (normal_entry_dumped++ < 1) {
++    uint32_t* p = (uint32_t*)entry_point;
++    uint32_t* end = (uint32_t*)__ pc();
++    int total = (int)(end - p);
++    fprintf(stderr, "[C6IE_SCAN] normal_entry 0x%p..0x%p (%d insns)\n",
++            entry_point, end, total);
++    int suspect = 0;
++    for (int i = 0; i < total; i++) {
++      uint32_t insn = p[i];
++      unsigned top = insn >> 24;
++      bool susp = (top == 0xa9 || top == 0xa8 || top == 0xa7 || top == 0xa6 ||
++                   top == 0xa5 || top == 0xa4 ||
++                   top == 0xf9 || top == 0xf8 ||
++                   top == 0xd1 || top == 0x91 || top == 0xd0 || top == 0xaa ||
++                   top == 0xd5 || top == 0xd2);
++      if ((i < 30) || (susp && suspect < 30)) {
++        fprintf(stderr, "  +%03d: 0x%08x %s\n", i*4, insn, susp ? "(int?)" : "");
++        if (susp) suspect++;
++      }
++    }
++    fprintf(stderr, "[C6IE_SCAN] total insns=%d, suspect int=%d\n", total, suspect);
++    fflush(stderr);
++  }
++#endif
++
+   return entry_point;
+ }
+ 
+@@ -1698,7 +2069,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+              c_rarg1);
+ 
+   // Calculate stack limit
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_ldr_imm(rscratch1, rmethod, in_bytes(Method::const_offset()));
++#else
+   __ ldr(rscratch1, Address(rmethod, Method::const_offset()));
++#endif
+   __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
+   __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 4);
+   __ ldr(rscratch2,
+@@ -1755,7 +2130,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+     // Compute size of arguments for saving when returning to
+     // deoptimized caller
+     __ get_method(r0);
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ cap_ldr_imm(r0, r0, in_bytes(Method::const_offset()));
++#else
+     __ ldr(r0, Address(r0, Method::const_offset()));
++#endif
+     __ load_unsigned_short(r0, Address(r0, in_bytes(ConstMethod::
+                                                     size_of_parameters_offset())));
+     __ lsl(r0, r0, Interpreter::logStackElementSize);
+@@ -1790,7 +2169,13 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+                        /* notify_jvmdi */ false);
+ 
+   // Restore the last_sp and null it out
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-6 L57: esp (expression-stack pointer) is a capability; cap-LDR keeps its
++  // tag so later [esp] cap-loads/stores don't SIGPROT.
++  __ cap_ldr_imm(esp, rfp, frame::interpreter_frame_last_sp_offset * wordSize);
++#else
+   __ ldr(esp, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
++#endif
+   __ str(zr, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
+ 
+   __ restore_bcp();
+@@ -1831,7 +2216,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+ #endif // INCLUDE_JVMTI
+ 
+   // Restore machine SP
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_ldr_imm(rscratch1, rmethod, in_bytes(Method::const_offset()));
++#else
+   __ ldr(rscratch1, Address(rmethod, Method::const_offset()));
++#endif
+   __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
+   __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 4);
+   __ ldr(rscratch2,

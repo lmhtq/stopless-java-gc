@@ -1,0 +1,72 @@
+diff --git a/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp b/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
+index f5970adc412..3d6cdaea8f4 100644
+--- a/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
+@@ -39,6 +39,17 @@
+ 
+ #define __ _masm->
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// C-9: compute dst = src + off as a TAGGED capability (src is rlocals). The
++// stock integer `add` strips the tag, so the jobject arg address handed to the
++// native function (or dereferenced by the handler) faults. local_offset can be
++// negative, so pick cap-add / cap-sub by sign.
++static inline void cap_lea_off(MacroAssembler* _masm, Register dst, Register src, int off) {
++  if (off >= 0) __ cap_add_imm(dst, src, (unsigned)off);
++  else          __ cap_sub_imm(dst, src, (unsigned)(-off));
++}
++#endif
++
+ // Implementation of SignatureHandlerGenerator
+ Register InterpreterRuntime::SignatureHandlerGenerator::from() { return rlocals; }
+ Register InterpreterRuntime::SignatureHandlerGenerator::to()   { return sp; }
+@@ -153,9 +164,17 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
+   Register reg = next_gpr();
+   if (reg == c_rarg1) {
+     assert(offset() == 0, "argument register 1 can only be (non-null) receiver");
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_lea_off(_masm, c_rarg1, from(), Interpreter::local_offset_in_bytes(offset()));
++#else
+     __ add(c_rarg1, from(), Interpreter::local_offset_in_bytes(offset()));
++#endif
+   } else if (reg != noreg) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_lea_off(_masm, r0, from(), Interpreter::local_offset_in_bytes(offset()));
++#else
+     __ add(r0, from(), Interpreter::local_offset_in_bytes(offset()));
++#endif
+     __ mov(reg, 0);
+     __ ldr(temp(), r0);
+     Label L;
+@@ -163,7 +182,14 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
+     __ mov(reg, r0);
+     __ bind(L);
+   } else {
++    // Stack-passed oop arg (>8 GPR args). cap_lea_off keeps r0 tagged for the
++    // ldr; the str into the sp-based native stack slot stays integer (to()==sp,
++    // which cap_str_imm can't encode) — this rare path is not on the boot path.
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_lea_off(_masm, r0, from(), Interpreter::local_offset_in_bytes(offset()));
++#else
+     __ add(r0, from(), Interpreter::local_offset_in_bytes(offset()));
++#endif
+     __ ldr(temp(), r0);
+     Label L;
+     __ cbnz(temp(), L);
+@@ -180,7 +206,16 @@ void InterpreterRuntime::SignatureHandlerGenerator::generate(uint64_t fingerprin
+ 
+   // return result handler
+   __ lea(r0, ExternalAddress(Interpreter::result_handler(method()->result_type())));
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 §AF: this generated signature handler is cap-BLR'd from the native entry,
++  // so lr is a sealed return sentry. The stock integer `ret lr` lands on an odd PC
++  // (C64 bit0) -> SIGBUS, and clearing bit0 + integer ret keeps the HANDLER's PCC
++  // (wrong bounds). Use a cap-RET (`ret c30`=0xc2c253c0): it unseals the sentry,
++  // restoring the native-entry PCC bounds and PSTATE.C64 mode.
++  __ emit_int32(0xC2C25000U | (30U << 5));   // ret c30 (cap-RET)
++#else
+   __ ret(lr);
++#endif
+ 
+   __ flush();
+ }
