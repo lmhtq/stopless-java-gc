@@ -1,20 +1,24 @@
 diff --git a/src/hotspot/share/interpreter/linkResolver.cpp b/src/hotspot/share/interpreter/linkResolver.cpp
-index d50ff0a8821..08ff050e958 100644
+index d50ff0a8821..e3696cbe9db 100644
 --- a/src/hotspot/share/interpreter/linkResolver.cpp
 +++ b/src/hotspot/share/interpreter/linkResolver.cpp
-@@ -1376,6 +1376,19 @@ void LinkResolver::runtime_resolve_virtual_method(CallInfo& result,
+@@ -1376,6 +1376,23 @@ void LinkResolver::runtime_resolve_virtual_method(CallInfo& result,
        assert(resolved_method->can_be_statically_bound(), "cannot override this method");
        selected_method = resolved_method;
      } else {
 +#ifdef __CHERI_PURE_CAPABILITY__
 +      if (::getenv("C9_VT_DIAG") &&
-+          __builtin_cheri_tag_get((void*)recv_klass) == 0) {
++          (__builtin_cheri_tag_get((void*)recv_klass) == 0 ||
++           (unsigned long)recv_klass < 0x50000000UL)) {
 +        oop r = recv();
 +        void* hk = (r != NULL) ? *(void**)((char*)(void*)r + oopDesc::klass_offset_in_bytes()) : NULL;
-+        fprintf(stderr, "[VT] recv_klass=%p(t0!) vti=%d recv=%p(t%d) hdr_klass=%p(t%d) resolved=%s\n",
-+                (void*)recv_klass, vtable_index, (void*)r,
-+                (int)__builtin_cheri_tag_get((void*)r),
++        void* fresh = (r != NULL) ? (void*)r->klass() : NULL;
++        fprintf(stderr, "[VT] recv_klass=%p(t%d perms=0x%lx) vti=%d recv=%p(t%d) hdr_klass=%p(t%d) fresh_klass()=%p(t%d) resolved=%s\n",
++                (void*)recv_klass, (int)__builtin_cheri_tag_get((void*)recv_klass),
++                (unsigned long)__builtin_cheri_perms_get((void*)recv_klass),
++                vtable_index, (void*)r, (int)__builtin_cheri_tag_get((void*)r),
 +                hk, (int)__builtin_cheri_tag_get(hk),
++                fresh, (int)__builtin_cheri_tag_get(fresh),
 +                resolved_method->name_and_sig_as_C_string());
 +        fflush(stderr);
 +      }
