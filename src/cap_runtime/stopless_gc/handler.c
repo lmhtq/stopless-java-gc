@@ -447,6 +447,16 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
                 fprintf(stderr, "[stopless]   faulting insn=%08x  Rn(base)=c%u tag=%d addr=%#lx  Rt=c%u\n",
                         fi, rn, base ? (int)cheri_tag_get(base) : -1,
                         base ? (unsigned long)cheri_address_get(base) : 0, rt);
+                if (base) {
+                    /* C-9: disambiguate tagged-but-faulting (bounds vs perm).
+                       in-bounds = base <= addr < top. */
+                    unsigned long b = (unsigned long)cheri_base_get(base);
+                    unsigned long len = (unsigned long)cheri_length_get(base);
+                    unsigned long a = (unsigned long)cheri_address_get(base);
+                    fprintf(stderr, "[stopless]     base cap: base=%#lx top=%#lx len=%#lx perms=%#lx %s\n",
+                            b, b + len, len, (unsigned long)cheri_perms_get(base),
+                            (a >= b && a < b + len) ? "[addr IN bounds]" : "[addr OUT of bounds]");
+                }
             }
         }
         /* What rbcp(c22), rmethod(c12), rcpool(c26) point at, and the dispatch table. */
