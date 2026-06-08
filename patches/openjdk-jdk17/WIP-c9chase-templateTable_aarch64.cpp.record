@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
-index 4666b42b933..5a82a40327c 100644
+index 4666b42b933..1cbedd7a401 100644
 --- a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 @@ -70,11 +70,20 @@ static inline Address aaddress(int n) {
@@ -609,7 +609,31 @@ index 4666b42b933..5a82a40327c 100644
    // access constant pool cache
    __ get_cache_and_index_at_bcp(r2, r3, 2);
    __ ldr(r1, Address(r2, in_bytes(ConstantPoolCache::base_offset() +
-@@ -3176,8 +3440,23 @@ void TemplateTable::prepare_invoke(int byte_no,
+@@ -3089,7 +3353,11 @@ void TemplateTable::fast_xaccess(TosState state)
+ 
+   // make sure exception is reported in correct bcp range (getfield is
+   // next instruction)
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_add_imm(rbcp, rbcp, 1);   // C-9: keep rbcp a tagged cap (see decrement below)
++#else
+   __ increment(rbcp);
++#endif
+   __ null_check(r0);
+   switch (state) {
+   case itos:
+@@ -3115,7 +3383,11 @@ void TemplateTable::fast_xaccess(TosState state)
+     __ bind(notVolatile);
+   }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ cap_sub_imm(rbcp, rbcp, 1);   // C-9: cap-preserving rbcp-- (matches increment above)
++#else
+   __ decrement(rbcp);
++#endif
+ }
+ 
+ 
+@@ -3176,8 +3448,23 @@ void TemplateTable::prepare_invoke(int byte_no,
      // const int receiver_is_at_end      = -1;  // back off one slot to get receiver
      // Address recv_addr = __ argument_address(recv, no_return_pc_pushed_yet + receiver_is_at_end);
      // __ movptr(recv, recv_addr);
@@ -633,7 +657,7 @@ index 4666b42b933..5a82a40327c 100644
      __ verify_oop(recv);
    }
  
-@@ -3188,8 +3467,18 @@ void TemplateTable::prepare_invoke(int byte_no,
+@@ -3188,8 +3475,18 @@ void TemplateTable::prepare_invoke(int byte_no,
    // load return address
    {
      const address table_addr = (address) Interpreter::invoke_return_entry_table_for(code);
@@ -652,7 +676,7 @@ index 4666b42b933..5a82a40327c 100644
    }
  }
  
-@@ -3531,7 +3820,14 @@ void TemplateTable::_new() {
+@@ -3531,7 +3828,14 @@ void TemplateTable::_new() {
  
      // Initialize object fields
      {
@@ -667,7 +691,7 @@ index 4666b42b933..5a82a40327c 100644
        Label loop;
        __ bind(loop);
        __ str(zr, Address(__ post(r2, BytesPerLong)));
-@@ -3786,8 +4082,16 @@ void TemplateTable::monitorenter()
+@@ -3786,8 +4090,16 @@ void TemplateTable::monitorenter()
    // find a free slot in the monitor block (result in c_rarg1)
    {
      Label entry, loop, exit;
@@ -684,7 +708,7 @@ index 4666b42b933..5a82a40327c 100644
      __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
  
      __ b(entry);
-@@ -3803,7 +4107,11 @@ void TemplateTable::monitorenter()
+@@ -3803,7 +4115,11 @@ void TemplateTable::monitorenter()
      // if same object then stop searching
      __ br(Assembler::EQ, exit);
      // otherwise advance to next entry
@@ -696,7 +720,7 @@ index 4666b42b933..5a82a40327c 100644
      __ bind(entry);
      // check if bottom reached
      __ cmp(c_rarg3, c_rarg2);
-@@ -3819,6 +4127,29 @@ void TemplateTable::monitorenter()
+@@ -3819,6 +4135,29 @@ void TemplateTable::monitorenter()
    {
      Label entry, loop;
      // 1. compute new pointers            // rsp: old expression stack top
@@ -726,7 +750,7 @@ index 4666b42b933..5a82a40327c 100644
      __ ldr(c_rarg1, monitor_block_bot);   // c_rarg1: old expression stack bottom
      __ sub(esp, esp, entry_size);         // move expression stack top
      __ sub(c_rarg1, c_rarg1, entry_size); // move expression stack bottom
-@@ -3838,6 +4169,7 @@ void TemplateTable::monitorenter()
+@@ -3838,6 +4177,7 @@ void TemplateTable::monitorenter()
      __ cmp(c_rarg3, c_rarg1);        // check if bottom reached
      __ br(Assembler::NE, loop);      // if not at bottom then
                                       // copy next word
@@ -734,7 +758,7 @@ index 4666b42b933..5a82a40327c 100644
    }
  
    // call run-time routine
-@@ -3848,10 +4180,15 @@ void TemplateTable::monitorenter()
+@@ -3848,10 +4188,15 @@ void TemplateTable::monitorenter()
    // handling for async. exceptions work correctly.
    // The object has already been poped from the stack, so the
    // expression stack looks correct.
@@ -751,7 +775,7 @@ index 4666b42b933..5a82a40327c 100644
    __ lock_object(c_rarg1);
  
    // check to make sure this monitor doesn't cause stack overflow after locking
-@@ -3882,8 +4219,15 @@ void TemplateTable::monitorexit()
+@@ -3882,8 +4227,15 @@ void TemplateTable::monitorexit()
    // find matching slot
    {
      Label entry, loop;
@@ -767,7 +791,7 @@ index 4666b42b933..5a82a40327c 100644
      __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
                                          // of monitor block
      __ b(entry);
-@@ -3895,7 +4239,11 @@ void TemplateTable::monitorexit()
+@@ -3895,7 +4247,11 @@ void TemplateTable::monitorexit()
      // if same object then stop searching
      __ br(Assembler::EQ, found);
      // otherwise advance to next entry
