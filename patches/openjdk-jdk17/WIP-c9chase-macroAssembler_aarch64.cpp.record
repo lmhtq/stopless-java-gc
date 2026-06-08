@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
-index 7abb2205414..fabd537dc33 100644
+index 7abb2205414..83ee45df3ac 100644
 --- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
 @@ -336,9 +336,20 @@ void MacroAssembler::set_last_Java_frame(Register last_java_sp,
@@ -188,7 +188,30 @@ index 7abb2205414..fabd537dc33 100644
    }
  }
  
-@@ -1513,6 +1601,10 @@ Address MacroAssembler::argument_address(RegisterOrConstant arg_slot,
+@@ -1370,11 +1458,22 @@ void MacroAssembler::check_klass_subtype_slow_path(Register sub_klass,
+ #endif //PRODUCT
+ 
+   // We will consult the secondary-super array.
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: secondary_supers is a capability to an Array<Klass*> in metaspace;
++  // an integer ldr drops its tag so the length ldrw (and the repne_scan
++  // element loads) SIGPROT. cap-LDR the array, cap-add to the data start.
++  cap_ldr(r5, secondary_supers_addr);
++  // Load the array length.
++  ldrw(r2, Address(r5, Array<Klass*>::length_offset_in_bytes()));
++  // Skip to start of data.
++  cap_add_imm(r5, r5, Array<Klass*>::base_offset_in_bytes());
++#else
+   ldr(r5, secondary_supers_addr);
+   // Load the array length.
+   ldrw(r2, Address(r5, Array<Klass*>::length_offset_in_bytes()));
+   // Skip to start of data.
+   add(r5, r5, Array<Klass*>::base_offset_in_bytes());
++#endif
+ 
+   cmp(sp, zr); // Clear Z flag; SP is never zero
+   // Scan R2 words at [R5] for an occurrence of R0.
+@@ -1513,6 +1612,10 @@ Address MacroAssembler::argument_address(RegisterOrConstant arg_slot,
    }
  }
  
@@ -199,7 +222,7 @@ index 7abb2205414..fabd537dc33 100644
  void MacroAssembler::call_VM_leaf_base(address entry_point,
                                         int number_of_arguments,
                                         Label *retaddr) {
-@@ -1520,8 +1612,49 @@ void MacroAssembler::call_VM_leaf_base(address entry_point,
+@@ -1520,8 +1623,49 @@ void MacroAssembler::call_VM_leaf_base(address entry_point,
  
    stp(rscratch1, rmethod, Address(pre(sp, -2 * wordSize)));
  
@@ -249,7 +272,7 @@ index 7abb2205414..fabd537dc33 100644
    if (retaddr)
      bind(*retaddr);
  
-@@ -2775,7 +2908,8 @@ RegSet MacroAssembler::call_clobbered_registers() {
+@@ -2775,7 +2919,8 @@ RegSet MacroAssembler::call_clobbered_registers() {
  }
  
  void MacroAssembler::push_call_clobbered_registers_except(RegSet exclude) {
@@ -259,7 +282,7 @@ index 7abb2205414..fabd537dc33 100644
    push(call_clobbered_registers() - exclude, sp);
    sub(sp, sp, step);
    mov(rscratch1, -step);
-@@ -2793,7 +2927,7 @@ void MacroAssembler::pop_call_clobbered_registers_except(RegSet exclude) {
+@@ -2793,7 +2938,7 @@ void MacroAssembler::pop_call_clobbered_registers_except(RegSet exclude) {
    for (int i = 0; i < 32; i += 4) {
      if (i <= v7->encoding() || i >= v16->encoding())
        ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
@@ -268,7 +291,7 @@ index 7abb2205414..fabd537dc33 100644
    }
  
    reinitialize_ptrue();
-@@ -2810,7 +2944,7 @@ void MacroAssembler::push_CPU_state(bool save_vectors, bool use_sve,
+@@ -2810,7 +2955,7 @@ void MacroAssembler::push_CPU_state(bool save_vectors, bool use_sve,
        sve_str(as_FloatRegister(i), Address(sp, i));
      }
    } else {
@@ -277,7 +300,7 @@ index 7abb2205414..fabd537dc33 100644
      mov(rscratch1, -step);
      sub(sp, sp, step);
      for (int i = 28; i >= 4; i -= 4) {
-@@ -2829,7 +2963,7 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, bool use_sve,
+@@ -2829,7 +2974,7 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, bool use_sve,
      }
      add(sp, sp, sve_vector_size_in_bytes * FloatRegisterImpl::number_of_registers);
    } else {
@@ -286,7 +309,7 @@ index 7abb2205414..fabd537dc33 100644
      for (int i = 0; i <= 28; i += 4)
        ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
            as_FloatRegister(i+3), restore_vectors ? T2D : T1D, Address(post(sp, step)));
-@@ -3856,13 +3990,41 @@ void MacroAssembler::kernel_crc32c(Register crc, Register buf, Register len,
+@@ -3856,13 +4001,41 @@ void MacroAssembler::kernel_crc32c(Register crc, Register buf, Register len,
  }
  
  
@@ -328,7 +351,7 @@ index 7abb2205414..fabd537dc33 100644
  }
  
  SkipIfEqual::~SkipIfEqual() {
-@@ -3904,9 +4066,20 @@ void MacroAssembler::load_method_holder_cld(Register rresult, Register rmethod)
+@@ -3904,9 +4077,20 @@ void MacroAssembler::load_method_holder_cld(Register rresult, Register rmethod)
  }
  
  void MacroAssembler::load_method_holder(Register holder, Register method) {
@@ -349,7 +372,7 @@ index 7abb2205414..fabd537dc33 100644
  }
  
  void MacroAssembler::load_klass(Register dst, Register src) {
-@@ -3914,7 +4087,15 @@ void MacroAssembler::load_klass(Register dst, Register src) {
+@@ -3914,7 +4098,15 @@ void MacroAssembler::load_klass(Register dst, Register src) {
      ldrw(dst, Address(src, oopDesc::klass_offset_in_bytes()));
      decode_klass_not_null(dst);
    } else {
@@ -365,7 +388,7 @@ index 7abb2205414..fabd537dc33 100644
    }
  }
  
-@@ -3942,10 +4123,18 @@ void MacroAssembler::resolve_weak_handle(Register rresult, Register rtmp) {
+@@ -3942,10 +4134,18 @@ void MacroAssembler::resolve_weak_handle(Register rresult, Register rtmp) {
  
  void MacroAssembler::load_mirror(Register dst, Register method, Register tmp) {
    const int mirror_offset = in_bytes(Klass::java_mirror_offset());
@@ -384,7 +407,7 @@ index 7abb2205414..fabd537dc33 100644
    resolve_oop_handle(dst, tmp);
  }
  
-@@ -3980,7 +4169,16 @@ void MacroAssembler::store_klass(Register dst, Register src) {
+@@ -3980,7 +4180,16 @@ void MacroAssembler::store_klass(Register dst, Register src) {
      encode_klass_not_null(src);
      strw(src, Address(dst, oopDesc::klass_offset_in_bytes()));
    } else {
