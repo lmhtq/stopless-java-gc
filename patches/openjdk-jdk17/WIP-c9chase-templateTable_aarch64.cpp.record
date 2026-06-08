@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
-index 4666b42b933..a43103f1dd1 100644
+index 4666b42b933..698bf3d9bee 100644
 --- a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 @@ -70,11 +70,20 @@ static inline Address aaddress(int n) {
@@ -646,7 +646,7 @@ index 4666b42b933..a43103f1dd1 100644
      __ resolve_oop_handle(obj);
    }
  }
-@@ -2336,9 +2614,17 @@ void TemplateTable::load_invoke_cp_cache_entry(int byte_no,
+@@ -2336,10 +2614,26 @@ void TemplateTable::load_invoke_cp_cache_entry(int byte_no,
  
    size_t index_size = (is_invokedynamic ? sizeof(u4) : sizeof(u2));
    resolve_cache_and_index(byte_no, cache, index, index_size);
@@ -659,12 +659,21 @@ index 4666b42b933..a43103f1dd1 100644
 +#endif
  
    if (itable_index != noreg) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: f2 is NOT always an integer index — for invokeinterface it is the
++    // resolved Method* (a 16-byte capability), which integer ldr would strip
++    // (then load_method_holder(rmethod) faults). cap-LDR preserves a Method*
++    // cap; for the integer-index cases it just loads the index (tag-0), fine.
++    __ cap_ldr_imm(itable_index, cache, index_offset);
++#else
 +    // itable_index comes from f2: a plain integer index (vtable/itable
 +    // slot) for the virtual/interface case — an integer load is correct.
      __ ldr(itable_index, Address(cache, index_offset));
++#endif
    }
    __ ldrw(flags, Address(cache, flags_offset));
-@@ -3066,7 +3352,13 @@ void TemplateTable::fast_xaccess(TosState state)
+ }
+@@ -3066,7 +3360,13 @@ void TemplateTable::fast_xaccess(TosState state)
    transition(vtos, state);
  
    // get receiver
@@ -678,7 +687,7 @@ index 4666b42b933..a43103f1dd1 100644
    // access constant pool cache
    __ get_cache_and_index_at_bcp(r2, r3, 2);
    __ ldr(r1, Address(r2, in_bytes(ConstantPoolCache::base_offset() +
-@@ -3089,7 +3381,11 @@ void TemplateTable::fast_xaccess(TosState state)
+@@ -3089,7 +3389,11 @@ void TemplateTable::fast_xaccess(TosState state)
  
    // make sure exception is reported in correct bcp range (getfield is
    // next instruction)
@@ -690,7 +699,7 @@ index 4666b42b933..a43103f1dd1 100644
    __ null_check(r0);
    switch (state) {
    case itos:
-@@ -3115,7 +3411,11 @@ void TemplateTable::fast_xaccess(TosState state)
+@@ -3115,7 +3419,11 @@ void TemplateTable::fast_xaccess(TosState state)
      __ bind(notVolatile);
    }
  
@@ -702,7 +711,7 @@ index 4666b42b933..a43103f1dd1 100644
  }
  
  
-@@ -3176,8 +3476,23 @@ void TemplateTable::prepare_invoke(int byte_no,
+@@ -3176,8 +3484,23 @@ void TemplateTable::prepare_invoke(int byte_no,
      // const int receiver_is_at_end      = -1;  // back off one slot to get receiver
      // Address recv_addr = __ argument_address(recv, no_return_pc_pushed_yet + receiver_is_at_end);
      // __ movptr(recv, recv_addr);
@@ -726,7 +735,7 @@ index 4666b42b933..a43103f1dd1 100644
      __ verify_oop(recv);
    }
  
-@@ -3188,8 +3503,18 @@ void TemplateTable::prepare_invoke(int byte_no,
+@@ -3188,8 +3511,18 @@ void TemplateTable::prepare_invoke(int byte_no,
    // load return address
    {
      const address table_addr = (address) Interpreter::invoke_return_entry_table_for(code);
@@ -745,7 +754,7 @@ index 4666b42b933..a43103f1dd1 100644
    }
  }
  
-@@ -3531,7 +3856,14 @@ void TemplateTable::_new() {
+@@ -3531,7 +3864,14 @@ void TemplateTable::_new() {
  
      // Initialize object fields
      {
@@ -760,7 +769,7 @@ index 4666b42b933..a43103f1dd1 100644
        Label loop;
        __ bind(loop);
        __ str(zr, Address(__ post(r2, BytesPerLong)));
-@@ -3612,8 +3944,15 @@ void TemplateTable::checkcast()
+@@ -3612,8 +3952,15 @@ void TemplateTable::checkcast()
    __ get_cpool_and_tags(r2, r3); // r2=cpool, r3=tags array
    __ get_unsigned_2_byte_index_at_bcp(r19, 1); // r19=index
    // See if bytecode has already been quicked
@@ -776,7 +785,7 @@ index 4666b42b933..a43103f1dd1 100644
    __ ldarb(r1, r1);
    __ cmp(r1, (u1)JVM_CONSTANT_Class);
    __ br(Assembler::EQ, quicked);
-@@ -3666,8 +4005,15 @@ void TemplateTable::instanceof() {
+@@ -3666,8 +4013,15 @@ void TemplateTable::instanceof() {
    __ get_cpool_and_tags(r2, r3); // r2=cpool, r3=tags array
    __ get_unsigned_2_byte_index_at_bcp(r19, 1); // r19=index
    // See if bytecode has already been quicked
@@ -792,7 +801,7 @@ index 4666b42b933..a43103f1dd1 100644
    __ ldarb(r1, r1);
    __ cmp(r1, (u1)JVM_CONSTANT_Class);
    __ br(Assembler::EQ, quicked);
-@@ -3786,8 +4132,16 @@ void TemplateTable::monitorenter()
+@@ -3786,8 +4140,16 @@ void TemplateTable::monitorenter()
    // find a free slot in the monitor block (result in c_rarg1)
    {
      Label entry, loop, exit;
@@ -809,7 +818,7 @@ index 4666b42b933..a43103f1dd1 100644
      __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
  
      __ b(entry);
-@@ -3803,7 +4157,11 @@ void TemplateTable::monitorenter()
+@@ -3803,7 +4165,11 @@ void TemplateTable::monitorenter()
      // if same object then stop searching
      __ br(Assembler::EQ, exit);
      // otherwise advance to next entry
@@ -821,7 +830,7 @@ index 4666b42b933..a43103f1dd1 100644
      __ bind(entry);
      // check if bottom reached
      __ cmp(c_rarg3, c_rarg2);
-@@ -3819,6 +4177,29 @@ void TemplateTable::monitorenter()
+@@ -3819,6 +4185,29 @@ void TemplateTable::monitorenter()
    {
      Label entry, loop;
      // 1. compute new pointers            // rsp: old expression stack top
@@ -851,7 +860,7 @@ index 4666b42b933..a43103f1dd1 100644
      __ ldr(c_rarg1, monitor_block_bot);   // c_rarg1: old expression stack bottom
      __ sub(esp, esp, entry_size);         // move expression stack top
      __ sub(c_rarg1, c_rarg1, entry_size); // move expression stack bottom
-@@ -3838,6 +4219,7 @@ void TemplateTable::monitorenter()
+@@ -3838,6 +4227,7 @@ void TemplateTable::monitorenter()
      __ cmp(c_rarg3, c_rarg1);        // check if bottom reached
      __ br(Assembler::NE, loop);      // if not at bottom then
                                       // copy next word
@@ -859,7 +868,7 @@ index 4666b42b933..a43103f1dd1 100644
    }
  
    // call run-time routine
-@@ -3848,10 +4230,15 @@ void TemplateTable::monitorenter()
+@@ -3848,10 +4238,15 @@ void TemplateTable::monitorenter()
    // handling for async. exceptions work correctly.
    // The object has already been poped from the stack, so the
    // expression stack looks correct.
@@ -876,7 +885,7 @@ index 4666b42b933..a43103f1dd1 100644
    __ lock_object(c_rarg1);
  
    // check to make sure this monitor doesn't cause stack overflow after locking
-@@ -3882,8 +4269,15 @@ void TemplateTable::monitorexit()
+@@ -3882,8 +4277,15 @@ void TemplateTable::monitorexit()
    // find matching slot
    {
      Label entry, loop;
@@ -892,7 +901,7 @@ index 4666b42b933..a43103f1dd1 100644
      __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
                                          // of monitor block
      __ b(entry);
-@@ -3895,7 +4289,11 @@ void TemplateTable::monitorexit()
+@@ -3895,7 +4297,11 @@ void TemplateTable::monitorexit()
      // if same object then stop searching
      __ br(Assembler::EQ, found);
      // otherwise advance to next entry
