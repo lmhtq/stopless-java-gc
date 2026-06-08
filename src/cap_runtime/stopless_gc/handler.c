@@ -363,9 +363,10 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
             sig, si->si_code, si->si_addr);
     fprintf(stderr, "[stopless]   ELR(faulting PC)=%#lx  CLR(c30)=%#lx  CSP=%#lx  c29(FP)=%#lx\n",
             elr, lr, spA, fp);
-    fprintf(stderr, "[stopless]   ELR tag=%d perms=%#lx | CSP tag=%d base=%#lx top=%#lx\n",
+    fprintf(stderr, "[stopless]   ELR tag=%d perms=%#lx C64=%d | CSP tag=%d base=%#lx top=%#lx\n",
             (int)cheri_tag_get((void *)(__uintcap_t)cr->cap_elr),
             (unsigned long)cheri_perms_get((void *)(__uintcap_t)cr->cap_elr),
+            (int)(cheri_flags_get((void *)(__uintcap_t)cr->cap_elr) & 1),
             (int)cheri_tag_get(csp),
             (unsigned long)cheri_base_get(csp),
             (unsigned long)(cheri_base_get(csp) + cheri_length_get(csp)));
@@ -453,8 +454,9 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
                     unsigned long b = (unsigned long)cheri_base_get(base);
                     unsigned long len = (unsigned long)cheri_length_get(base);
                     unsigned long a = (unsigned long)cheri_address_get(base);
-                    fprintf(stderr, "[stopless]     base cap: base=%#lx top=%#lx len=%#lx perms=%#lx %s\n",
+                    fprintf(stderr, "[stopless]     base cap: base=%#lx top=%#lx len=%#lx perms=%#lx otype=%#lx sealed=%d %s\n",
                             b, b + len, len, (unsigned long)cheri_perms_get(base),
+                            (unsigned long)cheri_type_get(base), (int)cheri_is_sealed(base),
                             (a >= b && a < b + len) ? "[addr IN bounds]" : "[addr OUT of bounds]");
                 }
             }
