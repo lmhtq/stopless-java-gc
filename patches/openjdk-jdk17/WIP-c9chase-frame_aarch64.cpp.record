@@ -1,8 +1,47 @@
 diff --git a/src/hotspot/cpu/aarch64/frame_aarch64.cpp b/src/hotspot/cpu/aarch64/frame_aarch64.cpp
-index 418f2c3fe1c..38a8968266f 100644
+index 418f2c3fe1c..d0b49edff99 100644
 --- a/src/hotspot/cpu/aarch64/frame_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/frame_aarch64.cpp
-@@ -516,6 +516,21 @@ frame frame::sender_raw(RegisterMap* map) const {
+@@ -353,6 +353,20 @@ frame frame::sender_for_entry_frame(RegisterMap* map) const {
+   jfa->make_walkable();
+   map->clear();
+   assert(map->include_argument_oops(), "should be set by clear");
++#if defined(__CHERI_PURE_CAPABILITY__)
++  if (::getenv("C9_FRAME_DIAG")) {
++    void* wp = (void*)entry_frame_call_wrapper();
++    void* jp = (void*)jfa;
++    fprintf(stderr, "[C9-entry] this.fp=%p(t%d) pc=%p wrapper=%p(t%d) jfa=%p(t%d) jfa.sp=%p(t%d) jfa.fp=%p(t%d) jfa.pc=%p first=%d\n",
++            (void*)_fp, (int)__builtin_cheri_tag_get((void*)_fp), (void*)_pc,
++            wp, (int)__builtin_cheri_tag_get(wp),
++            jp, (int)__builtin_cheri_tag_get(jp),
++            (void*)jfa->last_Java_sp(), (int)__builtin_cheri_tag_get((void*)jfa->last_Java_sp()),
++            (void*)jfa->last_Java_fp(), (int)__builtin_cheri_tag_get((void*)jfa->last_Java_fp()),
++            (void*)jfa->last_Java_pc(), (int)entry_frame_is_first());
++    fflush(stderr);
++  }
++#endif
+   frame fr(jfa->last_Java_sp(), jfa->last_Java_fp(), jfa->last_Java_pc());
+ 
+   return fr;
+@@ -452,6 +466,17 @@ frame frame::sender_for_interpreter_frame(RegisterMap* map) const {
+ 
+   // Use the raw version of pc - the interpreter should not have signed it.
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++  if (::getenv("C9_FRAME_DIAG")) {
++    void *tfp=(void*)_fp, *l=(void*)link(), *ssp=(void*)sender_sp, *usp=(void*)unextended_sp;
++    fprintf(stderr, "[C9-istep] this.fp=%p(t%d) -> link(fp[0])=%p(t%d) sender_pc(fp[1])=%p sender_sp=%p(t%d) unext_sp=%p(t%d)\n",
++            tfp, (int)__builtin_cheri_tag_get(tfp),
++            l, (int)__builtin_cheri_tag_get(l),
++            (void*)sender_pc_maybe_signed(), ssp, (int)__builtin_cheri_tag_get(ssp),
++            usp, (int)__builtin_cheri_tag_get(usp));
++    fflush(stderr);
++  }
++#endif
+   return frame(sender_sp, unextended_sp, link(), sender_pc_maybe_signed());
+ }
+ 
+@@ -516,6 +541,21 @@ frame frame::sender_raw(RegisterMap* map) const {
    // Must be native-compiled frame, i.e. the marshaling code for native
    // methods that exists in the core system.
  
