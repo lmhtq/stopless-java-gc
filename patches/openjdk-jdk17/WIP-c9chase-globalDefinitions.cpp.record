@@ -1,0 +1,44 @@
+diff --git a/src/hotspot/share/utilities/globalDefinitions.cpp b/src/hotspot/share/utilities/globalDefinitions.cpp
+index da9c06f8923..b903c9aea91 100644
+--- a/src/hotspot/share/utilities/globalDefinitions.cpp
++++ b/src/hotspot/share/utilities/globalDefinitions.cpp
+@@ -185,11 +185,27 @@ void basic_types_init() {
+     BytesPerHeapOop    = BytesPerInt;
+     BitsPerHeapOop     = BitsPerInt;
+   } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: a heap oop reference (object field / array element) is a 16-byte
++    // capability in purecap, NOT a machine word (BytesPerWord=8). The stock
++    // values (BytesPerWord/LogBytesPerWord = 8/3) are inconsistent with
++    // heapOopSize=oopSize(=16): array element addressing does
++    // `base_offset >> LogBytesPerHeapOop` (÷8) then the cap store scales ×16,
++    // effectively DOUBLING base_offset, so an objArray element store lands one
++    // slot past the (tight per-object) bounds -> SIGPROT (sig=34 code=1). Use
++    // the 16-byte capability size everywhere.
++    heapOopSize        = oopSize;          // 16
++    LogBytesPerHeapOop = 4;                // log2(16)
++    LogBitsPerHeapOop  = 4 + LogBitsPerByte;
++    BytesPerHeapOop    = oopSize;          // 16
++    BitsPerHeapOop     = oopSize * BitsPerByte;
++#else
+     heapOopSize        = oopSize;
+     LogBytesPerHeapOop = LogBytesPerWord;
+     LogBitsPerHeapOop  = LogBitsPerWord;
+     BytesPerHeapOop    = BytesPerWord;
+     BitsPerHeapOop     = BitsPerWord;
++#endif
+   }
+   _type2aelembytes[T_OBJECT] = heapOopSize;
+   _type2aelembytes[T_ARRAY]  = heapOopSize;
+@@ -317,7 +333,11 @@ int _type2aelembytes[T_CONFLICT+1] = {
+   T_OBJECT_aelem_bytes,      // T_OBJECT   = 12,
+   T_ARRAY_aelem_bytes,       // T_ARRAY    = 13,
+   0,                         // T_VOID     = 14,
++#ifdef __CHERI_PURE_CAPABILITY__
++  (int)sizeof(intptr_t),     // T_ADDRESS  = 15, CHERI: 16-byte cap
++#else
+   T_OBJECT_aelem_bytes,      // T_ADDRESS  = 15,
++#endif
+   T_NARROWOOP_aelem_bytes,   // T_NARROWOOP= 16,
+   T_OBJECT_aelem_bytes,      // T_METADATA = 17,
+   T_NARROWKLASS_aelem_bytes, // T_NARROWKLASS= 18,
