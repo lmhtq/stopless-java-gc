@@ -32,6 +32,7 @@
 #include <time.h>
 #include <ucontext.h>
 #include <cheriintrin.h>
+#include <dlfcn.h>
 
 unsigned long long stopless_handler_faults = 0;
 unsigned long long stopless_handler_self_heals = 0;
@@ -399,13 +400,33 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
         fprintf(stderr, "[stopless]   [fp+16]=saved_lr slot = %#lx  (c30=%#lx)\n",
                 slot, lr);
     }
+    /* dladdr symbolizer: resolves an address to module+load-base (+symbol if
+       not stripped). Even on a stripped libjvm this yields fname + fbase, so
+       offset = addr - base feeds addr2line on the local unstripped libjvm.
+       Build a cap with the target address from PCC (dladdr uses only the
+       address, not bounds). */
+    #define STOPLESS_SYM(tag, addrval) do {                                       \
+        void *_a = cheri_address_set((void *)(__uintcap_t)cr->cap_elr,            \
+                                     (unsigned long)(addrval));                   \
+        Dl_info _di;                                                              \
+        if (dladdr(_a, &_di) && _di.dli_fname) {                                  \
+            unsigned long _b = (unsigned long)cheri_address_get((void*)_di.dli_fbase); \
+            fprintf(stderr, "[stopless]       %s %#lx = %s @base %#lx (off %#lx) sym=%s\n", \
+                    tag, (unsigned long)(addrval), _di.dli_fname, _b,             \
+                    (unsigned long)(addrval) - _b,                               \
+                    _di.dli_sname ? _di.dli_sname : "(stripped)");               \
+        }                                                                         \
+    } while (0)
+
     /* Walk the interpreter/native frame chain via saved-FP links (bounded). */
     fprintf(stderr, "[stopless]   frame chain (saved-FP -> saved-LR):\n");
+    STOPLESS_SYM("ELR", (unsigned long)cheri_address_get((void*)(__uintcap_t)cr->cap_elr));
     unsigned long f = fp;
     for (int i = 0; i < 8 && f; i++) {
         unsigned long sfp = stopless_stk_rd(csp, f);        /* [fp+0]  saved FP */
         unsigned long slr = stopless_stk_rd(csp, f + 16);   /* [fp+16] saved LR */
         fprintf(stderr, "[stopless]     #%d fp=%#lx  saved_lr=%#lx\n", i, f, slr);
+        STOPLESS_SYM("lr", slr);
         if (sfp <= f || (sfp & 0xf) || sfp == 0xBAD0BAD0BAD0BAD0UL || sfp == 0xBAD1BAD1BAD1BAD1UL)
             break;
         f = sfp;
