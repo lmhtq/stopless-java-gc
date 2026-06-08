@@ -1,0 +1,26 @@
+diff --git a/src/hotspot/share/oops/klass.cpp b/src/hotspot/share/oops/klass.cpp
+index 5c73c4634f9..ae8f16cbb3d 100644
+--- a/src/hotspot/share/oops/klass.cpp
++++ b/src/hotspot/share/oops/klass.cpp
+@@ -808,6 +808,21 @@ Method* Klass::method_at_vtable(int index)  {
+   if (DebugVtables) {
+     verify_vtable_index(index);
+   }
++#endif
++#ifdef __CHERI_PURE_CAPABILITY__
++  if (::getenv("C9_VT_DIAG")) {
++    void* t = (void*)this;
++    unsigned long perms = __builtin_cheri_perms_get(t);
++    unsigned long base  = __builtin_cheri_base_get(t);
++    unsigned long len   = __builtin_cheri_length_get(t);
++    unsigned long addr  = __builtin_cheri_address_get(t);
++    unsigned long vtoff = (unsigned long)in_bytes(vtable_start_offset());
++    unsigned long need  = (addr - base) + vtoff + (unsigned long)(index+1)*16;
++    fprintf(stderr, "[VT] klass=%p tag=%d perms=0x%lx len=0x%lx idx=%d vtoff=0x%lx needlen=0x%lx %s\n",
++            t, (int)__builtin_cheri_tag_get(t), perms, len, index, vtoff, need,
++            (need > len) ? "OUT_OF_BOUNDS!" : "");
++    fflush(stderr);
++  }
+ #endif
+   return start_of_vtable()[index].method();
+ }

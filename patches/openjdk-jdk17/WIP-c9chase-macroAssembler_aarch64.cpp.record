@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
-index 7abb2205414..64e399edca1 100644
+index 7abb2205414..fabd537dc33 100644
 --- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
 @@ -336,9 +336,20 @@ void MacroAssembler::set_last_Java_frame(Register last_java_sp,
@@ -382,5 +382,22 @@ index 7abb2205414..64e399edca1 100644
    ldr(dst, Address(dst, mirror_offset));
 +#endif
    resolve_oop_handle(dst, tmp);
+ }
+ 
+@@ -3980,7 +4169,16 @@ void MacroAssembler::store_klass(Register dst, Register src) {
+     encode_klass_not_null(src);
+     strw(src, Address(dst, oopDesc::klass_offset_in_bytes()));
+   } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: must mirror load_klass (C-6 L54). With -UseCompressedClassPointers
++    // the Klass* lives in the oop header as a full 16-byte capability (offset
++    // 16). A plain 8-byte str strips its tag, so the stored header _klass is
++    // tag-0; every later receiver->klass() (e.g. method_at_vtable) then derefs
++    // a tag-0 cap and SIGPROTs. cap-STR preserves the tag.
++    cap_str_imm(src, dst, oopDesc::klass_offset_in_bytes());
++#else
+     str(src, Address(dst, oopDesc::klass_offset_in_bytes()));
++#endif
+   }
  }
  

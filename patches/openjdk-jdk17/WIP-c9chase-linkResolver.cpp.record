@@ -1,0 +1,24 @@
+diff --git a/src/hotspot/share/interpreter/linkResolver.cpp b/src/hotspot/share/interpreter/linkResolver.cpp
+index d50ff0a8821..08ff050e958 100644
+--- a/src/hotspot/share/interpreter/linkResolver.cpp
++++ b/src/hotspot/share/interpreter/linkResolver.cpp
+@@ -1376,6 +1376,19 @@ void LinkResolver::runtime_resolve_virtual_method(CallInfo& result,
+       assert(resolved_method->can_be_statically_bound(), "cannot override this method");
+       selected_method = resolved_method;
+     } else {
++#ifdef __CHERI_PURE_CAPABILITY__
++      if (::getenv("C9_VT_DIAG") &&
++          __builtin_cheri_tag_get((void*)recv_klass) == 0) {
++        oop r = recv();
++        void* hk = (r != NULL) ? *(void**)((char*)(void*)r + oopDesc::klass_offset_in_bytes()) : NULL;
++        fprintf(stderr, "[VT] recv_klass=%p(t0!) vti=%d recv=%p(t%d) hdr_klass=%p(t%d) resolved=%s\n",
++                (void*)recv_klass, vtable_index, (void*)r,
++                (int)__builtin_cheri_tag_get((void*)r),
++                hk, (int)__builtin_cheri_tag_get(hk),
++                resolved_method->name_and_sig_as_C_string());
++        fflush(stderr);
++      }
++#endif
+       selected_method = methodHandle(THREAD, recv_klass->method_at_vtable(vtable_index));
+     }
+   }

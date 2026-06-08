@@ -1,8 +1,23 @@
 diff --git a/src/hotspot/share/interpreter/interpreterRuntime.cpp b/src/hotspot/share/interpreter/interpreterRuntime.cpp
-index d66ed24d862..1df312451bb 100644
+index d66ed24d862..c6f9d17f7a4 100644
 --- a/src/hotspot/share/interpreter/interpreterRuntime.cpp
 +++ b/src/hotspot/share/interpreter/interpreterRuntime.cpp
-@@ -216,6 +216,9 @@ JRT_END
+@@ -156,6 +156,14 @@ JRT_ENTRY(void, InterpreterRuntime::ldc(JavaThread* current, bool wide))
+   assert (tag.is_unresolved_klass() || tag.is_klass(), "wrong ldc call");
+   Klass* klass = pool->klass_at(index, CHECK);
+   oop java_class = klass->java_mirror();
++  if (::getenv("C9_LDC_DIAG")) {
++    fprintf(stderr, "[LDC] klass=%p(t%d) mirror=%p(t%d) in_heap=%d  %s\n",
++            (void*)klass, (int)__builtin_cheri_tag_get((void*)klass),
++            (void*)java_class, (int)__builtin_cheri_tag_get((void*)java_class),
++            (int)(java_class != NULL && Universe::heap()->is_in(java_class)),
++            klass->name()->as_C_string());
++    fflush(stderr);
++  }
+   current->set_vm_result(java_class);
+ JRT_END
+ 
+@@ -216,6 +224,9 @@ JRT_END
  // Allocation
  
  JRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* current, ConstantPool* pool, int index))
@@ -12,7 +27,7 @@ index d66ed24d862..1df312451bb 100644
    Klass* k = pool->klass_at(index, CHECK);
    InstanceKlass* klass = InstanceKlass::cast(k);
  
-@@ -240,6 +243,11 @@ JRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* current, ConstantPool* pool
+@@ -240,6 +251,11 @@ JRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* current, ConstantPool* pool
    //       If we have a breakpoint, then we don't rewrite
    //       because the _breakpoint bytecode would be lost.
    oop obj = klass->allocate_instance(CHECK);
@@ -24,7 +39,7 @@ index d66ed24d862..1df312451bb 100644
    current->set_vm_result(obj);
  JRT_END
  
-@@ -251,9 +259,15 @@ JRT_END
+@@ -251,9 +267,15 @@ JRT_END
  
  
  JRT_ENTRY(void, InterpreterRuntime::anewarray(JavaThread* current, ConstantPool* pool, int index, jint size))
@@ -40,7 +55,7 @@ index d66ed24d862..1df312451bb 100644
  JRT_END
  
  
-@@ -811,6 +825,16 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
+@@ -811,6 +833,32 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
      Symbol* signature = call.signature();
      receiver = Handle(current, last_frame.callee_receiver(signature));
  
@@ -48,16 +63,32 @@ index d66ed24d862..1df312451bb 100644
 +    if (::getenv("C9_RECV_DIAG")) {
 +      void* rv = (void*)(oopDesc*)receiver();
 +      ArgumentSizeComputer asc(signature); int sz = asc.size();
-+      fprintf(stderr, "[RT-recv] bc=%d argslots=%d receiver=%p tag=%d in_heap=%d\n",
-+              (int)bytecode, sz, rv, (int)__builtin_cheri_tag_get(rv),
-+              (int)(rv && Universe::heap()->is_in(rv)));
-+      fflush(stderr);
++      bool in_heap = (rv != NULL && Universe::heap()->is_in(rv));
++      // read the header _klass cap directly (offset 16 in purecap) and via klass()
++      void* hk = NULL; void* ck = NULL;
++      if (in_heap) {
++        hk = *(void**)((char*)rv + oopDesc::klass_offset_in_bytes());
++        ck = (void*)receiver->klass();
++      }
++      bool bad = (rv != NULL && !in_heap) ||
++                 (in_heap && __builtin_cheri_tag_get(hk) == 0);
++      if (bad || ::getenv("C9_RECV_ALL")) {
++        int bci = last_frame.bci();
++        address bcp = m->bcp_from(bci);
++        fprintf(stderr, "[RT-recv]%s bc=%d receiver=%p tag=%d in_heap=%d  hdr_klass=%p(t%d) klass()=%p(t%d)  in %s @bci=%d\n",
++                bad ? " BAD" : "", (int)bytecode, rv,
++                (int)__builtin_cheri_tag_get(rv), (int)in_heap,
++                hk, (int)__builtin_cheri_tag_get(hk),
++                ck, (int)__builtin_cheri_tag_get(ck),
++                m->name_and_sig_as_C_string(), bci);
++        fflush(stderr);
++      }
 +    }
 +#endif
      assert(Universe::heap()->is_in_or_null(receiver()),
             "sanity check");
      assert(receiver.is_null() ||
-@@ -940,6 +964,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
+@@ -940,6 +988,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
  // cpCache entry.  This doesn't safepoint, but the helper routines safepoint.
  // This function will check for redefinition!
  JRT_ENTRY(void, InterpreterRuntime::resolve_from_cache(JavaThread* current, Bytecodes::Code bytecode)) {
@@ -67,7 +98,7 @@ index d66ed24d862..1df312451bb 100644
    switch (bytecode) {
    case Bytecodes::_getstatic:
    case Bytecodes::_putstatic:
-@@ -1376,7 +1403,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
+@@ -1376,7 +1427,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
          method->set_signature_handler(Interpreter::slow_signature_handler());
        } else {
          // set handler
