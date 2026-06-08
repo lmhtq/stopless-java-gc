@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
-index 4666b42b933..38c4cd5f770 100644
+index 4666b42b933..73ede88e1ce 100644
 --- a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 @@ -70,11 +70,20 @@ static inline Address aaddress(int n) {
@@ -44,7 +44,35 @@ index 4666b42b933..38c4cd5f770 100644
  static inline Address at_rsp() {
    return Address(esp, 0);
  }
-@@ -408,8 +431,19 @@ void TemplateTable::fast_aldc(bool wide)
+@@ -352,7 +375,14 @@ void TemplateTable::ldc(bool wide)
+   __ cmp(r3, (u1)JVM_CONSTANT_Float);
+   __ br(Assembler::NE, notFloat);
+   // ftos
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: cpool is a cap and a ConstantPool slot (intptr_t) is 16B in purecap;
++  // integer adds strips the tag and ×8 is the wrong stride -> use cap-add ×16.
++  __ lsl(r1, r1, exact_log2(wordSize));
++  __ cap_add_reg(r1, r2, r1);
++#else
+   __ adds(r1, r2, r1, Assembler::LSL, 3);
++#endif
+   __ ldrs(v0, Address(r1, base_offset));
+   __ push_f();
+   __ b(Done);
+@@ -363,7 +393,12 @@ void TemplateTable::ldc(bool wide)
+   __ br(Assembler::NE, notInt);
+ 
+   // itos
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ lsl(r1, r1, exact_log2(wordSize));   // C-9: cap-add ×16 (see ftos above)
++  __ cap_add_reg(r1, r2, r1);
++#else
+   __ adds(r1, r2, r1, Assembler::LSL, 3);
++#endif
+   __ ldrw(r0, Address(r1, base_offset));
+   __ push_i(r0);
+   __ b(Done);
+@@ -408,8 +443,19 @@ void TemplateTable::fast_aldc(bool wide)
      Label notNull;
  
      // Stash null_sentinel address to get its value later
@@ -64,7 +92,33 @@ index 4666b42b933..38c4cd5f770 100644
      __ resolve_oop_handle(tmp);
      __ cmpoop(result, tmp);
      __ br(Assembler::NE, notNull);
-@@ -578,6 +612,14 @@ void TemplateTable::locals_index(Register reg, int offset)
+@@ -440,7 +486,12 @@ void TemplateTable::ldc2_w()
+   __ br(Assembler::NE, notDouble);
+ 
+   // dtos
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ lsl(r2, r0, exact_log2(wordSize));   // C-9: cap-add ×16 (cpool slot=16B)
++  __ cap_add_reg(r2, r1, r2);
++#else
+   __ lea (r2, Address(r1, r0, Address::lsl(3)));
++#endif
+   __ ldrd(v0, Address(r2, base_offset));
+   __ push_d();
+   __ b(Done);
+@@ -450,7 +501,12 @@ void TemplateTable::ldc2_w()
+   __ br(Assembler::NE, notLong);
+ 
+   // ltos
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ lsl(r0, r0, exact_log2(wordSize));   // C-9: cap-add ×16 (cpool slot=16B)
++  __ cap_add_reg(r0, r1, r0);
++#else
+   __ lea(r0, Address(r1, r0, Address::lsl(3)));
++#endif
+   __ ldr(r0, Address(r0, base_offset));
+   __ push_l();
+   __ b(Done);
+@@ -578,6 +634,14 @@ void TemplateTable::locals_index(Register reg, int offset)
  {
    __ ldrb(reg, at_bcp(offset));
    __ neg(reg, reg);
@@ -79,7 +133,7 @@ index 4666b42b933..38c4cd5f770 100644
  }
  
  void TemplateTable::iload() {
-@@ -652,7 +694,11 @@ void TemplateTable::lload()
+@@ -652,7 +716,11 @@ void TemplateTable::lload()
  {
    transition(vtos, ltos);
    __ ldrb(r1, at_bcp(1));
@@ -92,7 +146,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ ldr(r0, Address(r1, Interpreter::local_offset_in_bytes(1)));
  }
  
-@@ -669,7 +715,11 @@ void TemplateTable::dload()
+@@ -669,7 +737,11 @@ void TemplateTable::dload()
  {
    transition(vtos, dtos);
    __ ldrb(r1, at_bcp(1));
@@ -105,7 +159,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ ldrd(v0, Address(r1, Interpreter::local_offset_in_bytes(1)));
  }
  
-@@ -677,13 +727,27 @@ void TemplateTable::aload()
+@@ -677,13 +749,27 @@ void TemplateTable::aload()
  {
    transition(vtos, atos);
    locals_index(r1);
@@ -133,7 +187,7 @@ index 4666b42b933..38c4cd5f770 100644
  }
  
  void TemplateTable::wide_iload() {
-@@ -697,7 +761,11 @@ void TemplateTable::wide_lload()
+@@ -697,7 +783,11 @@ void TemplateTable::wide_lload()
    transition(vtos, ltos);
    __ ldrh(r1, at_bcp(2));
    __ rev16w(r1, r1);
@@ -146,7 +200,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ ldr(r0, Address(r1, Interpreter::local_offset_in_bytes(1)));
  }
  
-@@ -715,7 +783,11 @@ void TemplateTable::wide_dload()
+@@ -715,7 +805,11 @@ void TemplateTable::wide_dload()
    transition(vtos, dtos);
    __ ldrh(r1, at_bcp(2));
    __ rev16w(r1, r1);
@@ -159,7 +213,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ ldrd(v0, Address(r1, Interpreter::local_offset_in_bytes(1)));
  }
  
-@@ -894,7 +966,13 @@ void TemplateTable::dload(int n)
+@@ -894,7 +988,13 @@ void TemplateTable::dload(int n)
  void TemplateTable::aload(int n)
  {
    transition(vtos, atos);
@@ -173,7 +227,7 @@ index 4666b42b933..38c4cd5f770 100644
  }
  
  void TemplateTable::aload_0() {
-@@ -1009,7 +1087,15 @@ void TemplateTable::astore()
+@@ -1009,7 +1109,15 @@ void TemplateTable::astore()
    transition(vtos, vtos);
    __ pop_ptr(r0);
    locals_index(r1);
@@ -189,7 +243,7 @@ index 4666b42b933..38c4cd5f770 100644
  }
  
  void TemplateTable::wide_istore() {
-@@ -1101,9 +1187,18 @@ void TemplateTable::aastore() {
+@@ -1101,9 +1209,18 @@ void TemplateTable::aastore() {
    Label is_null, ok_is_subtype, done;
    transition(vtos, vtos);
    // stack: ..., array, index, value
@@ -208,7 +262,7 @@ index 4666b42b933..38c4cd5f770 100644
  
    Address element_address(r3, r4, Address::uxtw(LogBytesPerHeapOop));
  
-@@ -1117,8 +1212,14 @@ void TemplateTable::aastore() {
+@@ -1117,8 +1234,14 @@ void TemplateTable::aastore() {
    __ load_klass(r1, r0);
    // Move superklass into r0
    __ load_klass(r0, r3);
@@ -223,7 +277,7 @@ index 4666b42b933..38c4cd5f770 100644
    // Compress array + index*oopSize + 12 into a single register.  Frees r2.
  
    // Generate subtype check.  Blows r2, r5
-@@ -1133,7 +1234,11 @@ void TemplateTable::aastore() {
+@@ -1133,7 +1256,11 @@ void TemplateTable::aastore() {
    __ bind(ok_is_subtype);
  
    // Get the value we will store
@@ -235,7 +289,7 @@ index 4666b42b933..38c4cd5f770 100644
    // Now store using the appropriate barrier
    do_oop_store(_masm, element_address, r0, IS_ARRAY);
    __ b(done);
-@@ -1147,7 +1252,11 @@ void TemplateTable::aastore() {
+@@ -1147,7 +1274,11 @@ void TemplateTable::aastore() {
  
    // Pop stack arguments
    __ bind(done);
@@ -247,7 +301,7 @@ index 4666b42b933..38c4cd5f770 100644
  }
  
  void TemplateTable::bastore()
-@@ -1220,26 +1329,49 @@ void TemplateTable::astore(int n)
+@@ -1220,26 +1351,49 @@ void TemplateTable::astore(int n)
  {
    transition(vtos, vtos);
    __ pop_ptr(r0);
@@ -297,7 +351,7 @@ index 4666b42b933..38c4cd5f770 100644
    // stack: ..., a, a
  }
  
-@@ -1247,11 +1379,21 @@ void TemplateTable::dup_x1()
+@@ -1247,11 +1401,21 @@ void TemplateTable::dup_x1()
  {
    transition(vtos, vtos);
    // stack: ..., a, b
@@ -319,7 +373,7 @@ index 4666b42b933..38c4cd5f770 100644
    // stack: ..., b, a, b
  }
  
-@@ -1259,6 +1401,15 @@ void TemplateTable::dup_x2()
+@@ -1259,6 +1423,15 @@ void TemplateTable::dup_x2()
  {
    transition(vtos, vtos);
    // stack: ..., a, b, c
@@ -335,7 +389,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ ldr(r0, at_tos());  // load c
    __ ldr(r2, at_tos_p2());  // load a
    __ str(r0, at_tos_p2());  // store c in a
-@@ -1268,6 +1419,7 @@ void TemplateTable::dup_x2()
+@@ -1268,6 +1441,7 @@ void TemplateTable::dup_x2()
    __ str(r2, at_tos_p2());  // store a in b
    // stack: ..., c, a, c, c
    __ str(r0, at_tos_p1());  // store b in c
@@ -343,7 +397,7 @@ index 4666b42b933..38c4cd5f770 100644
    // stack: ..., c, a, b, c
  }
  
-@@ -1275,10 +1427,17 @@ void TemplateTable::dup2()
+@@ -1275,10 +1449,17 @@ void TemplateTable::dup2()
  {
    transition(vtos, vtos);
    // stack: ..., a, b
@@ -361,7 +415,7 @@ index 4666b42b933..38c4cd5f770 100644
    // stack: ..., a, b, a, b
  }
  
-@@ -1286,6 +1445,16 @@ void TemplateTable::dup2_x1()
+@@ -1286,6 +1467,16 @@ void TemplateTable::dup2_x1()
  {
    transition(vtos, vtos);
    // stack: ..., a, b, c
@@ -378,7 +432,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ ldr(r2, at_tos());  // load c
    __ ldr(r0, at_tos_p1());  // load b
    __ push(r0);                  // push b
-@@ -1297,6 +1466,7 @@ void TemplateTable::dup2_x1()
+@@ -1297,6 +1488,7 @@ void TemplateTable::dup2_x1()
    __ str(r2, at_tos_p2());  // store a in 2nd c
    // stack: ..., a, c, a, b, c
    __ str(r0, at_tos_p4());  // store b in a
@@ -386,7 +440,7 @@ index 4666b42b933..38c4cd5f770 100644
    // stack: ..., b, c, a, b, c
  }
  
-@@ -1304,6 +1474,19 @@ void TemplateTable::dup2_x2()
+@@ -1304,6 +1496,19 @@ void TemplateTable::dup2_x2()
  {
    transition(vtos, vtos);
    // stack: ..., a, b, c, d
@@ -406,7 +460,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ ldr(r2, at_tos());  // load d
    __ ldr(r0, at_tos_p1());  // load c
    __ push(r0)            ;      // push c
-@@ -1317,6 +1500,7 @@ void TemplateTable::dup2_x2()
+@@ -1317,6 +1522,7 @@ void TemplateTable::dup2_x2()
    __ ldr(r0, at_tos_p3());  // load c
    __ str(r2, at_tos_p3());  // store a in c
    __ str(r0, at_tos_p5());  // store c in a
@@ -414,7 +468,7 @@ index 4666b42b933..38c4cd5f770 100644
    // stack: ..., c, d, a, b, c, d
  }
  
-@@ -1324,10 +1508,17 @@ void TemplateTable::swap()
+@@ -1324,10 +1530,17 @@ void TemplateTable::swap()
  {
    transition(vtos, vtos);
    // stack: ..., a, b
@@ -432,7 +486,7 @@ index 4666b42b933..38c4cd5f770 100644
    // stack: ..., b, a
  }
  
-@@ -1781,7 +1972,14 @@ void TemplateTable::branch(bool is_jsr, bool is_wide)
+@@ -1781,7 +1994,14 @@ void TemplateTable::branch(bool is_jsr, bool is_wide)
      __ sub(r1, rbcp, rscratch2);
      __ push_i(r1);
      // Adjust the bcp by the 16-bit displacement in r2
@@ -447,7 +501,7 @@ index 4666b42b933..38c4cd5f770 100644
      __ dispatch_only(vtos, /*generate_poll*/true);
      return;
    }
-@@ -1789,7 +1987,11 @@ void TemplateTable::branch(bool is_jsr, bool is_wide)
+@@ -1789,7 +2009,11 @@ void TemplateTable::branch(bool is_jsr, bool is_wide)
    // Normal (non-jsr) branch handling
  
    // Adjust the bcp by the displacement in r2
@@ -459,7 +513,7 @@ index 4666b42b933..38c4cd5f770 100644
  
    assert(UseLoopCounter || !UseOnStackReplacement,
           "on-stack-replacement requires loop counters");
-@@ -1966,9 +2168,17 @@ void TemplateTable::ret() {
+@@ -1966,9 +2190,17 @@ void TemplateTable::ret() {
    locals_index(r1);
    __ ldr(r1, aaddress(r1)); // get return bci, compute return bcp
    __ profile_ret(r1, r2);
@@ -477,7 +531,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ dispatch_next(vtos, 0, /*generate_poll*/true);
  }
  
-@@ -1977,9 +2187,15 @@ void TemplateTable::wide_ret() {
+@@ -1977,9 +2209,15 @@ void TemplateTable::wide_ret() {
    locals_index_wide(r1);
    __ ldr(r1, aaddress(r1)); // get return bci, compute return bcp
    __ profile_ret(r1, r2);
@@ -493,7 +547,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ dispatch_next(vtos, 0, /*generate_poll*/true);
  }
  
-@@ -2009,7 +2225,14 @@ void TemplateTable::tableswitch() {
+@@ -2009,7 +2247,14 @@ void TemplateTable::tableswitch() {
    __ bind(continue_execution);
    __ rev32(r3, r3);
    __ load_unsigned_byte(rscratch1, Address(rbcp, r3, Address::sxtw(0)));
@@ -508,7 +562,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ dispatch_only(vtos, /*generate_poll*/true);
    // handle default
    __ bind(default_case);
-@@ -2058,7 +2281,12 @@ void TemplateTable::fast_linearswitch() {
+@@ -2058,7 +2303,12 @@ void TemplateTable::fast_linearswitch() {
    // continue execution
    __ bind(continue_execution);
    __ rev32(r3, r3);
@@ -521,7 +575,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ ldrb(rscratch1, Address(rbcp, 0));
    __ dispatch_only(vtos, /*generate_poll*/true);
  }
-@@ -2157,7 +2385,12 @@ void TemplateTable::fast_binaryswitch() {
+@@ -2157,7 +2407,12 @@ void TemplateTable::fast_binaryswitch() {
    __ profile_switch_case(i, key, array);
    __ rev32(j, j);
    __ load_unsigned_byte(rscratch1, Address(rbcp, j, Address::sxtw(0)));
@@ -534,7 +588,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ dispatch_only(vtos, /*generate_poll*/true);
  
    // default case -> j = default offset
-@@ -2166,7 +2399,12 @@ void TemplateTable::fast_binaryswitch() {
+@@ -2166,7 +2421,12 @@ void TemplateTable::fast_binaryswitch() {
    __ ldrw(j, Address(array, -2 * BytesPerInt));
    __ rev32(j, j);
    __ load_unsigned_byte(rscratch1, Address(rbcp, j, Address::sxtw(0)));
@@ -547,7 +601,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ dispatch_only(vtos, /*generate_poll*/true);
  }
  
-@@ -2180,7 +2418,9 @@ void TemplateTable::_return(TosState state)
+@@ -2180,7 +2440,9 @@ void TemplateTable::_return(TosState state)
    if (_desc->bytecode() == Bytecodes::_return_register_finalizer) {
      assert(state == vtos, "only valid state");
  
@@ -558,7 +612,7 @@ index 4666b42b933..38c4cd5f770 100644
      __ load_klass(r3, c_rarg1);
      __ ldrw(r3, Address(r3, Klass::access_flags_offset()));
      Label skip_register_finalizer;
-@@ -2205,6 +2445,14 @@ void TemplateTable::_return(TosState state)
+@@ -2205,6 +2467,14 @@ void TemplateTable::_return(TosState state)
    }
  
    __ remove_activation(state);
@@ -573,7 +627,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ ret(lr);
  }
  
-@@ -2299,10 +2547,18 @@ void TemplateTable::load_field_cp_cache_entry(Register obj,
+@@ -2299,10 +2569,18 @@ void TemplateTable::load_field_cp_cache_entry(Register obj,
  
    // klass overwrite register
    if (is_static) {
@@ -592,7 +646,7 @@ index 4666b42b933..38c4cd5f770 100644
      __ resolve_oop_handle(obj);
    }
  }
-@@ -2336,9 +2592,17 @@ void TemplateTable::load_invoke_cp_cache_entry(int byte_no,
+@@ -2336,9 +2614,17 @@ void TemplateTable::load_invoke_cp_cache_entry(int byte_no,
  
    size_t index_size = (is_invokedynamic ? sizeof(u4) : sizeof(u2));
    resolve_cache_and_index(byte_no, cache, index, index_size);
@@ -610,7 +664,7 @@ index 4666b42b933..38c4cd5f770 100644
      __ ldr(itable_index, Address(cache, index_offset));
    }
    __ ldrw(flags, Address(cache, flags_offset));
-@@ -3066,7 +3330,13 @@ void TemplateTable::fast_xaccess(TosState state)
+@@ -3066,7 +3352,13 @@ void TemplateTable::fast_xaccess(TosState state)
    transition(vtos, state);
  
    // get receiver
@@ -624,7 +678,7 @@ index 4666b42b933..38c4cd5f770 100644
    // access constant pool cache
    __ get_cache_and_index_at_bcp(r2, r3, 2);
    __ ldr(r1, Address(r2, in_bytes(ConstantPoolCache::base_offset() +
-@@ -3089,7 +3359,11 @@ void TemplateTable::fast_xaccess(TosState state)
+@@ -3089,7 +3381,11 @@ void TemplateTable::fast_xaccess(TosState state)
  
    // make sure exception is reported in correct bcp range (getfield is
    // next instruction)
@@ -636,7 +690,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ null_check(r0);
    switch (state) {
    case itos:
-@@ -3115,7 +3389,11 @@ void TemplateTable::fast_xaccess(TosState state)
+@@ -3115,7 +3411,11 @@ void TemplateTable::fast_xaccess(TosState state)
      __ bind(notVolatile);
    }
  
@@ -648,7 +702,7 @@ index 4666b42b933..38c4cd5f770 100644
  }
  
  
-@@ -3176,8 +3454,23 @@ void TemplateTable::prepare_invoke(int byte_no,
+@@ -3176,8 +3476,23 @@ void TemplateTable::prepare_invoke(int byte_no,
      // const int receiver_is_at_end      = -1;  // back off one slot to get receiver
      // Address recv_addr = __ argument_address(recv, no_return_pc_pushed_yet + receiver_is_at_end);
      // __ movptr(recv, recv_addr);
@@ -672,7 +726,7 @@ index 4666b42b933..38c4cd5f770 100644
      __ verify_oop(recv);
    }
  
-@@ -3188,8 +3481,18 @@ void TemplateTable::prepare_invoke(int byte_no,
+@@ -3188,8 +3503,18 @@ void TemplateTable::prepare_invoke(int byte_no,
    // load return address
    {
      const address table_addr = (address) Interpreter::invoke_return_entry_table_for(code);
@@ -691,7 +745,7 @@ index 4666b42b933..38c4cd5f770 100644
    }
  }
  
-@@ -3531,7 +3834,14 @@ void TemplateTable::_new() {
+@@ -3531,7 +3856,14 @@ void TemplateTable::_new() {
  
      // Initialize object fields
      {
@@ -706,7 +760,7 @@ index 4666b42b933..38c4cd5f770 100644
        Label loop;
        __ bind(loop);
        __ str(zr, Address(__ post(r2, BytesPerLong)));
-@@ -3786,8 +4096,16 @@ void TemplateTable::monitorenter()
+@@ -3786,8 +4118,16 @@ void TemplateTable::monitorenter()
    // find a free slot in the monitor block (result in c_rarg1)
    {
      Label entry, loop, exit;
@@ -723,7 +777,7 @@ index 4666b42b933..38c4cd5f770 100644
      __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
  
      __ b(entry);
-@@ -3803,7 +4121,11 @@ void TemplateTable::monitorenter()
+@@ -3803,7 +4143,11 @@ void TemplateTable::monitorenter()
      // if same object then stop searching
      __ br(Assembler::EQ, exit);
      // otherwise advance to next entry
@@ -735,7 +789,7 @@ index 4666b42b933..38c4cd5f770 100644
      __ bind(entry);
      // check if bottom reached
      __ cmp(c_rarg3, c_rarg2);
-@@ -3819,6 +4141,29 @@ void TemplateTable::monitorenter()
+@@ -3819,6 +4163,29 @@ void TemplateTable::monitorenter()
    {
      Label entry, loop;
      // 1. compute new pointers            // rsp: old expression stack top
@@ -765,7 +819,7 @@ index 4666b42b933..38c4cd5f770 100644
      __ ldr(c_rarg1, monitor_block_bot);   // c_rarg1: old expression stack bottom
      __ sub(esp, esp, entry_size);         // move expression stack top
      __ sub(c_rarg1, c_rarg1, entry_size); // move expression stack bottom
-@@ -3838,6 +4183,7 @@ void TemplateTable::monitorenter()
+@@ -3838,6 +4205,7 @@ void TemplateTable::monitorenter()
      __ cmp(c_rarg3, c_rarg1);        // check if bottom reached
      __ br(Assembler::NE, loop);      // if not at bottom then
                                       // copy next word
@@ -773,7 +827,7 @@ index 4666b42b933..38c4cd5f770 100644
    }
  
    // call run-time routine
-@@ -3848,10 +4194,15 @@ void TemplateTable::monitorenter()
+@@ -3848,10 +4216,15 @@ void TemplateTable::monitorenter()
    // handling for async. exceptions work correctly.
    // The object has already been poped from the stack, so the
    // expression stack looks correct.
@@ -790,7 +844,7 @@ index 4666b42b933..38c4cd5f770 100644
    __ lock_object(c_rarg1);
  
    // check to make sure this monitor doesn't cause stack overflow after locking
-@@ -3882,8 +4233,15 @@ void TemplateTable::monitorexit()
+@@ -3882,8 +4255,15 @@ void TemplateTable::monitorexit()
    // find matching slot
    {
      Label entry, loop;
@@ -806,7 +860,7 @@ index 4666b42b933..38c4cd5f770 100644
      __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
                                          // of monitor block
      __ b(entry);
-@@ -3895,7 +4253,11 @@ void TemplateTable::monitorexit()
+@@ -3895,7 +4275,11 @@ void TemplateTable::monitorexit()
      // if same object then stop searching
      __ br(Assembler::EQ, found);
      // otherwise advance to next entry
