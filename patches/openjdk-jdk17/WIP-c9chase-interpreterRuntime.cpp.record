@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/interpreter/interpreterRuntime.cpp b/src/hotspot/share/interpreter/interpreterRuntime.cpp
-index d66ed24d862..6a280c859db 100644
+index d66ed24d862..1df312451bb 100644
 --- a/src/hotspot/share/interpreter/interpreterRuntime.cpp
 +++ b/src/hotspot/share/interpreter/interpreterRuntime.cpp
 @@ -216,6 +216,9 @@ JRT_END
@@ -40,7 +40,24 @@ index d66ed24d862..6a280c859db 100644
  JRT_END
  
  
-@@ -940,6 +954,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
+@@ -811,6 +825,16 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
+     Symbol* signature = call.signature();
+     receiver = Handle(current, last_frame.callee_receiver(signature));
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++    if (::getenv("C9_RECV_DIAG")) {
++      void* rv = (void*)(oopDesc*)receiver();
++      ArgumentSizeComputer asc(signature); int sz = asc.size();
++      fprintf(stderr, "[RT-recv] bc=%d argslots=%d receiver=%p tag=%d in_heap=%d\n",
++              (int)bytecode, sz, rv, (int)__builtin_cheri_tag_get(rv),
++              (int)(rv && Universe::heap()->is_in(rv)));
++      fflush(stderr);
++    }
++#endif
+     assert(Universe::heap()->is_in_or_null(receiver()),
+            "sanity check");
+     assert(receiver.is_null() ||
+@@ -940,6 +964,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
  // cpCache entry.  This doesn't safepoint, but the helper routines safepoint.
  // This function will check for redefinition!
  JRT_ENTRY(void, InterpreterRuntime::resolve_from_cache(JavaThread* current, Bytecodes::Code bytecode)) {
@@ -50,7 +67,7 @@ index d66ed24d862..6a280c859db 100644
    switch (bytecode) {
    case Bytecodes::_getstatic:
    case Bytecodes::_putstatic:
-@@ -1376,7 +1393,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
+@@ -1376,7 +1403,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
          method->set_signature_handler(Interpreter::slow_signature_handler());
        } else {
          // set handler
