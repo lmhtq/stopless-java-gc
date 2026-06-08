@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/interpreter/interpreterRuntime.cpp b/src/hotspot/share/interpreter/interpreterRuntime.cpp
-index d66ed24d862..3e67c66fc1e 100644
+index d66ed24d862..9b77858b117 100644
 --- a/src/hotspot/share/interpreter/interpreterRuntime.cpp
 +++ b/src/hotspot/share/interpreter/interpreterRuntime.cpp
 @@ -156,6 +156,14 @@ JRT_ENTRY(void, InterpreterRuntime::ldc(JavaThread* current, bool wide))
@@ -55,7 +55,7 @@ index d66ed24d862..3e67c66fc1e 100644
  JRT_END
  
  
-@@ -811,6 +833,35 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
+@@ -811,6 +833,39 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
      Symbol* signature = call.signature();
      receiver = Handle(current, last_frame.callee_receiver(signature));
  
@@ -78,12 +78,16 @@ index d66ed24d862..3e67c66fc1e 100644
 +      if (bad || ::getenv("C9_RECV_ALL")) {
 +        int bci = last_frame.bci();
 +        address bcp = m->bcp_from(bci);
-+        fprintf(stderr, "[RT-recv]%s bc=%d receiver=%p tag=%d in_heap=%d  hdr_klass=%p(t%d perms=0x%lx) klass()=%p  in %s @bci=%d prevbc=%02x\n",
-+                bad ? " BAD" : "", (int)bytecode, rv,
-+                (int)__builtin_cheri_tag_get(rv), (int)in_heap,
-+                hk, (int)__builtin_cheri_tag_get(hk),
-+                (unsigned long)__builtin_cheri_perms_get(hk), ck,
-+                m->name_and_sig_as_C_string(), bci, bci>=1?bcp[-1]&0xff:0);
++        frame& f = last_frame.get_frame();
++        void* fp  = (void*)f.fp();
++        void* ls  = (void*)f.interpreter_frame_last_sp();
++        void* ssp = (void*)f.sender_sp();
++        void* meth= (void*)f.interpreter_frame_method();
++        void* fsp = (void*)f.sp();
++        fprintf(stderr, "[RT-recv]%s bc=%d receiver=%p sz=%d  fp=%p sp=%p | last_sp=%p sender_sp=%p method=%p  in %s @bci=%d\n",
++                bad ? " BAD" : "", (int)bytecode, rv, sz,
++                fp, fsp, ls, ssp, meth,
++                m->name_and_sig_as_C_string(), bci);
 +        fflush(stderr);
 +      }
 +    }
@@ -91,7 +95,7 @@ index d66ed24d862..3e67c66fc1e 100644
      assert(Universe::heap()->is_in_or_null(receiver()),
             "sanity check");
      assert(receiver.is_null() ||
-@@ -940,6 +991,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
+@@ -940,6 +995,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
  // cpCache entry.  This doesn't safepoint, but the helper routines safepoint.
  // This function will check for redefinition!
  JRT_ENTRY(void, InterpreterRuntime::resolve_from_cache(JavaThread* current, Bytecodes::Code bytecode)) {
@@ -101,7 +105,7 @@ index d66ed24d862..3e67c66fc1e 100644
    switch (bytecode) {
    case Bytecodes::_getstatic:
    case Bytecodes::_putstatic:
-@@ -1376,7 +1430,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
+@@ -1376,7 +1434,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
          method->set_signature_handler(Interpreter::slow_signature_handler());
        } else {
          // set handler
