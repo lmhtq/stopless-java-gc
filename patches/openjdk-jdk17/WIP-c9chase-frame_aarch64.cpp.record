@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/frame_aarch64.cpp b/src/hotspot/cpu/aarch64/frame_aarch64.cpp
-index 418f2c3fe1c..d0b49edff99 100644
+index 418f2c3fe1c..9100da975bd 100644
 --- a/src/hotspot/cpu/aarch64/frame_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/frame_aarch64.cpp
 @@ -353,6 +353,20 @@ frame frame::sender_for_entry_frame(RegisterMap* map) const {
@@ -41,7 +41,24 @@ index 418f2c3fe1c..d0b49edff99 100644
    return frame(sender_sp, unextended_sp, link(), sender_pc_maybe_signed());
  }
  
-@@ -516,6 +541,21 @@ frame frame::sender_raw(RegisterMap* map) const {
+@@ -501,6 +526,16 @@ frame frame::sender_raw(RegisterMap* map) const {
+   // update it accordingly
+    map->set_include_argument_oops(false);
+ 
++#if defined(__CHERI_PURE_CAPABILITY__)
++  if (::getenv("C9_FRAME_DIAG")) {
++    fprintf(stderr, "[C9-sraw] pc=%p(t%d) fp=%p(t%d) sp=%p cb=%p entry=%d intp=%d compiled=%d\n",
++            (void*)_pc, (int)__builtin_cheri_tag_get((void*)_pc),
++            (void*)_fp, (int)__builtin_cheri_tag_get((void*)_fp), (void*)_sp,
++            (void*)_cb, (int)is_entry_frame(), (int)is_interpreted_frame(),
++            _cb ? 1 : 0);
++    fflush(stderr);
++  }
++#endif
+   if (is_entry_frame())
+     return sender_for_entry_frame(map);
+   if (is_interpreted_frame())
+@@ -516,6 +551,21 @@ frame frame::sender_raw(RegisterMap* map) const {
    // Must be native-compiled frame, i.e. the marshaling code for native
    // methods that exists in the core system.
  

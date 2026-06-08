@@ -1,0 +1,24 @@
+diff --git a/src/hotspot/cpu/aarch64/stubRoutines_aarch64.hpp b/src/hotspot/cpu/aarch64/stubRoutines_aarch64.hpp
+index 295264b7aaf..f16794e2e87 100644
+--- a/src/hotspot/cpu/aarch64/stubRoutines_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/stubRoutines_aarch64.hpp
+@@ -31,7 +31,19 @@
+ // extend it.
+ 
+ static bool    returns_to_call_stub(address return_pc)   {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: the return pc saved in the entry frame carries the Morello C64 mode
++  // bit (address bit0 = 1), but _call_stub_return_address was recorded from
++  // codegen __ pc() with bit0 = 0. A bit-exact compare then fails, so the
++  // call_stub entry frame is mis-classified (is_entry_frame()==false) ->
++  // walked as a compiled frame -> the C++ stack walker derives a garbage
++  // sender and faults (the AccessController security-stack-walk blocker).
++  // Compare addresses with bit0 masked.
++  return ((uintptr_t)return_pc & ~(uintptr_t)1)
++       == ((uintptr_t)_call_stub_return_address & ~(uintptr_t)1);
++#else
+   return return_pc == _call_stub_return_address;
++#endif
+ }
+ 
+ enum platform_dependent_constants {
