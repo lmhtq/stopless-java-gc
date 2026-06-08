@@ -1,0 +1,31 @@
+diff --git a/src/hotspot/cpu/aarch64/frame_aarch64.inline.hpp b/src/hotspot/cpu/aarch64/frame_aarch64.inline.hpp
+index ad2f3c0b691..e94169a4db1 100644
+--- a/src/hotspot/cpu/aarch64/frame_aarch64.inline.hpp
++++ b/src/hotspot/cpu/aarch64/frame_aarch64.inline.hpp
+@@ -199,6 +199,18 @@ inline oop* frame::interpreter_frame_mirror_addr() const {
+ // top of expression stack
+ inline intptr_t* frame::interpreter_frame_tos_address() const {
+   intptr_t* last_sp = interpreter_frame_last_sp();
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: at invoke resolution the last_sp slot can read back as stale garbage
++  // (a metaspace ptr, or a caller-region stack addr) instead of NULL, so the
++  // stock NULL-check fails and callee_receiver then reads the receiver from a
++  // bogus address. A valid last_sp must lie within this frame's live stack
++  // span [sp(), fp()); otherwise fall back to sp() (the live expr TOS).
++  if (last_sp == NULL ||
++      (intptr_t*)last_sp < sp() || (intptr_t*)last_sp >= fp()) {
++    return sp();
++  }
++  return last_sp;
++#else
+   if (last_sp == NULL) {
+     return sp();
+   } else {
+@@ -208,6 +220,7 @@ inline intptr_t* frame::interpreter_frame_tos_address() const {
+     assert(last_sp <= (intptr_t*) interpreter_frame_monitor_end(), "bad tos");
+     return last_sp;
+   }
++#endif
+ }
+ 
+ inline oop* frame::interpreter_frame_temp_oop_addr() const {
