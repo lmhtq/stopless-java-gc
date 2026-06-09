@@ -1,8 +1,18 @@
 diff --git a/src/hotspot/share/interpreter/interpreterRuntime.cpp b/src/hotspot/share/interpreter/interpreterRuntime.cpp
-index d66ed24d862..b4b8be9cd1e 100644
+index d66ed24d862..38064d8417e 100644
 --- a/src/hotspot/share/interpreter/interpreterRuntime.cpp
 +++ b/src/hotspot/share/interpreter/interpreterRuntime.cpp
-@@ -156,6 +156,14 @@ JRT_ENTRY(void, InterpreterRuntime::ldc(JavaThread* current, bool wide))
+@@ -77,6 +77,9 @@
+ #ifdef COMPILER2
+ #include "opto/runtime.hpp"
+ #endif
++#ifdef __CHERI_PURE_CAPABILITY__
++#include <dlfcn.h>   // C-9: dladdr for native-function DSO-cap diagnostics/fix
++#endif
+ 
+ // Helper class to access current interpreter state
+ class LastFrameAccessor : public StackObj {
+@@ -156,6 +159,14 @@ JRT_ENTRY(void, InterpreterRuntime::ldc(JavaThread* current, bool wide))
    assert (tag.is_unresolved_klass() || tag.is_klass(), "wrong ldc call");
    Klass* klass = pool->klass_at(index, CHECK);
    oop java_class = klass->java_mirror();
@@ -17,7 +27,7 @@ index d66ed24d862..b4b8be9cd1e 100644
    current->set_vm_result(java_class);
  JRT_END
  
-@@ -216,6 +224,9 @@ JRT_END
+@@ -216,6 +227,9 @@ JRT_END
  // Allocation
  
  JRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* current, ConstantPool* pool, int index))
@@ -27,7 +37,7 @@ index d66ed24d862..b4b8be9cd1e 100644
    Klass* k = pool->klass_at(index, CHECK);
    InstanceKlass* klass = InstanceKlass::cast(k);
  
-@@ -240,6 +251,11 @@ JRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* current, ConstantPool* pool
+@@ -240,6 +254,11 @@ JRT_ENTRY(void, InterpreterRuntime::_new(JavaThread* current, ConstantPool* pool
    //       If we have a breakpoint, then we don't rewrite
    //       because the _breakpoint bytecode would be lost.
    oop obj = klass->allocate_instance(CHECK);
@@ -39,7 +49,7 @@ index d66ed24d862..b4b8be9cd1e 100644
    current->set_vm_result(obj);
  JRT_END
  
-@@ -251,9 +267,15 @@ JRT_END
+@@ -251,9 +270,15 @@ JRT_END
  
  
  JRT_ENTRY(void, InterpreterRuntime::anewarray(JavaThread* current, ConstantPool* pool, int index, jint size))
@@ -55,7 +65,7 @@ index d66ed24d862..b4b8be9cd1e 100644
  JRT_END
  
  
-@@ -811,6 +833,39 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
+@@ -811,6 +836,39 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
      Symbol* signature = call.signature();
      receiver = Handle(current, last_frame.callee_receiver(signature));
  
@@ -95,7 +105,7 @@ index d66ed24d862..b4b8be9cd1e 100644
      assert(Universe::heap()->is_in_or_null(receiver()),
             "sanity check");
      assert(receiver.is_null() ||
-@@ -940,6 +995,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
+@@ -940,6 +998,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
  // cpCache entry.  This doesn't safepoint, but the helper routines safepoint.
  // This function will check for redefinition!
  JRT_ENTRY(void, InterpreterRuntime::resolve_from_cache(JavaThread* current, Bytecodes::Code bytecode)) {
@@ -105,7 +115,7 @@ index d66ed24d862..b4b8be9cd1e 100644
    switch (bytecode) {
    case Bytecodes::_getstatic:
    case Bytecodes::_putstatic:
-@@ -1376,7 +1434,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
+@@ -1376,7 +1437,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
          method->set_signature_handler(Interpreter::slow_signature_handler());
        } else {
          // set handler
@@ -125,19 +135,24 @@ index d66ed24d862..b4b8be9cd1e 100644
        }
      } else {
        DEBUG_ONLY(JavaThread::current()->check_possible_safepoint());
-@@ -1451,6 +1520,18 @@ JRT_ENTRY(void, InterpreterRuntime::prepare_native_call(JavaThread* current, Met
+@@ -1451,6 +1523,23 @@ JRT_ENTRY(void, InterpreterRuntime::prepare_native_call(JavaThread* current, Met
    if (!m->has_native_function()) {
      NativeLookup::lookup(m, CHECK);
    }
 +#ifdef __CHERI_PURE_CAPABILITY__
 +  if (::getenv("C9_NATIVE_DIAG")) {
 +    void* fn = (void*)m->native_function();
-+    fprintf(stderr, "[NAT] %s fn=%p tag=%d base=0x%lx len=0x%lx perms=0x%lx\n",
++    Dl_info info;
++    int rc = dladdr(fn, &info);
++    void* fb = (rc != 0) ? info.dli_fbase : NULL;
++    fprintf(stderr, "[NAT] %s fn=%p base=0x%lx len=0x%lx perms=0x%lx | fbase=%p fb_base=0x%lx fb_len=0x%lx fb_perms=0x%lx\n",
 +            m->name_and_sig_as_C_string(), fn,
-+            (int)__builtin_cheri_tag_get(fn),
 +            (unsigned long)__builtin_cheri_base_get(fn),
 +            (unsigned long)__builtin_cheri_length_get(fn),
-+            (unsigned long)__builtin_cheri_perms_get(fn));
++            (unsigned long)__builtin_cheri_perms_get(fn),
++            fb, (unsigned long)__builtin_cheri_base_get(fb),
++            (unsigned long)__builtin_cheri_length_get(fb),
++            (unsigned long)__builtin_cheri_perms_get(fb));
 +    fflush(stderr);
 +  }
 +#endif
