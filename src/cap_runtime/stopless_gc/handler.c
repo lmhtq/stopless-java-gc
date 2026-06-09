@@ -405,6 +405,8 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
        offset = addr - base feeds addr2line on the local unstripped libjvm.
        Build a cap with the target address from PCC (dladdr uses only the
        address, not bounds). */
+    /* C-9: name JVM-generated codecache blobs (dladdr can't see them). */
+    extern const char* stopless_codeblob_name(void*);
     #define STOPLESS_SYM(tag, addrval) do {                                       \
         void *_a = cheri_address_set((void *)(__uintcap_t)cr->cap_elr,            \
                                      (unsigned long)(addrval));                   \
@@ -415,6 +417,10 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
                     tag, (unsigned long)(addrval), _di.dli_fname, _b,             \
                     (unsigned long)(addrval) - _b,                               \
                     _di.dli_sname ? _di.dli_sname : "(stripped)");               \
+        } else {                                                                  \
+            const char *_bn = stopless_codeblob_name(_a);                         \
+            fprintf(stderr, "[stopless]       %s %#lx = codecache blob: %s\n",    \
+                    tag, (unsigned long)(addrval), _bn ? _bn : "(unknown)");      \
         }                                                                         \
     } while (0)
 

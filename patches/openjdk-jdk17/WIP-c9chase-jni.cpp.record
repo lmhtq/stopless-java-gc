@@ -1,0 +1,24 @@
+diff --git a/src/hotspot/share/prims/jni.cpp b/src/hotspot/share/prims/jni.cpp
+index 6c8adadec28..ef1e8580466 100644
+--- a/src/hotspot/share/prims/jni.cpp
++++ b/src/hotspot/share/prims/jni.cpp
+@@ -3451,7 +3451,18 @@ void copy_jni_function_table(const struct JNINativeInterface_ *new_jni_NativeInt
+ 
+ void quicken_jni_functions() {
+   // Replace Get<Primitive>Field with fast versions
+-  if (UseFastJNIAccessors && !VerifyJNIFields && !CheckJNICalls) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: the generated fast JNI field accessors run in native context (rthread
++  // is not set up) and read libjvm globals (the safepoint counter) via
++  // PC-relative adrp, which from the codecache under purecap yields an
++  // out-of-PCC-bounds, untagged cap -> SIGPROT (seen via canonicalize0 ->
++  // jni_fast_GetByteField). Keep the default C++ Get<T>Field accessors, which
++  // execute in libjvm with a correct PCC. (Perf-only optimization to skip.)
++  const bool use_fast_jni_accessors = false;
++#else
++  const bool use_fast_jni_accessors = UseFastJNIAccessors;
++#endif
++  if (use_fast_jni_accessors && !VerifyJNIFields && !CheckJNICalls) {
+     address func;
+     func = JNI_FastGetField::generate_fast_get_boolean_field();
+     if (func != (address)-1) {

@@ -1,0 +1,83 @@
+diff --git a/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp b/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
+index 8a73f1fd576..25146f22f93 100644
+--- a/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
++++ b/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
+@@ -81,15 +81,21 @@
+ # include <pthread_np.h>
+ #endif
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// Morello purecap: stack pointer is the capability register csp; legacy 'sp'
++// names the integer view and is not a valid mov source for a cap-typed dest.
++#define SPELL_REG_SP "csp"
++#define SPELL_REG_FP "c29"
++#else
+ #define SPELL_REG_SP "sp"
+ #define SPELL_REG_FP "fp"
++#endif
+ 
+ #ifdef __APPLE__
+ // see darwin-xnu/osfmk/mach/arm/_structs.h
+ 
+ // 10.5 UNIX03 member name prefixes
+ #define DU3_PREFIX(s, m) __ ## s.__ ## m
+-#endif
+ 
+ #define context_x    uc_mcontext->DU3_PREFIX(ss,x)
+ #define context_fp   uc_mcontext->DU3_PREFIX(ss,fp)
+@@ -98,6 +104,19 @@
+ #define context_pc   uc_mcontext->DU3_PREFIX(ss,pc)
+ #define context_cpsr uc_mcontext->DU3_PREFIX(ss,cpsr)
+ #define context_esr  uc_mcontext->DU3_PREFIX(es,esr)
++#elif defined(__CHERI_PURE_CAPABILITY__)
++// CheriBSD purecap: uc_mcontext is an inline __mcontext struct (accessed via .),
++// and register state lives in mc_capregs.cap_* (sys/arm64/include/ucontext.h).
++#define context_x    uc_mcontext.mc_capregs.cap_x
++#define context_fp   uc_mcontext.mc_capregs.cap_x[29]
++#define context_lr   uc_mcontext.mc_capregs.cap_lr
++#define context_sp   uc_mcontext.mc_capregs.cap_sp
++#define context_pc   uc_mcontext.mc_capregs.cap_elr
++#define context_cpsr uc_mcontext.mc_spsr
++#define context_esr  0  /* ESR not exposed by FreeBSD mcontext */
++#else
++#error "os_bsd_aarch64.cpp: only __APPLE__ and __CHERI_PURE_CAPABILITY__ supported"
++#endif
+ 
+ address os::current_stack_pointer() {
+ #if defined(__clang__) || defined(__llvm__)
+@@ -201,11 +220,22 @@ static void report_and_die(Thread* thread, void* context, const char* filename,
+   va_end(va);
+ }
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// C-9: let the (C) stopless crash dumper name a codecache blob by PC, since
++// dladdr can't see generated code. Returns the CodeBlob name or NULL.
++extern "C" const char* stopless_codeblob_name(void* pc) {
++  CodeBlob* cb = CodeCache::find_blob_unsafe((address)pc);
++  return (cb != NULL) ? cb->name() : (const char*)NULL;
++}
++#endif
++
+ bool PosixSignals::pd_hotspot_signal_handler(int sig, siginfo_t* info,
+                                              ucontext_t* uc, JavaThread* thread) {
++#ifdef __APPLE__
+   // Enable WXWrite: this function is called by the signal handler at arbitrary
+-  // point of execution.
++  // point of execution. Apple aarch64 only — JIT W^X is Apple-specific.
+   ThreadWXEnable wx(WXWrite, thread);
++#endif
+ 
+   // decide if this trap can be handled by a stub
+   address stub = NULL;
+@@ -545,9 +575,11 @@ int os::extra_bang_size_in_bytes() {
+   return 0;
+ }
+ 
++#ifdef __APPLE__
+ void os::current_thread_enable_wx(WXMode mode) {
+   pthread_jit_write_protect_np(mode == WXExec);
+ }
++#endif
+ 
+ extern "C" {
+   int SpinPause() {
