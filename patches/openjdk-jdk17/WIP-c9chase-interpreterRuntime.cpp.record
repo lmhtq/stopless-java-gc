@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/interpreter/interpreterRuntime.cpp b/src/hotspot/share/interpreter/interpreterRuntime.cpp
-index d66ed24d862..9b77858b117 100644
+index d66ed24d862..b4b8be9cd1e 100644
 --- a/src/hotspot/share/interpreter/interpreterRuntime.cpp
 +++ b/src/hotspot/share/interpreter/interpreterRuntime.cpp
 @@ -156,6 +156,14 @@ JRT_ENTRY(void, InterpreterRuntime::ldc(JavaThread* current, bool wide))
@@ -125,3 +125,22 @@ index d66ed24d862..9b77858b117 100644
        }
      } else {
        DEBUG_ONLY(JavaThread::current()->check_possible_safepoint());
+@@ -1451,6 +1520,18 @@ JRT_ENTRY(void, InterpreterRuntime::prepare_native_call(JavaThread* current, Met
+   if (!m->has_native_function()) {
+     NativeLookup::lookup(m, CHECK);
+   }
++#ifdef __CHERI_PURE_CAPABILITY__
++  if (::getenv("C9_NATIVE_DIAG")) {
++    void* fn = (void*)m->native_function();
++    fprintf(stderr, "[NAT] %s fn=%p tag=%d base=0x%lx len=0x%lx perms=0x%lx\n",
++            m->name_and_sig_as_C_string(), fn,
++            (int)__builtin_cheri_tag_get(fn),
++            (unsigned long)__builtin_cheri_base_get(fn),
++            (unsigned long)__builtin_cheri_length_get(fn),
++            (unsigned long)__builtin_cheri_perms_get(fn));
++    fflush(stderr);
++  }
++#endif
+   // make sure signature handler is installed
+   SignatureHandlerLibrary::add(m);
+   // The interpreter entry point checks the signature handler first,
