@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
-index 4666b42b933..bce6a73d786 100644
+index 4666b42b933..01f2848a653 100644
 --- a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 @@ -70,11 +70,20 @@ static inline Address aaddress(int n) {
@@ -547,7 +547,37 @@ index 4666b42b933..bce6a73d786 100644
    __ dispatch_next(vtos, 0, /*generate_poll*/true);
  }
  
-@@ -2009,7 +2247,14 @@ void TemplateTable::tableswitch() {
+@@ -1988,8 +2226,16 @@ void TemplateTable::tableswitch() {
+   Label default_case, continue_execution;
+   transition(itos, vtos);
+   // align rbcp
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: r1 is the cap base for the table ldrw's; lea/andr strip rbcp's tag.
++  __ cap_add_imm(r1, rbcp, BytesPerInt);       // r1 = rbcp + 4 (cap)
++  __ andr(rscratch1, r1, BytesPerInt - 1);
++  __ neg(rscratch1, rscratch1);
++  __ cap_add_reg(r1, r1, rscratch1);           // align down, keep tag
++#else
+   __ lea(r1, at_bcp(BytesPerInt));
+   __ andr(r1, r1, -BytesPerInt);
++#endif
+   // load lo & hi
+   __ ldrw(r2, Address(r1, BytesPerInt));
+   __ ldrw(r3, Address(r1, 2 * BytesPerInt));
+@@ -2002,14 +2248,27 @@ void TemplateTable::tableswitch() {
+   __ br(Assembler::GT, default_case);
+   // lookup dispatch offset
+   __ subw(r0, r0, r2);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: r3 is the cap base for the ldrw below; lea (integer) strips r1's tag.
++  __ ubfiz(rscratch1, r0, 2, 32);            // rscratch1 = uxtw(r0) << 2
++  __ cap_add_reg(r3, r1, rscratch1);         // r3 = r1 + r0*4 (cap)
++#else
+   __ lea(r3, Address(r1, r0, Address::uxtw(2)));
++#endif
+   __ ldrw(r3, Address(r3, 3 * BytesPerInt));
+   __ profile_switch_case(r0, r1, r2);
+   // continue execution
    __ bind(continue_execution);
    __ rev32(r3, r3);
    __ load_unsigned_byte(rscratch1, Address(rbcp, r3, Address::sxtw(0)));
@@ -562,7 +592,51 @@ index 4666b42b933..bce6a73d786 100644
    __ dispatch_only(vtos, /*generate_poll*/true);
    // handle default
    __ bind(default_case);
-@@ -2058,7 +2303,12 @@ void TemplateTable::fast_linearswitch() {
+@@ -2029,17 +2288,31 @@ void TemplateTable::fast_linearswitch() {
+   // bswap r0 so we can avoid bswapping the table entries
+   __ rev32(r0, r0);
+   // align rbcp
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: r19 is the cap base for the table ldrw's; lea/andr strip rbcp's tag.
++  __ cap_add_imm(r19, rbcp, BytesPerInt);      // r19 = rbcp + 4 (cap)
++  __ andr(rscratch1, r19, BytesPerInt - 1);
++  __ neg(rscratch1, rscratch1);
++  __ cap_add_reg(r19, r19, rscratch1);         // align down, keep tag
++#else
+   __ lea(r19, at_bcp(BytesPerInt)); // btw: should be able to get rid of
+                                     // this instruction (change offsets
+                                     // below)
+   __ andr(r19, r19, -BytesPerInt);
++#endif
+   // set counter
+   __ ldrw(r1, Address(r19, BytesPerInt));
+   __ rev32(r1, r1);
+   __ b(loop_entry);
+   // table search
+   __ bind(loop);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: rscratch1 is the cap base for the ldrw below; lea strips r19's tag.
++  __ lsl(rscratch2, r1, 3);
++  __ cap_add_reg(rscratch1, r19, rscratch2);   // rscratch1 = r19 + r1*8 (cap)
++#else
+   __ lea(rscratch1, Address(r19, r1, Address::lsl(3)));
++#endif
+   __ ldrw(rscratch1, Address(rscratch1, 2 * BytesPerInt));
+   __ cmpw(r0, rscratch1);
+   __ br(Assembler::EQ, found);
+@@ -2052,13 +2325,24 @@ void TemplateTable::fast_linearswitch() {
+   __ b(continue_execution);
+   // entry found -> get offset
+   __ bind(found);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: rscratch1 is the cap base for the ldrw below; lea strips r19's tag.
++  __ lsl(rscratch2, r1, 3);
++  __ cap_add_reg(rscratch1, r19, rscratch2);   // rscratch1 = r19 + r1*8 (cap)
++#else
+   __ lea(rscratch1, Address(r19, r1, Address::lsl(3)));
++#endif
+   __ ldrw(r3, Address(rscratch1, 3 * BytesPerInt));
+   __ profile_switch_case(r1, r0, r19);
    // continue execution
    __ bind(continue_execution);
    __ rev32(r3, r3);
@@ -575,7 +649,40 @@ index 4666b42b933..bce6a73d786 100644
    __ ldrb(rscratch1, Address(rbcp, 0));
    __ dispatch_only(vtos, /*generate_poll*/true);
  }
-@@ -2157,7 +2407,12 @@ void TemplateTable::fast_binaryswitch() {
+@@ -2099,11 +2383,21 @@ void TemplateTable::fast_binaryswitch() {
+   const Register temp  = rscratch2;
+ 
+   // Find array start
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: array is the base for the ldrw's below; it must stay a tagged cap.
++  // lea (integer add of rbcp) and andr both strip rbcp's tag. cap-add rbcp +
++  // 12, then align down to 4 bytes via cap_add_reg of the (negated) low bits.
++  __ cap_add_imm(array, rbcp, 3 * BytesPerInt);   // array = rbcp + 12 (cap)
++  __ andr(rscratch2, array, BytesPerInt - 1);     // rscratch2 = array & 3
++  __ neg(rscratch2, rscratch2);
++  __ cap_add_reg(array, array, rscratch2);        // align down, keep tag
++#else
+   __ lea(array, at_bcp(3 * BytesPerInt)); // btw: should be able to
+                                           // get rid of this
+                                           // instruction (change
+                                           // offsets below)
+   __ andr(array, array, -BytesPerInt);
++#endif
+ 
+   // Initialize i & j
+   __ mov(i, 0);                            // i = 0;
+@@ -2152,12 +2446,23 @@ void TemplateTable::fast_binaryswitch() {
+   __ br(Assembler::NE, default_case);
+ 
+   // entry found -> j = offset
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: j is the cap base for the ldrw below; integer add strips array's tag.
++  __ lsl(rscratch1, i, 3);
++  __ cap_add_reg(j, array, rscratch1);   // j = array + i*8 (cap)
++#else
+   __ add(j, array, i, ext::uxtx, 3);
++#endif
+   __ ldrw(j, Address(j, BytesPerInt));
    __ profile_switch_case(i, key, array);
    __ rev32(j, j);
    __ load_unsigned_byte(rscratch1, Address(rbcp, j, Address::sxtw(0)));
@@ -588,7 +695,7 @@ index 4666b42b933..bce6a73d786 100644
    __ dispatch_only(vtos, /*generate_poll*/true);
  
    // default case -> j = default offset
-@@ -2166,7 +2421,12 @@ void TemplateTable::fast_binaryswitch() {
+@@ -2166,7 +2471,12 @@ void TemplateTable::fast_binaryswitch() {
    __ ldrw(j, Address(array, -2 * BytesPerInt));
    __ rev32(j, j);
    __ load_unsigned_byte(rscratch1, Address(rbcp, j, Address::sxtw(0)));
@@ -601,7 +708,7 @@ index 4666b42b933..bce6a73d786 100644
    __ dispatch_only(vtos, /*generate_poll*/true);
  }
  
-@@ -2180,7 +2440,9 @@ void TemplateTable::_return(TosState state)
+@@ -2180,7 +2490,9 @@ void TemplateTable::_return(TosState state)
    if (_desc->bytecode() == Bytecodes::_return_register_finalizer) {
      assert(state == vtos, "only valid state");
  
@@ -612,7 +719,7 @@ index 4666b42b933..bce6a73d786 100644
      __ load_klass(r3, c_rarg1);
      __ ldrw(r3, Address(r3, Klass::access_flags_offset()));
      Label skip_register_finalizer;
-@@ -2205,6 +2467,14 @@ void TemplateTable::_return(TosState state)
+@@ -2205,6 +2517,14 @@ void TemplateTable::_return(TosState state)
    }
  
    __ remove_activation(state);
@@ -627,7 +734,7 @@ index 4666b42b933..bce6a73d786 100644
    __ ret(lr);
  }
  
-@@ -2299,10 +2569,18 @@ void TemplateTable::load_field_cp_cache_entry(Register obj,
+@@ -2299,10 +2619,18 @@ void TemplateTable::load_field_cp_cache_entry(Register obj,
  
    // klass overwrite register
    if (is_static) {
@@ -646,7 +753,7 @@ index 4666b42b933..bce6a73d786 100644
      __ resolve_oop_handle(obj);
    }
  }
-@@ -2336,10 +2614,26 @@ void TemplateTable::load_invoke_cp_cache_entry(int byte_no,
+@@ -2336,10 +2664,26 @@ void TemplateTable::load_invoke_cp_cache_entry(int byte_no,
  
    size_t index_size = (is_invokedynamic ? sizeof(u4) : sizeof(u2));
    resolve_cache_and_index(byte_no, cache, index, index_size);
@@ -673,7 +780,7 @@ index 4666b42b933..bce6a73d786 100644
    }
    __ ldrw(flags, Address(cache, flags_offset));
  }
-@@ -3066,7 +3360,13 @@ void TemplateTable::fast_xaccess(TosState state)
+@@ -3066,7 +3410,13 @@ void TemplateTable::fast_xaccess(TosState state)
    transition(vtos, state);
  
    // get receiver
@@ -687,7 +794,7 @@ index 4666b42b933..bce6a73d786 100644
    // access constant pool cache
    __ get_cache_and_index_at_bcp(r2, r3, 2);
    __ ldr(r1, Address(r2, in_bytes(ConstantPoolCache::base_offset() +
-@@ -3089,7 +3389,11 @@ void TemplateTable::fast_xaccess(TosState state)
+@@ -3089,7 +3439,11 @@ void TemplateTable::fast_xaccess(TosState state)
  
    // make sure exception is reported in correct bcp range (getfield is
    // next instruction)
@@ -699,7 +806,7 @@ index 4666b42b933..bce6a73d786 100644
    __ null_check(r0);
    switch (state) {
    case itos:
-@@ -3115,7 +3419,11 @@ void TemplateTable::fast_xaccess(TosState state)
+@@ -3115,7 +3469,11 @@ void TemplateTable::fast_xaccess(TosState state)
      __ bind(notVolatile);
    }
  
@@ -711,7 +818,7 @@ index 4666b42b933..bce6a73d786 100644
  }
  
  
-@@ -3176,8 +3484,23 @@ void TemplateTable::prepare_invoke(int byte_no,
+@@ -3176,8 +3534,23 @@ void TemplateTable::prepare_invoke(int byte_no,
      // const int receiver_is_at_end      = -1;  // back off one slot to get receiver
      // Address recv_addr = __ argument_address(recv, no_return_pc_pushed_yet + receiver_is_at_end);
      // __ movptr(recv, recv_addr);
@@ -735,7 +842,7 @@ index 4666b42b933..bce6a73d786 100644
      __ verify_oop(recv);
    }
  
-@@ -3188,8 +3511,18 @@ void TemplateTable::prepare_invoke(int byte_no,
+@@ -3188,8 +3561,18 @@ void TemplateTable::prepare_invoke(int byte_no,
    // load return address
    {
      const address table_addr = (address) Interpreter::invoke_return_entry_table_for(code);
@@ -754,7 +861,7 @@ index 4666b42b933..bce6a73d786 100644
    }
  }
  
-@@ -3531,7 +3864,14 @@ void TemplateTable::_new() {
+@@ -3531,7 +3914,14 @@ void TemplateTable::_new() {
  
      // Initialize object fields
      {
@@ -769,7 +876,7 @@ index 4666b42b933..bce6a73d786 100644
        Label loop;
        __ bind(loop);
        __ str(zr, Address(__ post(r2, BytesPerLong)));
-@@ -3547,6 +3887,14 @@ void TemplateTable::_new() {
+@@ -3547,6 +3937,14 @@ void TemplateTable::_new() {
        __ mov(rscratch1, (intptr_t)markWord::prototype().value());
      }
      __ str(rscratch1, Address(r0, oopDesc::mark_offset_in_bytes()));
@@ -784,7 +891,7 @@ index 4666b42b933..bce6a73d786 100644
      __ store_klass_gap(r0, zr);  // zero klass gap for compressed oops
      __ store_klass(r0, r4);      // store klass last
  
-@@ -3612,8 +3960,15 @@ void TemplateTable::checkcast()
+@@ -3612,8 +4010,15 @@ void TemplateTable::checkcast()
    __ get_cpool_and_tags(r2, r3); // r2=cpool, r3=tags array
    __ get_unsigned_2_byte_index_at_bcp(r19, 1); // r19=index
    // See if bytecode has already been quicked
@@ -800,7 +907,7 @@ index 4666b42b933..bce6a73d786 100644
    __ ldarb(r1, r1);
    __ cmp(r1, (u1)JVM_CONSTANT_Class);
    __ br(Assembler::EQ, quicked);
-@@ -3622,7 +3977,13 @@ void TemplateTable::checkcast()
+@@ -3622,7 +4027,13 @@ void TemplateTable::checkcast()
    call_VM(r0, CAST_FROM_FN_PTR(address, InterpreterRuntime::quicken_io_cc));
    // vm_result_2 has metadata result
    __ get_vm_result_2(r0, rthread);
@@ -814,7 +921,7 @@ index 4666b42b933..bce6a73d786 100644
    __ b(resolved);
  
    // Get superklass in r0 and subklass in r3
-@@ -3666,8 +4027,15 @@ void TemplateTable::instanceof() {
+@@ -3666,8 +4077,15 @@ void TemplateTable::instanceof() {
    __ get_cpool_and_tags(r2, r3); // r2=cpool, r3=tags array
    __ get_unsigned_2_byte_index_at_bcp(r19, 1); // r19=index
    // See if bytecode has already been quicked
@@ -830,7 +937,7 @@ index 4666b42b933..bce6a73d786 100644
    __ ldarb(r1, r1);
    __ cmp(r1, (u1)JVM_CONSTANT_Class);
    __ br(Assembler::EQ, quicked);
-@@ -3676,7 +4044,12 @@ void TemplateTable::instanceof() {
+@@ -3676,7 +4094,12 @@ void TemplateTable::instanceof() {
    call_VM(r0, CAST_FROM_FN_PTR(address, InterpreterRuntime::quicken_io_cc));
    // vm_result_2 has metadata result
    __ get_vm_result_2(r0, rthread);
@@ -843,7 +950,7 @@ index 4666b42b933..bce6a73d786 100644
    __ verify_oop(r3);
    __ load_klass(r3, r3);
    __ b(resolved);
-@@ -3786,8 +4159,16 @@ void TemplateTable::monitorenter()
+@@ -3786,8 +4209,16 @@ void TemplateTable::monitorenter()
    // find a free slot in the monitor block (result in c_rarg1)
    {
      Label entry, loop, exit;
@@ -860,7 +967,7 @@ index 4666b42b933..bce6a73d786 100644
      __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
  
      __ b(entry);
-@@ -3803,7 +4184,11 @@ void TemplateTable::monitorenter()
+@@ -3803,7 +4234,11 @@ void TemplateTable::monitorenter()
      // if same object then stop searching
      __ br(Assembler::EQ, exit);
      // otherwise advance to next entry
@@ -872,7 +979,7 @@ index 4666b42b933..bce6a73d786 100644
      __ bind(entry);
      // check if bottom reached
      __ cmp(c_rarg3, c_rarg2);
-@@ -3819,6 +4204,29 @@ void TemplateTable::monitorenter()
+@@ -3819,6 +4254,29 @@ void TemplateTable::monitorenter()
    {
      Label entry, loop;
      // 1. compute new pointers            // rsp: old expression stack top
@@ -902,7 +1009,7 @@ index 4666b42b933..bce6a73d786 100644
      __ ldr(c_rarg1, monitor_block_bot);   // c_rarg1: old expression stack bottom
      __ sub(esp, esp, entry_size);         // move expression stack top
      __ sub(c_rarg1, c_rarg1, entry_size); // move expression stack bottom
-@@ -3838,6 +4246,7 @@ void TemplateTable::monitorenter()
+@@ -3838,6 +4296,7 @@ void TemplateTable::monitorenter()
      __ cmp(c_rarg3, c_rarg1);        // check if bottom reached
      __ br(Assembler::NE, loop);      // if not at bottom then
                                       // copy next word
@@ -910,7 +1017,7 @@ index 4666b42b933..bce6a73d786 100644
    }
  
    // call run-time routine
-@@ -3848,10 +4257,15 @@ void TemplateTable::monitorenter()
+@@ -3848,10 +4307,15 @@ void TemplateTable::monitorenter()
    // handling for async. exceptions work correctly.
    // The object has already been poped from the stack, so the
    // expression stack looks correct.
@@ -927,7 +1034,7 @@ index 4666b42b933..bce6a73d786 100644
    __ lock_object(c_rarg1);
  
    // check to make sure this monitor doesn't cause stack overflow after locking
-@@ -3882,8 +4296,15 @@ void TemplateTable::monitorexit()
+@@ -3882,8 +4346,15 @@ void TemplateTable::monitorexit()
    // find matching slot
    {
      Label entry, loop;
@@ -943,7 +1050,7 @@ index 4666b42b933..bce6a73d786 100644
      __ lea(c_rarg2, monitor_block_bot); // points to word before bottom
                                          // of monitor block
      __ b(entry);
-@@ -3895,7 +4316,11 @@ void TemplateTable::monitorexit()
+@@ -3895,7 +4366,11 @@ void TemplateTable::monitorexit()
      // if same object then stop searching
      __ br(Assembler::EQ, found);
      // otherwise advance to next entry
