@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
-index 1db103730f1..7201d723813 100644
+index 1db103730f1..9545037886e 100644
 --- a/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/interp_masm_aarch64.cpp
 @@ -49,8 +49,16 @@
@@ -394,7 +394,30 @@ index 1db103730f1..7201d723813 100644
  
      if (DiagnoseSyncOnValueBasedClasses != 0) {
        load_klass(tmp, obj_reg);
-@@ -867,7 +1066,13 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
+@@ -764,6 +963,12 @@ void InterpreterMacroAssembler::lock_object(Register lock_reg)
+ 
+     // Save (object->mark() | 1) into BasicLock's displaced header
+     str(swap_reg, Address(lock_reg, mark_offset));
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: the displaced header is a 16-byte markWord slot; zero its upper 8
++    // bytes so unlock can cap-LDR it back as a clean {bits,0,tag0} neutral mark
++    // (matching _new / markWord::prototype()).
++    str(zr, Address(lock_reg, mark_offset + 8));
++#endif
+ 
+     assert(lock_offset == 0,
+            "displached header must be first word in BasicObjectLock");
+@@ -816,6 +1021,9 @@ void InterpreterMacroAssembler::lock_object(Register lock_reg)
+ 
+     // Save the test result, for recursive case, the result is zero
+     str(swap_reg, Address(lock_reg, mark_offset));
++#ifdef __CHERI_PURE_CAPABILITY__
++    str(zr, Address(lock_reg, mark_offset + 8));  // clean 16-byte displaced header
++#endif
+ 
+     if (PrintBiasedLockingStatistics) {
+       br(Assembler::NE, slow_case);
+@@ -867,7 +1075,13 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
      lea(swap_reg, Address(lock_reg, BasicObjectLock::lock_offset_in_bytes()));
  
      // Load oop into obj_reg(%c_rarg3)
@@ -408,7 +431,23 @@ index 1db103730f1..7201d723813 100644
  
      // Free entry
      str(zr, Address(lock_reg, BasicObjectLock::obj_offset_in_bytes()));
-@@ -887,7 +1092,11 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
+@@ -877,8 +1091,15 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
+     }
+ 
+     // Load the old header from BasicLock structure
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: load the full 16-byte displaced header as a capability so the
++    // swap-back installs a clean {bits,0,tag0} neutral mark (its tag is 0 since
++    // lock_object stored it as data). cmpxchg_obj_header stores the full cap.
++    cap_ldr_imm(header_reg, swap_reg, BasicLock::displaced_header_offset_in_bytes());
++#else
+     ldr(header_reg, Address(swap_reg,
+                             BasicLock::displaced_header_offset_in_bytes()));
++#endif
+ 
+     // Test for recursion
+     cbz(header_reg, done);
+@@ -887,7 +1108,11 @@ void InterpreterMacroAssembler::unlock_object(Register lock_reg)
      cmpxchg_obj_header(swap_reg, header_reg, obj_reg, rscratch1, done, /*fallthrough*/NULL);
  
      // Call the runtime routine for slow case.
@@ -420,7 +459,7 @@ index 1db103730f1..7201d723813 100644
      call_VM_leaf(CAST_FROM_FN_PTR(address, InterpreterRuntime::monitorexit), lock_reg);
  
      bind(done);
-@@ -1635,6 +1844,29 @@ void InterpreterMacroAssembler::call_VM_base(Register oop_result,
+@@ -1635,6 +1860,29 @@ void InterpreterMacroAssembler::call_VM_base(Register oop_result,
  // interpreter specific
    restore_bcp();
    restore_locals();

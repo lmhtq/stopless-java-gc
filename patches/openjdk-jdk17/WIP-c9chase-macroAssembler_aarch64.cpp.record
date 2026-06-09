@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
-index 7abb2205414..83ee45df3ac 100644
+index 7abb2205414..156edc20ba9 100644
 --- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.cpp
 @@ -336,9 +336,20 @@ void MacroAssembler::set_last_Java_frame(Register last_java_sp,
@@ -272,7 +272,43 @@ index 7abb2205414..83ee45df3ac 100644
    if (retaddr)
      bind(*retaddr);
  
-@@ -2775,7 +2919,8 @@ RegSet MacroAssembler::call_clobbered_registers() {
+@@ -2536,7 +2680,35 @@ void MacroAssembler::cmpxchgptr(Register oldv, Register newv, Register addr, Reg
+ void MacroAssembler::cmpxchg_obj_header(Register oldv, Register newv, Register obj, Register tmp,
+                                         Label &succeed, Label *fail) {
+   assert(oopDesc::mark_offset_in_bytes() == 0, "assumption");
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: the mark word is a 16-byte capability slot. When an object is stack-
++  // locked or inflated, its mark holds a 16-byte CAPABILITY (the lock-record /
++  // ObjectMonitor pointer); when neutral it holds 64 bits of header. cmpxchgptr
++  // does an 8-byte CAS, which would install the lock-record pointer with its
++  // tag stripped -> a later markWord::displaced_mark_helper deref SIGPROTs.
++  // Use a 128-bit capability LL/SC: compare only the LOW 64 bits (the header
++  // bits / pointer address, which is all the lock logic needs) but load/store
++  // the FULL 16-byte capability so newv's tag/bounds survive. obj is the mark
++  // address (mark_offset == 0). Emitted cap exclusives (verified via llvm-mc):
++  //   ldaxr cT,[cN]     = 0x225ffc00 | (N<<5) | T
++  //   stlxr wS,cT,[cN]  = 0x2200fc00 | (S<<16) | (N<<5) | T
++  assert_different_registers(oldv, newv, obj, tmp);
++  Label retry, nope;
++  bind(retry);
++  emit_int32(0x225ffc00U | ((unsigned)obj->encoding() << 5) | (unsigned)tmp->encoding());
++  cmp(tmp, oldv);                 // low-64 compare against expected mark
++  br(Assembler::NE, nope);
++  emit_int32(0x2200fc00U | ((unsigned)tmp->encoding() << 16)
++             | ((unsigned)obj->encoding() << 5) | (unsigned)newv->encoding());
++  cbzw(tmp, succeed);             // STLXR status == 0 -> success
++  b(retry);
++  bind(nope);
++  membar(AnyAny);
++  mov(oldv, tmp);                 // return the observed (old) header in oldv
++  if (fail) b(*fail);
++#else
+   cmpxchgptr(oldv, newv, obj, tmp, succeed, fail);
++#endif
+ }
+ 
+ void MacroAssembler::cmpxchgw(Register oldv, Register newv, Register addr, Register tmp,
+@@ -2775,7 +2947,8 @@ RegSet MacroAssembler::call_clobbered_registers() {
  }
  
  void MacroAssembler::push_call_clobbered_registers_except(RegSet exclude) {
@@ -282,7 +318,7 @@ index 7abb2205414..83ee45df3ac 100644
    push(call_clobbered_registers() - exclude, sp);
    sub(sp, sp, step);
    mov(rscratch1, -step);
-@@ -2793,7 +2938,7 @@ void MacroAssembler::pop_call_clobbered_registers_except(RegSet exclude) {
+@@ -2793,7 +2966,7 @@ void MacroAssembler::pop_call_clobbered_registers_except(RegSet exclude) {
    for (int i = 0; i < 32; i += 4) {
      if (i <= v7->encoding() || i >= v16->encoding())
        ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
@@ -291,7 +327,7 @@ index 7abb2205414..83ee45df3ac 100644
    }
  
    reinitialize_ptrue();
-@@ -2810,7 +2955,7 @@ void MacroAssembler::push_CPU_state(bool save_vectors, bool use_sve,
+@@ -2810,7 +2983,7 @@ void MacroAssembler::push_CPU_state(bool save_vectors, bool use_sve,
        sve_str(as_FloatRegister(i), Address(sp, i));
      }
    } else {
@@ -300,7 +336,7 @@ index 7abb2205414..83ee45df3ac 100644
      mov(rscratch1, -step);
      sub(sp, sp, step);
      for (int i = 28; i >= 4; i -= 4) {
-@@ -2829,7 +2974,7 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, bool use_sve,
+@@ -2829,7 +3002,7 @@ void MacroAssembler::pop_CPU_state(bool restore_vectors, bool use_sve,
      }
      add(sp, sp, sve_vector_size_in_bytes * FloatRegisterImpl::number_of_registers);
    } else {
@@ -309,7 +345,7 @@ index 7abb2205414..83ee45df3ac 100644
      for (int i = 0; i <= 28; i += 4)
        ld1(as_FloatRegister(i), as_FloatRegister(i+1), as_FloatRegister(i+2),
            as_FloatRegister(i+3), restore_vectors ? T2D : T1D, Address(post(sp, step)));
-@@ -3856,13 +4001,41 @@ void MacroAssembler::kernel_crc32c(Register crc, Register buf, Register len,
+@@ -3856,13 +4029,41 @@ void MacroAssembler::kernel_crc32c(Register crc, Register buf, Register len,
  }
  
  
@@ -351,7 +387,7 @@ index 7abb2205414..83ee45df3ac 100644
  }
  
  SkipIfEqual::~SkipIfEqual() {
-@@ -3904,9 +4077,20 @@ void MacroAssembler::load_method_holder_cld(Register rresult, Register rmethod)
+@@ -3904,9 +4105,20 @@ void MacroAssembler::load_method_holder_cld(Register rresult, Register rmethod)
  }
  
  void MacroAssembler::load_method_holder(Register holder, Register method) {
@@ -372,7 +408,7 @@ index 7abb2205414..83ee45df3ac 100644
  }
  
  void MacroAssembler::load_klass(Register dst, Register src) {
-@@ -3914,7 +4098,15 @@ void MacroAssembler::load_klass(Register dst, Register src) {
+@@ -3914,7 +4126,15 @@ void MacroAssembler::load_klass(Register dst, Register src) {
      ldrw(dst, Address(src, oopDesc::klass_offset_in_bytes()));
      decode_klass_not_null(dst);
    } else {
@@ -388,7 +424,7 @@ index 7abb2205414..83ee45df3ac 100644
    }
  }
  
-@@ -3942,10 +4134,18 @@ void MacroAssembler::resolve_weak_handle(Register rresult, Register rtmp) {
+@@ -3942,10 +4162,18 @@ void MacroAssembler::resolve_weak_handle(Register rresult, Register rtmp) {
  
  void MacroAssembler::load_mirror(Register dst, Register method, Register tmp) {
    const int mirror_offset = in_bytes(Klass::java_mirror_offset());
@@ -407,7 +443,7 @@ index 7abb2205414..83ee45df3ac 100644
    resolve_oop_handle(dst, tmp);
  }
  
-@@ -3980,7 +4180,16 @@ void MacroAssembler::store_klass(Register dst, Register src) {
+@@ -3980,7 +4208,16 @@ void MacroAssembler::store_klass(Register dst, Register src) {
      encode_klass_not_null(src);
      strw(src, Address(dst, oopDesc::klass_offset_in_bytes()));
    } else {
