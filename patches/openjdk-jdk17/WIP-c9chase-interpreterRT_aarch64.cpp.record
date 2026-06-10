@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp b/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
-index f5970adc412..3d6cdaea8f4 100644
+index f5970adc412..3e5488218dd 100644
 --- a/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
 @@ -39,6 +39,17 @@
@@ -38,22 +38,40 @@ index f5970adc412..3d6cdaea8f4 100644
      __ mov(reg, 0);
      __ ldr(temp(), r0);
      Label L;
-@@ -163,7 +182,14 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
+@@ -163,6 +182,24 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
      __ mov(reg, r0);
      __ bind(L);
    } else {
-+    // Stack-passed oop arg (>8 GPR args). cap_lea_off keeps r0 tagged for the
-+    // ldr; the str into the sp-based native stack slot stays integer (to()==sp,
-+    // which cap_str_imm can't encode) — this rare path is not on the boot path.
++    // Stack-passed oop arg (>8 GPR args), e.g. defineClass1's 9th arg
++    // `source` — hit for every user-class definition from a jar/file URL.
 +#ifdef __CHERI_PURE_CAPABILITY__
++    // The handle is a capability: an integer str keeps only its low 8 bytes
++    // and drops the tag, so the callee's JNIHandles::resolve SIGPROTs.
++    // cap_str_imm can't take to()==sp as base; temp() is free after the
++    // null check, so copy csp into it (cap_add_imm special-cases sp) and
++    // cap-STR the full 16-byte handle through that.
 +    cap_lea_off(_masm, r0, from(), Interpreter::local_offset_in_bytes(offset()));
++    __ ldr(temp(), r0);
++    Label L;
++    __ cbnz(temp(), L);
++    __ mov(r0, zr);
++    __ bind(L);
++    static_assert(sizeof(jobject) == wordSize, "");
++    __ cap_add_imm(temp(), to(), 0);
++    __ cap_str_imm(r0, temp(), next_stack_offset(sizeof(jobject)));
 +#else
      __ add(r0, from(), Interpreter::local_offset_in_bytes(offset()));
-+#endif
      __ ldr(temp(), r0);
      Label L;
-     __ cbnz(temp(), L);
-@@ -180,7 +206,16 @@ void InterpreterRuntime::SignatureHandlerGenerator::generate(uint64_t fingerprin
+@@ -171,6 +208,7 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
+     __ bind(L);
+     static_assert(sizeof(jobject) == wordSize, "");
+     __ str(r0, Address(to(), next_stack_offset(sizeof(jobject))));
++#endif
+   }
+ }
+ 
+@@ -180,7 +218,16 @@ void InterpreterRuntime::SignatureHandlerGenerator::generate(uint64_t fingerprin
  
    // return result handler
    __ lea(r0, ExternalAddress(Interpreter::result_handler(method()->result_type())));

@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/interpreter/interpreterRuntime.cpp b/src/hotspot/share/interpreter/interpreterRuntime.cpp
-index d66ed24d862..38064d8417e 100644
+index d66ed24d862..1c952a34bd1 100644
 --- a/src/hotspot/share/interpreter/interpreterRuntime.cpp
 +++ b/src/hotspot/share/interpreter/interpreterRuntime.cpp
 @@ -77,6 +77,9 @@
@@ -65,7 +65,7 @@ index d66ed24d862..38064d8417e 100644
  JRT_END
  
  
-@@ -811,6 +836,39 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
+@@ -811,6 +836,43 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
      Symbol* signature = call.signature();
      receiver = Handle(current, last_frame.callee_receiver(signature));
  
@@ -74,17 +74,21 @@ index d66ed24d862..38064d8417e 100644
 +      void* rv = (void*)(oopDesc*)receiver();
 +      ArgumentSizeComputer asc(signature); int sz = asc.size();
 +      bool in_heap = (rv != NULL && Universe::heap()->is_in(rv));
++      // a tag-0 receiver cap would make the klass deref below fault inside
++      // this diag — detect it first, deref only when safe
++      bool rv_untagged = (rv != NULL && __builtin_cheri_tag_get(rv) == 0);
 +      // read the header _klass cap directly (offset 16 in purecap) and via klass()
 +      void* hk = NULL; void* ck = NULL;
-+      if (in_heap) {
++      if (in_heap && !rv_untagged) {
 +        hk = *(void**)((char*)rv + oopDesc::klass_offset_in_bytes());
 +        ck = (void*)receiver->klass();
 +      }
 +      // a real Klass* lives in metaspace (high addr) with data perms; a code
 +      // pointer (e.g. read from a corrupted header) is low (libjvm/code range)
-+      bool klass_bogus = in_heap && (__builtin_cheri_tag_get(hk) == 0 ||
-+                                     (unsigned long)hk < 0x50000000UL);
-+      bool bad = (rv != NULL && !in_heap) || klass_bogus;
++      bool klass_bogus = in_heap && !rv_untagged &&
++                         (__builtin_cheri_tag_get(hk) == 0 ||
++                          (unsigned long)hk < 0x50000000UL);
++      bool bad = (rv != NULL && !in_heap) || rv_untagged || klass_bogus;
 +      if (bad || ::getenv("C9_RECV_ALL")) {
 +        int bci = last_frame.bci();
 +        address bcp = m->bcp_from(bci);
@@ -105,7 +109,7 @@ index d66ed24d862..38064d8417e 100644
      assert(Universe::heap()->is_in_or_null(receiver()),
             "sanity check");
      assert(receiver.is_null() ||
-@@ -940,6 +998,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
+@@ -940,6 +1002,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
  // cpCache entry.  This doesn't safepoint, but the helper routines safepoint.
  // This function will check for redefinition!
  JRT_ENTRY(void, InterpreterRuntime::resolve_from_cache(JavaThread* current, Bytecodes::Code bytecode)) {
@@ -115,7 +119,7 @@ index d66ed24d862..38064d8417e 100644
    switch (bytecode) {
    case Bytecodes::_getstatic:
    case Bytecodes::_putstatic:
-@@ -1376,7 +1437,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
+@@ -1376,7 +1441,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
          method->set_signature_handler(Interpreter::slow_signature_handler());
        } else {
          // set handler
@@ -135,7 +139,7 @@ index d66ed24d862..38064d8417e 100644
        }
      } else {
        DEBUG_ONLY(JavaThread::current()->check_possible_safepoint());
-@@ -1451,6 +1523,23 @@ JRT_ENTRY(void, InterpreterRuntime::prepare_native_call(JavaThread* current, Met
+@@ -1451,6 +1527,23 @@ JRT_ENTRY(void, InterpreterRuntime::prepare_native_call(JavaThread* current, Met
    if (!m->has_native_function()) {
      NativeLookup::lookup(m, CHECK);
    }

@@ -1,0 +1,79 @@
+diff --git a/src/hotspot/share/runtime/javaCalls.cpp b/src/hotspot/share/runtime/javaCalls.cpp
+index 798cee7a6f8..6d93f7db7ad 100644
+--- a/src/hotspot/share/runtime/javaCalls.cpp
++++ b/src/hotspot/share/runtime/javaCalls.cpp
+@@ -426,13 +426,56 @@ void JavaCalls::call_helper(JavaValue* result, const methodHandle& method, JavaC
+         }
+       }
+ #endif
++#if defined(__CHERI_PURE_CAPABILITY__) && !defined(ZERO)
++      // C-6 fix #10: on Morello, BLR to a capability target sets
++      // PSTATE.C64 = target_cap.Value[0]. Our generated stubs are
++      // C64-mode code but the cap returned by StubRoutines::call_stub()
++      // has address 0x...8 (bit 0 = 0), so BLR enters A64 mode and
++      // misinterprets the C64 encoding → CAP_TAG fault on ifetch.
++      // (ARM ARM DDI0606 §2.10 RZTMWK + RZRMXS.) Fix: OR bit 0 into
++      // the cap address before invoking. Uses cheri_address_set to
++      // preserve cap tag/bounds/perms.
++      StubRoutines::CallStub _cs = StubRoutines::call_stub();
++      void* _cs_v = (void*)_cs;
++      unsigned long _cs_addr = (unsigned long)__builtin_cheri_address_get(_cs_v);
++      _cs_v = __builtin_cheri_address_set(_cs_v, _cs_addr | 1);
++      // C-6 fix #17 (new strategy): also flip entry_point bit 0 HERE, via
++      // cheri_address_set rather than via cap-ADD #1 in the stub. The
++      // earlier stub-emit approach (patch 0095) made c4.address odd, but
++      // BLR-cap on Morello (per actual hw behaviour observed via gdb at
++      // PC=0x428bc2c1 → SIGBUS alignment) did NOT auto-clear bit 0 for
++      // ifetch. cheri_address_set + |1 sets bit 0 the same way it works
++      // for call_stub itself (verified entering C64 cleanly).
++      void* _ep = (void*)entry_point;
++      unsigned long _ep_addr = (unsigned long)__builtin_cheri_address_get(_ep);
++      // C-6 fix #17b / L59: keep entry_point bit0=0. On this Morello, BLR to a
++      // cap does NOT auto-clear bit0 for ifetch (setting bit0=1 lands the PC on
++      // an odd address -> SIGBUS at the entry's first instruction). The
++      // call_stub already runs C64 (fix #10), and BLR to an even target keeps
++      // C64, so the interpreter runs C64 with an even PC. The remaining issue
++      // (the call_stub's `blr x4` bakes bit0=1 into the return sentry, so the
++      // method's final `ret` lands on an odd PC) is fixed on the interpreter
++      // return side, not here.
++      _ep = __builtin_cheri_address_set(_ep, _ep_addr);  // no | 1
++      address entry_point_c64 = (address)_ep;
++      if (0) fprintf(stderr, "[C6CSMODE] BLR target now %#p ; entry_point %#p (orig %#lx)\n",
++              _cs_v, _ep, _ep_addr);
++      fflush(stderr);
++      ((StubRoutines::CallStub)_cs_v)(
++        (address)&link,
++#else
+       StubRoutines::call_stub()(
+         (address)&link,
++#endif
+         // (intptr_t*)&(result->_value), // see NOTE above (compiler problem)
+         result_val_address,          // see NOTE above (compiler problem)
+         result_type,
+         method(),
++#if defined(__CHERI_PURE_CAPABILITY__) && !defined(ZERO)
++        entry_point_c64,
++#else
+         entry_point,
++#endif
+         parameter_address,
+         args->size_of_parameters(),
+         CHECK
+@@ -499,6 +542,17 @@ intptr_t* JavaCallArguments::parameters() {
+       _value[i] = cast_from_oop<intptr_t>(obj);
+       _value_state[i] = value_state_oop;
+     }
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9 diag: catch oop arguments that lost their cap tag BEFORE they cross
++    // into Java (call_stub copies these slots verbatim into callee locals).
++    if (::getenv("C9_ARG_DIAG") && _value_state[i] == value_state_oop) {
++      void* v = (void*)_value[i];
++      fprintf(stderr, "[C9-arg] slot %d oop=%#lx tag=%d\n", i,
++              (unsigned long)__builtin_cheri_address_get(v),
++              (int)__builtin_cheri_tag_get(v));
++      fflush(stderr);
++    }
++#endif
+   }
+   // Return argument vector
+   return _value;

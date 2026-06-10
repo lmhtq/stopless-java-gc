@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
-index c92f0cf05bd..d00a66eb237 100644
+index c92f0cf05bd..f30d88e13bb 100644
 --- a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
 @@ -227,11 +227,38 @@ class StubGenerator: public StubCodeGenerator {
@@ -123,7 +123,7 @@ index c92f0cf05bd..d00a66eb237 100644
      __ blr(c_rarg4);
  
      // we do this here because the notify will already have been done
-@@ -312,7 +381,16 @@ class StubGenerator: public StubCodeGenerator {
+@@ -312,11 +381,33 @@ class StubGenerator: public StubCodeGenerator {
      // T_OBJECT, T_LONG, T_FLOAT or T_DOUBLE is treated as T_INT)
      // n.b. this assumes Java returns an integral result in r0
      // and a floating result in j_farg0
@@ -138,9 +138,26 @@ index c92f0cf05bd..d00a66eb237 100644
      __ ldr(j_rarg2, result);
 +#endif
      Label is_long, is_float, is_double, exit;
++#ifdef __CHERI_PURE_CAPABILITY__
++    Label is_obj;
++#endif
      __ ldr(j_rarg1, result_type);
      __ cmp(j_rarg1, (u1)T_OBJECT);
-@@ -330,7 +408,11 @@ class StubGenerator: public StubCodeGenerator {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: a T_OBJECT result is a full capability in c0; the shared is_long
++    // integer `str r0` keeps only the low 8 bytes, so EVERY oop returned from
++    // a JavaCalls invocation reaches native code (JNI make_local, launcher)
++    // tag-0 and faults when passed back into Java (first hit: the main-class-
++    // name String from NewStringPlatform -> loadMainClass -> String.replace).
++    // Store the full 16-byte cap for T_OBJECT; T_LONG stays an 8-byte store.
++    __ br(Assembler::EQ, is_obj);
++#else
+     __ br(Assembler::EQ, is_long);
++#endif
+     __ cmp(j_rarg1, (u1)T_LONG);
+     __ br(Assembler::EQ, is_long);
+     __ cmp(j_rarg1, (u1)T_FLOAT);
+@@ -330,7 +421,11 @@ class StubGenerator: public StubCodeGenerator {
      __ BIND(exit);
  
      // pop parameters
@@ -152,7 +169,7 @@ index c92f0cf05bd..d00a66eb237 100644
  
  #ifdef ASSERT
      // verify that threads correspond
-@@ -354,6 +436,21 @@ class StubGenerator: public StubCodeGenerator {
+@@ -354,6 +449,21 @@ class StubGenerator: public StubCodeGenerator {
      __ ldpd(v11, v10,  d11_save);
      __ ldpd(v9,  v8,   d9_save);
  
@@ -174,7 +191,7 @@ index c92f0cf05bd..d00a66eb237 100644
      __ ldp(r28, r27,   r28_save);
      __ ldp(r26, r25,   r26_save);
      __ ldp(r24, r23,   r24_save);
-@@ -365,10 +462,26 @@ class StubGenerator: public StubCodeGenerator {
+@@ -365,10 +475,26 @@ class StubGenerator: public StubCodeGenerator {
      __ ldr(c_rarg3,  method);
      __ ldp(c_rarg4, c_rarg5,  entry_point);
      __ ldp(c_rarg6, c_rarg7,  parameter_size);
@@ -201,7 +218,20 @@ index c92f0cf05bd..d00a66eb237 100644
  
      // handle return types different from T_INT
  
-@@ -384,6 +497,33 @@ class StubGenerator: public StubCodeGenerator {
+@@ -376,6 +502,12 @@ class StubGenerator: public StubCodeGenerator {
+     __ str(r0, Address(j_rarg2, 0));
+     __ br(Assembler::AL, exit);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++    __ BIND(is_obj);
++    __ cap_str_imm(r0, j_rarg2, 0);   // full 16-byte cap incl. tag
++    __ br(Assembler::AL, exit);
++#endif
++
+     __ BIND(is_float);
+     __ strs(j_farg0, Address(j_rarg2, 0));
+     __ br(Assembler::AL, exit);
+@@ -384,6 +516,33 @@ class StubGenerator: public StubCodeGenerator {
      __ strd(j_farg0, Address(j_rarg2, 0));
      __ br(Assembler::AL, exit);
  
@@ -235,7 +265,7 @@ index c92f0cf05bd..d00a66eb237 100644
      return start;
    }
  
-@@ -4910,7 +5050,7 @@ class StubGenerator: public StubCodeGenerator {
+@@ -4910,7 +5069,7 @@ class StubGenerator: public StubCodeGenerator {
      __ cbnz(tmp1, NOT_EQUAL);
      __ ldp(tmp1, tmp3, Address(__ post(a1, 2 * wordSize)));
      __ eor(tmp5, tmp5, tmp6);
@@ -244,7 +274,7 @@ index c92f0cf05bd..d00a66eb237 100644
      __ eor(tmp7, tmp7, tmp8);
      __ ldp(tmp2, tmp4, Address(__ post(a2, 2 * wordSize)));
      // tmp6 is not used. MacroAssembler::subs is used here (rather than
-@@ -4938,9 +5078,9 @@ class StubGenerator: public StubCodeGenerator {
+@@ -4938,9 +5097,9 @@ class StubGenerator: public StubCodeGenerator {
        __ prfm(Address(a1, SoftwarePrefetchHintDistance));
        __ prfm(Address(a2, SoftwarePrefetchHintDistance));
      }
@@ -257,7 +287,7 @@ index c92f0cf05bd..d00a66eb237 100644
      __ subs(tmp1, cnt1, loopThreshold);
      __ eor(v0, __ T16B, v0, v4);
      __ eor(v1, __ T16B, v1, v5);
-@@ -5700,9 +5840,22 @@ class StubGenerator: public StubCodeGenerator {
+@@ -5700,9 +5859,22 @@ class StubGenerator: public StubCodeGenerator {
    }
  
    void generate_string_indexof_stubs() {
