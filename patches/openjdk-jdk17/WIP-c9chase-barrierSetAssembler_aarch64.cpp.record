@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp b/src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp
-index a4a2b142039..b746817ae3d 100644
+index a4a2b142039..298fed5bf9b 100644
 --- a/src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/gc/shared/barrierSetAssembler_aarch64.cpp
 @@ -58,11 +58,23 @@ void BarrierSetAssembler::load_at(MacroAssembler* masm, DecoratorSet decorators,
@@ -26,7 +26,22 @@ index a4a2b142039..b746817ae3d 100644
      }
      break;
    }
-@@ -95,11 +107,22 @@ void BarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators
+@@ -72,7 +84,14 @@ void BarrierSetAssembler::load_at(MacroAssembler* masm, DecoratorSet decorators,
+   case T_SHORT:   __ load_signed_short  (dst, src); break;
+   case T_INT:     __ ldrw               (dst, src); break;
+   case T_LONG:    __ ldr                (dst, src); break;
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: a T_ADDRESS field holds a 16-byte capability on purecap (first hit:
++  // ResolvedMethodName.vmtarget = Method* in jump_to_lambda_form); integer
++  // ldr strips its tag and the next deref through it faults.
++  case T_ADDRESS: __ cap_ldr            (dst, src); break;
++#else
+   case T_ADDRESS: __ ldr                (dst, src); break;
++#endif
+   case T_FLOAT:   __ ldrs               (v0, src);  break;
+   case T_DOUBLE:  __ ldrd               (v0, src);  break;
+   default: Unimplemented();
+@@ -95,11 +114,22 @@ void BarrierSetAssembler::store_at(MacroAssembler* masm, DecoratorSet decorators
          }
          __ strw(val, dst);
        } else {
@@ -49,7 +64,7 @@ index a4a2b142039..b746817ae3d 100644
      }
      break;
    }
-@@ -140,18 +163,45 @@ void BarrierSetAssembler::tlab_allocate(MacroAssembler* masm, Register obj,
+@@ -140,18 +170,45 @@ void BarrierSetAssembler::tlab_allocate(MacroAssembler* masm, Register obj,
  
    // verify_tlab();
  

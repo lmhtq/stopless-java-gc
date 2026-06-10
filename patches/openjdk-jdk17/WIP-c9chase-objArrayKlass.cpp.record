@@ -1,0 +1,50 @@
+diff --git a/src/hotspot/share/oops/objArrayKlass.cpp b/src/hotspot/share/oops/objArrayKlass.cpp
+index da75ec35ecb..1c385d73ab7 100644
+--- a/src/hotspot/share/oops/objArrayKlass.cpp
++++ b/src/hotspot/share/oops/objArrayKlass.cpp
+@@ -200,12 +200,35 @@ oop ObjArrayKlass::multi_allocate(int rank, jint* sizes, TRAPS) {
+ }
+ 
+ // Either oop or narrowOop depending on UseCompressedOops.
++#ifdef __CHERI_PURE_CAPABILITY__
++// C-9 diag: verify oop-array copies preserve cap tags (suspect producer of
++// the tag-0 checkcast receiver in the indy/concat bootstrap).
++static void c9_check_copy_tags(arrayOop d, size_t dst_offset, int length,
++                               const char* which) {
++  if (!::getenv("C9_AC_DIAG")) return;
++  oop* base = (oop*)(void*)((char*)(void*)d + dst_offset);
++  for (int i = 0; i < length; i++) {
++    void* v = (void*)base[i];
++    if (v != NULL && __builtin_cheri_tag_get(v) == 0) {
++      fprintf(stderr, "[C9-ac] %s: dst[%d]=%#lx TAG-0 after copy (dst=%#lx len=%d)\n",
++              which, i, (unsigned long)__builtin_cheri_address_get(v),
++              (unsigned long)__builtin_cheri_address_get((void*)d), length);
++      fflush(stderr);
++      return;
++    }
++  }
++}
++#endif
++
+ void ObjArrayKlass::do_copy(arrayOop s, size_t src_offset,
+                             arrayOop d, size_t dst_offset, int length, TRAPS) {
+   if (s == d) {
+     // since source and destination are equal we do not need conversion checks.
+     assert(length > 0, "sanity check");
+     ArrayAccess<>::oop_arraycopy(s, src_offset, d, dst_offset, length);
++#ifdef __CHERI_PURE_CAPABILITY__
++    c9_check_copy_tags(d, dst_offset, length, "same-array");
++#endif
+   } else {
+     // We have to make sure all elements conform to the destination array
+     Klass* bound = ObjArrayKlass::cast(d->klass())->element_klass();
+@@ -213,6 +236,9 @@ void ObjArrayKlass::do_copy(arrayOop s, size_t src_offset,
+     if (stype == bound || stype->is_subtype_of(bound)) {
+       // elements are guaranteed to be subtypes, so no check necessary
+       ArrayAccess<ARRAYCOPY_DISJOINT>::oop_arraycopy(s, src_offset, d, dst_offset, length);
++#ifdef __CHERI_PURE_CAPABILITY__
++      c9_check_copy_tags(d, dst_offset, length, "disjoint");
++#endif
+     } else {
+       // slow case: need individual subtype checks
+       // note: don't use obj_at_put below because it includes a redundant store check

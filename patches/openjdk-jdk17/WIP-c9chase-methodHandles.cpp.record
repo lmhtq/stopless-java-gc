@@ -1,0 +1,28 @@
+diff --git a/src/hotspot/share/prims/methodHandles.cpp b/src/hotspot/share/prims/methodHandles.cpp
+index c086b81e9e2..efc864cd63b 100644
+--- a/src/hotspot/share/prims/methodHandles.cpp
++++ b/src/hotspot/share/prims/methodHandles.cpp
+@@ -692,6 +692,23 @@ Handle MethodHandles::resolve_MemberName(Handle mname, Klass* caller, int lookup
+   Handle empty;
+   assert(java_lang_invoke_MemberName::is_instance(mname()), "");
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 diag: the first vmtarget() below bounds-faults at offset 0x70 —
++  // compare the MemberName instance cap's bounds against its klass layout.
++  if (::getenv("C9_MN_DIAG")) {
++    oop mo = mname();
++    InstanceKlass* ik = InstanceKlass::cast(mo->klass());
++    fprintf(stderr, "[C9-mn] oop=%#lx tag=%d base=%#lx len=%#lx | "
++            "size_helper=%d words (%d bytes)\n",
++            (unsigned long)__builtin_cheri_address_get((void*)mo),
++            (int)__builtin_cheri_tag_get((void*)mo),
++            (unsigned long)__builtin_cheri_base_get((void*)mo),
++            (unsigned long)__builtin_cheri_length_get((void*)mo),
++            ik->size_helper(), ik->size_helper() * (int)HeapWordSize);
++    fflush(stderr);
++  }
++#endif
++
+   if (java_lang_invoke_MemberName::vmtarget(mname()) != NULL) {
+     // Already resolved.
+     DEBUG_ONLY(int vmindex = java_lang_invoke_MemberName::vmindex(mname()));

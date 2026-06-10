@@ -1,0 +1,45 @@
+diff --git a/src/hotspot/cpu/aarch64/methodHandles_aarch64.cpp b/src/hotspot/cpu/aarch64/methodHandles_aarch64.cpp
+index 415d3774b9c..32ad92ca6df 100644
+--- a/src/hotspot/cpu/aarch64/methodHandles_aarch64.cpp
++++ b/src/hotspot/cpu/aarch64/methodHandles_aarch64.cpp
+@@ -221,7 +221,14 @@ address MethodHandles::generate_method_handle_interpreter_entry(MacroAssembler*
+   int ref_kind = signature_polymorphic_intrinsic_ref_kind(iid);
+   assert(ref_kind != 0 || iid == vmIntrinsics::_invokeBasic, "must be _invokeBasic or a linkTo intrinsic");
+   if (ref_kind == 0 || MethodHandles::ref_kind_has_receiver(ref_kind)) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: Method::_constMethod is a 16-byte cap; integer ldr strips its tag
++    // and the size_of_parameters ldrh below faults (first hit: invokeBasic's
++    // adapter entry during the indy/concat bootstrap).
++    __ cap_ldr_imm(argp, rmethod, in_bytes(Method::const_offset()));
++#else
+     __ ldr(argp, Address(rmethod, Method::const_offset()));
++#endif
+     __ load_sized_value(argp,
+                         Address(argp, ConstMethod::size_of_parameters_offset()),
+                         sizeof(u2), /*is_signed*/ false);
+@@ -232,7 +239,12 @@ address MethodHandles::generate_method_handle_interpreter_entry(MacroAssembler*
+   }
+ 
+   if (!is_signature_polymorphic_static(iid)) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: the MH receiver is a 16-byte oop cap on the expression stack.
++    __ cap_ldr(mh, r3_first_arg_addr);
++#else
+     __ ldr(mh, r3_first_arg_addr);
++#endif
+     DEBUG_ONLY(argp = noreg);
+   }
+ 
+@@ -247,7 +259,12 @@ address MethodHandles::generate_method_handle_interpreter_entry(MacroAssembler*
+     Register recv = noreg;
+     if (MethodHandles::ref_kind_has_receiver(ref_kind)) {
+       // Load the receiver (not the MH; the actual MemberName's receiver) up from the interpreter stack.
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-9: the receiver is a 16-byte oop cap on the expression stack.
++      __ cap_ldr(recv = r2, r3_first_arg_addr);
++#else
+       __ ldr(recv = r2, r3_first_arg_addr);
++#endif
+     }
+     DEBUG_ONLY(argp = noreg);
+     Register rmember = rmethod;  // MemberName ptr; incoming method ptr is dead now

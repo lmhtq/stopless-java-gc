@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
-index 4666b42b933..b43df33a4b3 100644
+index 4666b42b933..094e0ac1da2 100644
 --- a/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/templateTable_aarch64.cpp
 @@ -70,11 +70,20 @@ static inline Address aaddress(int n) {
@@ -1081,3 +1081,36 @@ index 4666b42b933..b43df33a4b3 100644
      __ bind(entry);
      // check if bottom reached
      __ cmp(c_rarg1, c_rarg2);
+@@ -3932,11 +4420,32 @@ void TemplateTable::multianewarray() {
+   __ load_unsigned_byte(r0, at_bcp(3)); // get number of dimensions
+   // last dim is on top of stack; we want address of first one:
+   // first_addr = last_addr + (ndims - 1) * wordSize
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: the stock integer lea both strips esp's cap tag (the C++ side then
++  // derefs a tag-0 first_size_address) and scales by 8 — stack slots are 16
++  // bytes here. Compute the byte delta in a scratch and cap-add it to esp.
++  // Same for the esp pop after the call.
++  __ lsl(rscratch1, r0, Interpreter::logStackElementSize);    // ndims * 16
++  __ sub(rscratch1, rscratch1, wordSize);                     // - one slot
++  // add c_rarg1, esp, rscratch1  (cap-add reg; preserves esp's tag)
++  __ emit_int32(0xC2A06000U | ((unsigned)rscratch1->encoding() << 16)
++                | ((unsigned)esp->encoding() << 5)
++                | (unsigned)c_rarg1->encoding());
++#else
+   __ lea(c_rarg1, Address(esp, r0, Address::uxtw(3)));
+   __ sub(c_rarg1, c_rarg1, wordSize);
++#endif
+   call_VM(r0,
+           CAST_FROM_FN_PTR(address, InterpreterRuntime::multianewarray),
+           c_rarg1);
+   __ load_unsigned_byte(r1, at_bcp(3));
++#ifdef __CHERI_PURE_CAPABILITY__
++  __ lsl(rscratch1, r1, Interpreter::logStackElementSize);    // ndims * 16
++  // add esp, esp, rscratch1  (cap-add reg; preserves esp's tag)
++  __ emit_int32(0xC2A06000U | ((unsigned)rscratch1->encoding() << 16)
++                | ((unsigned)esp->encoding() << 5)
++                | (unsigned)esp->encoding());
++#else
+   __ lea(esp, Address(esp, r1, Address::uxtw(3)));
++#endif
+ }

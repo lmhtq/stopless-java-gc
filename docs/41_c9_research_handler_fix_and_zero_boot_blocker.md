@@ -1006,3 +1006,52 @@ runtime), not a regression.
 
 Next frontier: real programs — the C-9 post-move dispatch spin (docs/40) and
 the invokedynamic/Access<> RuntimeDispatch blocker remain.
+
+## AJ. Real-program chase: ConcatTest from pre-main to deep indy bootstrap (2026-06-10)
+
+Re-baselined the Zero-era blockers on the template-interpreter build by running
+tests/integration/ConcatTest (string concat -> invokedynamic). Sequence of
+root causes fixed (each verified by forward progress; java -version stays rc=0):
+
+patch 0163 (committed earlier):
+- call_stub T_OBJECT result store was is_long's integer str — every oop
+  RETURNED through JavaCalls reached native tag-0.
+- Signature-handler STACK-passed oop arg (>8 GPR args, defineClass1's
+  `source`) stored the handle cap with integer str.
+
+patch 0164 (this commit):
+1. **layout_helper unit bug**: instance lh encoded as size<<LogBytesPerWord(3)
+   but decoded by size_given_klass as bytes>>LogHeapWordSize(4) — oop->size()
+   returned HALF the real word count. JVM_Clone then allocated a 0x40-byte
+   copy of a 0x90-byte MemberName -> bounds SIGPROT in resolve_MemberName.
+   Fix: encode/decode lh with LogHeapWordSize so lh is real bytes (klass.hpp).
+   (The MemberName "injected fields" suspicion from docs/09 was WRONG — the
+   layout itself is fine; C9-mn/C9-clone diags pinned the size mismatch.)
+2. generate_Reference_get: integer ldr of the receiver cap + `andr(sp,..)`
+   CSP-tag-strip (§S class).
+3. TemplateTable::multianewarray: integer lea ×8 on esp (tag strip + wrong
+   16-byte-slot scaling), both the dims pointer and the esp pop.
+4. **MacroAssembler::push/pop(Register)**: integer str/ldr on the expression
+   stack — strips the invokedynamic APPENDIX MemberName pushed by
+   prepare_invoke (checkcast tag-0 in Invokers$Holder.invokeExact_MT @bci=8)
+   and any saved cap reg (r19).
+5. MethodHandles adapter entry: integer ldr of Method::_constMethod + the MH
+   receiver/recv loads from the expression stack.
+6. MacroAssembler::argument_address (register case): integer add on esp.
+7. BarrierSetAssembler::load_at T_ADDRESS: integer ldr — strips
+   ResolvedMethodName.vmtarget (Method* cap) in jump_to_lambda_form.
+
+Tooling: crash dumper now prints the INTERPRETED METHOD NAME + bci directly
+(stopless_method_name(c12, c22) in os_bsd_aarch64.cpp, weak-linked from
+handler.c) — this named Invokers$Holder.invokeExact_MT / invokeBasic /
+findBootstrapClass without any offline Method* decoding. Plus env-gated diags
+C9_ARG_DIAG (JavaCallArguments oop tags), C9_MN_DIAG (MemberName bounds +
+clone sizes), C9_AC_DIAG (oop-arraycopy tag check — arraycopy is CLEAN).
+
+CURRENT FRONTIER: ConcatTest now reaches ClassLoader.findBootstrapClass
+(native, via the MH/class-loading chain) and faults at the native entry's
+call_VM_leaf scratch save `stp x8,x12,[csp,#-32]!` with **CSP tag=0 base=0**
+while esp (c20) is tagged at the same address — something on the MH-adapter →
+native-entry path writes CSP through an integer op. mov/cap_add_reg are clean;
+suspect list: prepare_to_jump_from_interpreted / the linkTo adapter's stack
+adjustment / native-entry prologue under this entry sequence.

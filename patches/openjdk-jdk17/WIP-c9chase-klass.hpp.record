@@ -1,0 +1,40 @@
+diff --git a/src/hotspot/share/oops/klass.hpp b/src/hotspot/share/oops/klass.hpp
+index 9c7b2a24532..48fe58f8364 100644
+--- a/src/hotspot/share/oops/klass.hpp
++++ b/src/hotspot/share/oops/klass.hpp
+@@ -446,6 +446,27 @@ protected:
+       |    ((int)etype << _lh_element_type_shift)
+       |    (log2_esize << _lh_log2_element_size_shift);
+   }
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: an instance layout helper is documented as the instance size in
++  // BYTES (size_given_klass does `lh >> LogHeapWordSize`, TemplateTable::_new
++  // feeds lh to tlab_allocate as a byte count). `size` here is in HeapWords,
++  // which are 16 bytes on purecap (LogHeapWordSize=4) while LogBytesPerWord
++  // stays 3 — encoding with the stock shift made lh a half-sized pseudo-byte
++  // count: size_helper() round-tripped (>>3) but oopDesc::size() (>>4)
++  // returned half the real word count. First casualty: JVM_Clone allocated a
++  // 0x40-byte copy of a 0x90-byte MemberName, and resolve_MemberName's field
++  // load bounds-SIGPROTed. Encode/decode with LogHeapWordSize so lh is real
++  // bytes again (bits below LogHeapWordSize still hold the slow-path bit).
++  static jint instance_layout_helper(jint size, bool slow_path_flag) {
++    return (size << LogHeapWordSize)
++      |    (slow_path_flag ? _lh_instance_slow_path_bit : 0);
++  }
++  static int layout_helper_to_size_helper(jint lh) {
++    assert(lh > (jint)_lh_neutral_value, "must be instance");
++    // Note that the following expression discards _lh_instance_slow_path_bit.
++    return lh >> LogHeapWordSize;
++  }
++#else
+   static jint instance_layout_helper(jint size, bool slow_path_flag) {
+     return (size << LogBytesPerWord)
+       |    (slow_path_flag ? _lh_instance_slow_path_bit : 0);
+@@ -455,6 +476,7 @@ protected:
+     // Note that the following expression discards _lh_instance_slow_path_bit.
+     return lh >> LogBytesPerWord;
+   }
++#endif
+   // Out-of-line version computes everything based on the etype:
+   static jint array_layout_helper(BasicType etype);
+ 

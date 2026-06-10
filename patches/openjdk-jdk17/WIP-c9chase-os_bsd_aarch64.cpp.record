@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp b/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
-index 8a73f1fd576..438e4db8a89 100644
+index 8a73f1fd576..309df1349a2 100644
 --- a/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
 +++ b/src/hotspot/os_cpu/bsd_aarch64/os_bsd_aarch64.cpp
 @@ -81,15 +81,21 @@
@@ -45,7 +45,7 @@ index 8a73f1fd576..438e4db8a89 100644
  
  address os::current_stack_pointer() {
  #if defined(__clang__) || defined(__llvm__)
-@@ -201,11 +220,34 @@ static void report_and_die(Thread* thread, void* context, const char* filename,
+@@ -201,11 +220,54 @@ static void report_and_die(Thread* thread, void* context, const char* filename,
    va_end(va);
  }
  
@@ -68,6 +68,26 @@ index 8a73f1fd576..438e4db8a89 100644
 +  CodeBlob* cb = CodeCache::find_blob_unsafe((address)pc);
 +  return (cb != NULL) ? cb->name() : (const char*)NULL;
 +}
++
++// C-9: name the interpreted method a crash-dump frame is executing, from the
++// rmethod (c12) register value. Best-effort: validates the Method* lightly
++// (metaspace range + tagged) before touching it. Returns NULL if implausible.
++extern "C" const char* stopless_method_name(void* rmethod_val, void* rbcp_val) {
++  if (rmethod_val == NULL || __builtin_cheri_tag_get(rmethod_val) == 0) return NULL;
++  uintptr_t a = (uintptr_t)__builtin_cheri_address_get(rmethod_val);
++  if (a < 0x50000000UL || (a & 0x7) != 0) return NULL;  // metaspace is high
++  Method* m = (Method*)rmethod_val;
++  if (!Method::is_valid_method(m)) return NULL;
++  static char buf[512];
++  int bci = -1;
++  if (rbcp_val != NULL && __builtin_cheri_tag_get(rbcp_val) != 0 &&
++      m->is_native() == false) {
++    address bcp = (address)rbcp_val;
++    if (m->contains(bcp)) bci = m->bci_from(bcp);
++  }
++  jio_snprintf(buf, sizeof(buf), "%s @bci=%d", m->name_and_sig_as_C_string(), bci);
++  return buf;
++}
 +#endif
 +
  bool PosixSignals::pd_hotspot_signal_handler(int sig, siginfo_t* info,
@@ -81,7 +101,7 @@ index 8a73f1fd576..438e4db8a89 100644
  
    // decide if this trap can be handled by a stub
    address stub = NULL;
-@@ -545,9 +587,11 @@ int os::extra_bang_size_in_bytes() {
+@@ -545,9 +607,11 @@ int os::extra_bang_size_in_bytes() {
    return 0;
  }
  

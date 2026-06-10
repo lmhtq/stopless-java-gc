@@ -506,6 +506,18 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
                 }
             }
         }
+        /* C-9: name the interpreted method (rmethod=c12) + bci (rbcp=c22)
+           directly — saves the offline Method*-decode dance every time. */
+        {
+            extern const char* stopless_method_name(void*, void*) __attribute__((weak));
+            if (stopless_method_name != NULL) {
+                const char *mn = stopless_method_name(
+                    (void *)(__uintcap_t)cr->cap_x[12],
+                    (void *)(__uintcap_t)cr->cap_x[22]);
+                fprintf(stderr, "[stopless]   interpreted method (c12): %s\n",
+                        mn ? mn : "(unresolvable)");
+            }
+        }
         /* What rbcp(c22), rmethod(c12), rcpool(c26) point at, and the dispatch table. */
         unsigned long probes[][2] = {
             { (unsigned long)cheri_address_get((void*)(__uintcap_t)cr->cap_x[22]), 22 }, /* rbcp */
