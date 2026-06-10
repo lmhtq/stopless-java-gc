@@ -1,0 +1,21 @@
+diff --git a/src/hotspot/share/memory/metaspace/commitLimiter.cpp b/src/hotspot/share/memory/metaspace/commitLimiter.cpp
+index 8887804b030..c3b1839a631 100644
+--- a/src/hotspot/share/memory/metaspace/commitLimiter.cpp
++++ b/src/hotspot/share/memory/metaspace/commitLimiter.cpp
+@@ -43,6 +43,16 @@ size_t CommitLimiter::possible_expansion_words() const {
+   assert(_cnt.get() * BytesPerWord <= MaxMetaspaceSize, "Beyond limit?");
+   const size_t words_left_below_max = MaxMetaspaceSize / BytesPerWord - _cnt.get();
+   const size_t words_left_below_gc_threshold = MetaspaceGC::allowed_expansion();
++#ifdef __CHERI_PURE_CAPABILITY__
++  if (::getenv("C9_MS_DIAG")) {
++    fprintf(stderr, "[C9-ms] cnt=%zuw belowmax=%zuw belowgc=%zuw cap_until_gc=%zub "
++            "committed=%zub MetaspaceSize=%zub\n",
++            _cnt.get(), words_left_below_max, words_left_below_gc_threshold,
++            MetaspaceGC::capacity_until_GC(), MetaspaceUtils::committed_bytes(),
++            (size_t)MetaspaceSize);
++    fflush(stderr);
++  }
++#endif
+   return MIN2(words_left_below_max, words_left_below_gc_threshold);
+ }
+ 

@@ -1,0 +1,196 @@
+diff --git a/src/hotspot/share/classfile/javaClasses.cpp b/src/hotspot/share/classfile/javaClasses.cpp
+index cac737125f1..07ea79f4f7c 100644
+--- a/src/hotspot/share/classfile/javaClasses.cpp
++++ b/src/hotspot/share/classfile/javaClasses.cpp
+@@ -273,38 +273,61 @@ Handle java_lang_String::basic_create(int length, bool is_latin1, TRAPS) {
+   assert(_initialized, "Must be initialized");
+   assert(CompactStrings || !is_latin1, "Must be UTF16 without CompactStrings");
+ 
++  if (0) fprintf(stderr, "[C6BC] basic_create enter len=%d latin1=%d "
++                  "String_klass()->instance_size=%d (HeapWords)\n",
++          length, (int)is_latin1,
++          (int)vmClasses::String_klass()->size_helper());
++  fflush(stderr);
++
+   // Create the String object first, so there's a chance that the String
+   // and the char array it points to end up in the same cache line.
+   oop obj;
++  if (0) fprintf(stderr, "[C6BC] before String_klass->allocate_instance\n"); fflush(stderr);
+   obj = vmClasses::String_klass()->allocate_instance(CHECK_NH);
++  if (0) fprintf(stderr, "[C6BC] after allocate_instance obj=%p\n", (void*)obj); fflush(stderr);
+ 
+   // Create the char array.  The String object must be handlized here
+   // because GC can happen as a result of the allocation attempt.
+   Handle h_obj(THREAD, obj);
+   int arr_length = is_latin1 ? length : length << 1; // 2 bytes per UTF16.
++  if (0) fprintf(stderr, "[C6BC] before new_byteArray(arr_length=%d)\n", arr_length); fflush(stderr);
+   typeArrayOop buffer = oopFactory::new_byteArray(arr_length, CHECK_NH);;
++  if (0) fprintf(stderr, "[C6BC] after new_byteArray buffer=%p\n", (void*)buffer); fflush(stderr);
+ 
+   // Point the String at the char array
+   obj = h_obj();
++  if (0) fprintf(stderr, "[C6BC] before set_value\n"); fflush(stderr);
+   set_value(obj, buffer);
++  if (0) fprintf(stderr, "[C6BC] after set_value\n"); fflush(stderr);
+   // No need to zero the offset, allocation zero'ed the entire String object
++  if (0) fprintf(stderr, "[C6BC] before set_coder\n"); fflush(stderr);
+   set_coder(obj, is_latin1 ? CODER_LATIN1 : CODER_UTF16);
++  if (0) fprintf(stderr, "[C6BC] after set_coder\n"); fflush(stderr);
+   return h_obj;
+ }
+ 
+ Handle java_lang_String::create_from_unicode(const jchar* unicode, int length, TRAPS) {
+   bool is_latin1 = CompactStrings && UNICODE::is_latin1(unicode, length);
++  if (0) fprintf(stderr, "[C6CFU] enter len=%d latin1=%d CompactStrings=%d\n",
++          length, (int)is_latin1, (int)CompactStrings); fflush(stderr);
+   Handle h_obj = basic_create(length, is_latin1, CHECK_NH);
++  if (0) fprintf(stderr, "[C6CFU] after basic_create h_obj=%#p\n", (void*)h_obj()); fflush(stderr);
+   typeArrayOop buffer = value(h_obj());
++  if (0) fprintf(stderr, "[C6CFU] after value(), buffer=%#p (tag=%d)\n",
++          (void*)buffer, (int)__builtin_cheri_tag_get((void*)buffer)); fflush(stderr);
+   assert(TypeArrayKlass::cast(buffer->klass())->element_type() == T_BYTE, "only byte[]");
+   if (is_latin1) {
++    if (0) fprintf(stderr, "[C6CFU] before latin1 byte_at_put loop\n"); fflush(stderr);
+     for (int index = 0; index < length; index++) {
+       buffer->byte_at_put(index, (jbyte)unicode[index]);
+     }
++    if (0) fprintf(stderr, "[C6CFU] after latin1 byte_at_put loop\n"); fflush(stderr);
+   } else {
++    if (0) fprintf(stderr, "[C6CFU] before utf16 char_at_put loop\n"); fflush(stderr);
+     for (int index = 0; index < length; index++) {
+       buffer->char_at_put(index, unicode[index]);
+     }
++    if (0) fprintf(stderr, "[C6CFU] after utf16 char_at_put loop\n"); fflush(stderr);
+   }
+ 
+ #ifdef ASSERT
+@@ -863,8 +886,12 @@ inline static void assert_valid_static_string_field(fieldDescriptor* fd) {
+ 
+ static void initialize_static_string_field(fieldDescriptor* fd, Handle mirror, TRAPS) {
+   DEBUG_ONLY(assert_valid_static_string_field(fd);)
++  if (0) fprintf(stderr, "[C6ISSF] before string_initial_value (fd offset=%d)\n", fd->offset()); fflush(stderr);
+   oop string = fd->string_initial_value(CHECK);
++  if (0) fprintf(stderr, "[C6ISSF] after string_initial_value, string oop=%p\n", (void*)string); fflush(stderr);
++  if (0) fprintf(stderr, "[C6ISSF] before obj_field_put(offset=%d, string)\n", fd->offset()); fflush(stderr);
+   mirror()->obj_field_put(fd->offset(), string);
++  if (0) fprintf(stderr, "[C6ISSF] after obj_field_put\n"); fflush(stderr);
+ }
+ 
+ #if INCLUDE_CDS_JAVA_HEAP
+@@ -919,11 +946,19 @@ static void initialize_static_primitive_field(fieldDescriptor* fd, Handle mirror
+ 
+ static void initialize_static_field(fieldDescriptor* fd, Handle mirror, TRAPS) {
+   assert(mirror.not_null() && fd->is_static(), "just checking");
++  if (0) fprintf(stderr, "[C6ISF] field name=%s type=%d offset=%d has_init=%d\n",
++          fd->name() ? fd->name()->as_C_string() : "?",
++          (int)fd->field_type(), fd->offset(), (int)fd->has_initial_value());
++  fflush(stderr);
+   if (fd->has_initial_value()) {
+     if (fd->field_type() != T_OBJECT) {
++      if (0) fprintf(stderr, "[C6ISF] before initialize_static_primitive_field type=%d\n", (int)fd->field_type()); fflush(stderr);
+       initialize_static_primitive_field(fd, mirror);
++      if (0) fprintf(stderr, "[C6ISF] after initialize_static_primitive_field\n"); fflush(stderr);
+     } else {
++      if (0) fprintf(stderr, "[C6ISF] before initialize_static_string_field\n"); fflush(stderr);
+       initialize_static_string_field(fd, mirror, CHECK);
++      if (0) fprintf(stderr, "[C6ISF] after initialize_static_string_field\n"); fflush(stderr);
+     }
+   }
+ }
+@@ -977,20 +1012,30 @@ void java_lang_Class::initialize_mirror_fields(Klass* k,
+                                                Handle protection_domain,
+                                                Handle classData,
+                                                TRAPS) {
++#define C6IMF(label) do { if (0) fprintf(stderr, "[C6IMF %s] " label "\n", \
++        k->name() ? k->name()->as_C_string() : "?"); fflush(stderr); } while (0)
++  C6IMF("IMF enter");
+   // Allocate a simple java object for a lock.
+   // This needs to be a java object because during class initialization
+   // it can be held across a java call.
++  C6IMF("before new_typeArray(T_INT,0)");
+   typeArrayOop r = oopFactory::new_typeArray(T_INT, 0, CHECK);
++  C6IMF("after new_typeArray(T_INT,0)");
+   set_init_lock(mirror(), r);
++  C6IMF("after set_init_lock");
+ 
+   // Set protection domain also
+   set_protection_domain(mirror(), protection_domain());
++  C6IMF("after set_protection_domain");
+ 
+   // Initialize static fields
++  C6IMF("before do_local_static_fields");
+   InstanceKlass::cast(k)->do_local_static_fields(&initialize_static_field, mirror, CHECK);
++  C6IMF("after do_local_static_fields");
+ 
+  // Set classData
+   set_class_data(mirror(), classData());
++  C6IMF("after set_class_data");
+ }
+ 
+ // Set the java.lang.Module module field in the java_lang_Class mirror
+@@ -1048,28 +1093,37 @@ void java_lang_Class::create_mirror(Klass* k, Handle class_loader,
+                                     Handle classData, TRAPS) {
+   assert(k != NULL, "Use create_basic_type_mirror for primitive types");
+   assert(k->java_mirror() == NULL, "should only assign mirror once");
++#define C6CM(label) do { if (0) fprintf(stderr, "[C6CM %s] " label "\n", \
++        k->name() ? k->name()->as_C_string() : "?"); fflush(stderr); } while (0)
++  C6CM("create_mirror enter");
+ 
+   // Use this moment of initialization to cache modifier_flags also,
+   // to support Class.getModifiers().  Instance classes recalculate
+   // the cached flags after the class file is parsed, but before the
+   // class is put into the system dictionary.
++  C6CM("before compute_modifier_flags");
+   int computed_modifiers = k->compute_modifier_flags();
++  C6CM("after compute_modifier_flags");
+   k->set_modifier_flags(computed_modifiers);
+   // Class_klass has to be loaded because it is used to allocate
+   // the mirror.
+   if (vmClasses::Class_klass_loaded()) {
+     // Allocate mirror (java.lang.Class instance)
++    C6CM("before allocate_instance (Class mirror)");
+     oop mirror_oop = InstanceMirrorKlass::cast(vmClasses::Class_klass())->allocate_instance(k, CHECK);
++    C6CM("after allocate_instance");
+     Handle mirror(THREAD, mirror_oop);
+     Handle comp_mirror;
+ 
+     // Setup indirection from mirror->klass
+     java_lang_Class::set_klass(mirror(), k);
++    C6CM("after set_klass on mirror");
+ 
+     InstanceMirrorKlass* mk = InstanceMirrorKlass::cast(mirror->klass());
+     assert(oop_size(mirror()) == mk->instance_size(k), "should have been set");
+ 
+     java_lang_Class::set_static_oop_field_count(mirror(), mk->compute_static_oop_field_count(mirror()));
++    C6CM("after set_static_oop_field_count");
+ 
+     // It might also have a component mirror.  This mirror must already exist.
+     if (k->is_array_klass()) {
+@@ -1092,7 +1146,9 @@ void java_lang_Class::create_mirror(Klass* k, Handle class_loader,
+     } else {
+       assert(k->is_instance_klass(), "Must be");
+ 
++      C6CM("before initialize_mirror_fields");
+       initialize_mirror_fields(k, mirror, protection_domain, classData, THREAD);
++      C6CM("after initialize_mirror_fields");
+       if (HAS_PENDING_EXCEPTION) {
+         // If any of the fields throws an exception like OOM remove the klass field
+         // from the mirror so GC doesn't follow it after the klass has been deallocated.
+@@ -2839,6 +2895,17 @@ void java_lang_StackTraceElement::fill_in(Handle element,
+                                           int version, int bci, Symbol* name, TRAPS) {
+   assert(element->is_a(vmClasses::StackTraceElement_klass()), "sanity check");
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: `name` comes from the backtrace names array — a jlong round-trip
++  // that strips the Symbol*'s cap tag (and C-heap symbols can't be
++  // re-derived from the metaspace registry). The method handle is intact:
++  // use its own name symbol. Divergence is only possible for obsolete
++  // methods after class redefinition — acceptable for v1.
++  if (!method.is_null() && __builtin_cheri_tag_get((void*)name) == 0) {
++    name = method->name();
++  }
++#endif
++
+   ResourceMark rm(THREAD);
+   HandleMark hm(THREAD);
+ 

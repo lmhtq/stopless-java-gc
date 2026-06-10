@@ -1,0 +1,99 @@
+diff --git a/src/hotspot/share/memory/metaspace/virtualSpaceNode.cpp b/src/hotspot/share/memory/metaspace/virtualSpaceNode.cpp
+index 87fc5acde25..eeba63b9899 100644
+--- a/src/hotspot/share/memory/metaspace/virtualSpaceNode.cpp
++++ b/src/hotspot/share/memory/metaspace/virtualSpaceNode.cpp
+@@ -50,6 +50,34 @@
+ 
+ namespace metaspace {
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// C-9: metaspace pointers (Symbol*, Method*) get smuggled through Java long
++// arrays (e.g. Throwable backtraces via typeArrayOopDesc::symbol_at_put) —
++// an 8-byte round-trip that strips the capability tag. Keep a registry of
++// each metaspace reservation's capability so readers can re-derive a valid
++// cap from the raw address (the reservations live for the VM's lifetime).
++#define STOPLESS_MS_MAX_RANGES 16
++static void* g_stopless_ms_caps[STOPLESS_MS_MAX_RANGES];
++static int   g_stopless_ms_n = 0;
++extern "C" void stopless_register_metaspace_cap(void* base_cap) {
++  if (g_stopless_ms_n < STOPLESS_MS_MAX_RANGES) {
++    g_stopless_ms_caps[g_stopless_ms_n++] = base_cap;
++  }
++}
++extern "C" void* stopless_rederive_metaspace(unsigned long addr) {
++  for (int i = 0; i < g_stopless_ms_n; i++) {
++    void* c = g_stopless_ms_caps[i];
++    unsigned long b = (unsigned long)__builtin_cheri_base_get(c);
++    unsigned long t = b + (unsigned long)__builtin_cheri_length_get(c);
++    if (addr >= b && addr < t) {
++      return __builtin_cheri_address_set(c, addr);
++    }
++  }
++  return (void*)addr;  // unknown range: untagged, caller faults as before
++}
++#endif
++
++
+ #define LOGFMT         "VsListNode @" PTR_FORMAT " base " PTR_FORMAT " "
+ #define LOGFMT_ARGS    p2i(this), p2i(_base)
+ 
+@@ -101,13 +129,23 @@ bool VirtualSpaceNode::commit_range(MetaWord* p, size_t word_size) {
+ 
+   // Before committing any more memory, check limits.
+   if (_commit_limiter->possible_expansion_words() < commit_increase_words) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    if (::getenv("C9_MS_DIAG")) {
++      fprintf(stderr, "[C9-vsn] REJECT p=%#lx word_size=%zu committed_in_range=%zu "
++              "increase=%zu possible=%zu\n",
++              (unsigned long)__builtin_cheri_address_get((void*)p), word_size,
++              committed_words_in_range, commit_increase_words,
++              _commit_limiter->possible_expansion_words());
++      fflush(stderr);
++    }
++#endif
+     UL(debug, "... cannot commit (limit).");
+     return false;
+   }
+ 
+   // Commit...
+-  if (os::commit_memory((char*)p, word_size * BytesPerWord, false) == false) {
+-    vm_exit_out_of_memory(word_size * BytesPerWord, OOM_MMAP_ERROR, "Failed to commit metaspace.");
++  if (os::commit_memory((char*)p, word_size * sizeof(MetaWord), false) == false) {
++    vm_exit_out_of_memory(word_size * sizeof(MetaWord), OOM_MMAP_ERROR, "Failed to commit metaspace.");
+   }
+ 
+   if (AlwaysPreTouch) {
+@@ -185,7 +223,7 @@ void VirtualSpaceNode::uncommit_range(MetaWord* p, size_t word_size) {
+   }
+ 
+   // Uncommit...
+-  if (os::uncommit_memory((char*)p, word_size * BytesPerWord) == false) {
++  if (os::uncommit_memory((char*)p, word_size * sizeof(MetaWord)) == false) {
+     // Note: this can actually happen, since uncommit may increase the number of mappings.
+     fatal("Failed to uncommit metaspace.");
+   }
+@@ -229,6 +267,10 @@ VirtualSpaceNode::VirtualSpaceNode(ReservedSpace rs, bool owns_rs, CommitLimiter
+ {
+   UL2(debug, "born (word_size " SIZE_FORMAT ").", _word_size);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  stopless_register_metaspace_cap((void*)rs.base());
++#endif
++
+   // Update reserved counter in vslist
+   _total_reserved_words_counter->increment_by(_word_size);
+ 
+@@ -242,11 +284,11 @@ VirtualSpaceNode* VirtualSpaceNode::create_node(size_t word_size,
+                                                 SizeCounter* commit_words_counter)
+ {
+   DEBUG_ONLY(assert_is_aligned(word_size, chunklevel::MAX_CHUNK_WORD_SIZE);)
+-  ReservedSpace rs(word_size * BytesPerWord,
++  ReservedSpace rs(word_size * sizeof(MetaWord),
+                    Settings::virtual_space_node_reserve_alignment_words() * BytesPerWord,
+                    os::vm_page_size());
+   if (!rs.is_reserved()) {
+-    vm_exit_out_of_memory(word_size * BytesPerWord, OOM_MMAP_ERROR, "Failed to reserve memory for metaspace");
++    vm_exit_out_of_memory(word_size * sizeof(MetaWord), OOM_MMAP_ERROR, "Failed to reserve memory for metaspace");
+   }
+   MemTracker::record_virtual_memory_type(rs.base(), mtMetaspace);
+   assert_is_aligned(rs.base(), chunklevel::MAX_CHUNK_BYTE_SIZE);

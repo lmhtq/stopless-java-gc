@@ -1,0 +1,62 @@
+diff --git a/src/hotspot/share/memory/metaspace/metaspaceSettings.cpp b/src/hotspot/share/memory/metaspace/metaspaceSettings.cpp
+index ffc8630e9be..bb827f67385 100644
+--- a/src/hotspot/share/memory/metaspace/metaspaceSettings.cpp
++++ b/src/hotspot/share/memory/metaspace/metaspaceSettings.cpp
+@@ -49,7 +49,19 @@ void Settings::ergo_initialize() {
+   if (strcmp(MetaspaceReclaimPolicy, "none") == 0) {
+     log_info(metaspace)("Initialized with strategy: no reclaim.");
+     _commit_granule_bytes = MAX2((size_t)os::vm_page_size(), 64 * K);
++    #ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: metaspace "words" are MetaWords = pointer-sized = 16 bytes on
++    // purecap, but the stock conversion used BytesPerWord (8). The granule
++    // word count then disagreed with MetaWord* pointer arithmetic by 2x:
++    // CommitMask::get_committed_size_in_range returned 8192 "words" for a
++    // 64K granule while callers requested 4096, the subtraction in
++    // VirtualSpaceNode::commit_range underflowed, and every metaspace commit
++    // was rejected as "limit" -> bogus OutOfMemoryError: Metaspace at 12%
++    // committed (first hit: indy bootstrap defining BMH species classes).
++    _commit_granule_words = _commit_granule_bytes / sizeof(MetaWord);
++#else
+     _commit_granule_words = _commit_granule_bytes / BytesPerWord;
++#endif
+     // In "none" reclamation mode, we do not uncommit, and we commit new chunks fully;
+     // that very closely mimicks the behaviour of old Metaspace.
+     _new_chunks_are_fully_committed = true;
+@@ -59,13 +71,37 @@ void Settings::ergo_initialize() {
+     // Set the granule size rather small; may increase
+     // mapping fragmentation but also increase chance to uncommit.
+     _commit_granule_bytes = MAX2((size_t)os::vm_page_size(), 16 * K);
++    #ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: metaspace "words" are MetaWords = pointer-sized = 16 bytes on
++    // purecap, but the stock conversion used BytesPerWord (8). The granule
++    // word count then disagreed with MetaWord* pointer arithmetic by 2x:
++    // CommitMask::get_committed_size_in_range returned 8192 "words" for a
++    // 64K granule while callers requested 4096, the subtraction in
++    // VirtualSpaceNode::commit_range underflowed, and every metaspace commit
++    // was rejected as "limit" -> bogus OutOfMemoryError: Metaspace at 12%
++    // committed (first hit: indy bootstrap defining BMH species classes).
++    _commit_granule_words = _commit_granule_bytes / sizeof(MetaWord);
++#else
+     _commit_granule_words = _commit_granule_bytes / BytesPerWord;
++#endif
+     _new_chunks_are_fully_committed = false;
+     _uncommit_free_chunks = true;
+   } else if (strcmp(MetaspaceReclaimPolicy, "balanced") == 0) {
+     log_info(metaspace)("Initialized with strategy: balanced reclaim.");
+     _commit_granule_bytes = MAX2((size_t)os::vm_page_size(), 64 * K);
++    #ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: metaspace "words" are MetaWords = pointer-sized = 16 bytes on
++    // purecap, but the stock conversion used BytesPerWord (8). The granule
++    // word count then disagreed with MetaWord* pointer arithmetic by 2x:
++    // CommitMask::get_committed_size_in_range returned 8192 "words" for a
++    // 64K granule while callers requested 4096, the subtraction in
++    // VirtualSpaceNode::commit_range underflowed, and every metaspace commit
++    // was rejected as "limit" -> bogus OutOfMemoryError: Metaspace at 12%
++    // committed (first hit: indy bootstrap defining BMH species classes).
++    _commit_granule_words = _commit_granule_bytes / sizeof(MetaWord);
++#else
+     _commit_granule_words = _commit_granule_bytes / BytesPerWord;
++#endif
+     _new_chunks_are_fully_committed = false;
+     _uncommit_free_chunks = true;
+   } else {

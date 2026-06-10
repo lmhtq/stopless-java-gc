@@ -1116,3 +1116,51 @@ monitor-block-top slot (or what loads esp) between native entry and the
 exception path; suspects: the native-entry "allocate space for parameters"
 esp adjustment not being re-stored to the frame slot, or the result-push
 sequence around the safepoint transition.
+
+## AL. ★★ ConcatTest GREEN + MinMove/StaticRootGC GREEN: indy works, the mover works (2026-06-11, patch 0166)
+
+ConcatTest (string concat via invokedynamic) runs to completion (rc=0, all 3
+markers) under StoplessGC purecap — the full indy -> MethodHandle ->
+LambdaForm -> hidden-class definition -> StringConcatFactory chain works.
+MinMove and StaticRootGC are GREEN: System.gc() STW-moves the object, revoke
+fires, the stale-cap deref SIGPROTs, the C-7 handler heals it, the program
+reads the right value — THE CHERI MOVING-GC MECHANISM WORKS END-TO-END IN THE
+REAL TEMPLATE-INTERPRETER JVM. Bugs fixed today, in order of discovery:
+
+1. ★ The §AK frame clobber was OUR OWN patch-0165 bug: `cap_str_imm(zr,
+   rthread, pending)` — HotSpot's zr PSEUDO-ENCODING (32) overflows the 5-bit
+   Rt field into Rn's low bit, assembling `str c0,[c29,#0x10]` = "store the
+   just-loaded EXCEPTION over the frame's saved-lr slot". Found by offline
+   disassembly of the forward_exception stub (range-dump). Fix: materialize
+   a null cap via `mov(rscratch1, zr)` + cap_str_imm; cap_str_imm/cap_ldr_imm
+   now assert encodings <= 30. TIME-BISECT METHOD: three C++ probes
+   (throw_pending_exception / exception_handler_for_return_address /
+   exception_handler_for_exception) printing [fp+16] pinned the window.
+2. _remove_activation_entry: integer str of the exception into vm_result
+   (tag-0 exception delivered to the NEXT unwind hop).
+3. ★ Metaspace commit DEADLOCK-BY-UNITS: Settings::commit_granule_words used
+   BytesPerWord (8) while MetaWord* arithmetic is 16-byte —
+   get_committed_size_in_range returned 2x the request, the subtraction in
+   commit_range UNDERFLOWED, every commit was rejected as "limit", and the
+   indy bootstrap died with a bogus OutOfMemoryError: Metaspace at 12%
+   committed. Fix: granule words = granule_bytes / sizeof(MetaWord).
+   (C9_MS_DIAG/C9-vsn diags pinned it: word_size=4096 vs committed=8192.)
+4. StoplessHeap::collect now handles _metadata_GC_threshold like Epsilon
+   (MetaspaceGC::compute_new_size) instead of running the mover.
+5. Throwable backtraces smuggle Symbol* through jlong array slots (tag
+   strip). Added a metaspace-reservation cap registry
+   (stopless_register/rederive_metaspace) wired into symbol_at; for C-heap
+   symbols (SymbolTable arena) StackTraceElement::fill_in falls back to the
+   intact method->name() when the smuggled Symbol* is untagged.
+   => full Java stack traces print correctly now.
+6. ★ Signature-handler STACK layout was uniform 16B/arg; purecap AAPCS gives
+   each stack arg max(8, sizeof) bytes at natural alignment. defineClass0's
+   (pd, initialize, flags, classData) stack tail was misread — "classData is
+   only applicable for hidden classes" InternalError killed every
+   hidden-class definition. next_stack_offset now packs 8B ints / 16B caps.
+
+STATUS: java -version rc=0; ConcatTest rc=0; MinMove rc=0 [MM] OK;
+StaticRootGC rc=0 [SR] OK. NEXT FRONTIER: IntegrityGC (8-node linked graph,
+moves + integrity verify) crashes in round 0 at the gc-call phase
+(0x4290c110, codecache) — the C-9 multi-object move correctness work starts
+here.

@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/interpreter/interpreterRuntime.cpp b/src/hotspot/share/interpreter/interpreterRuntime.cpp
-index d66ed24d862..cbd1baf2af4 100644
+index d66ed24d862..98e5d102109 100644
 --- a/src/hotspot/share/interpreter/interpreterRuntime.cpp
 +++ b/src/hotspot/share/interpreter/interpreterRuntime.cpp
 @@ -77,6 +77,9 @@
@@ -65,7 +65,7 @@ index d66ed24d862..cbd1baf2af4 100644
  JRT_END
  
  
-@@ -458,6 +483,20 @@ JRT_ENTRY(address, InterpreterRuntime::exception_handler_for_exception(JavaThrea
+@@ -458,6 +483,37 @@ JRT_ENTRY(address, InterpreterRuntime::exception_handler_for_exception(JavaThrea
    // the event via the StackWatermarkSet.
    StackWatermarkSet::after_unwind(current);
  
@@ -79,14 +79,59 @@ index d66ed24d862..cbd1baf2af4 100644
 +            (unsigned long)__builtin_cheri_address_get(
 +                (void*)current->pending_exception()),
 +            (int)__builtin_cheri_tag_get((void*)current->pending_exception()));
-+    fflush(stderr);
++    // Time-bisect the [fp+0x10] (saved-lr slot) clobber: print the current
++    // frame's header slots at handler-lookup time, while the frame is intact.
++    {
++      LastFrameAccessor lf(current);
++      frame& fr = lf.get_frame();
++      intptr_t* fp = fr.fp();
++      void* slot_fp = *(void**)((char*)fp + 0);
++      void* slot_lr = *(void**)((char*)fp + 16);
++      fprintf(stderr, "[C9-exc]   frame fp=%#lx [fp+0]=%#lx(t%d) [fp+16]=%#lx(t%d) "
++              "method=%s\n",
++              (unsigned long)__builtin_cheri_address_get((void*)fp),
++              (unsigned long)__builtin_cheri_address_get(slot_fp),
++              (int)__builtin_cheri_tag_get(slot_fp),
++              (unsigned long)__builtin_cheri_address_get(slot_lr),
++              (int)__builtin_cheri_tag_get(slot_lr),
++              lf.method()->name_and_sig_as_C_string());
++      fflush(stderr);
++    }
 +  }
 +#endif
 +
    LastFrameAccessor last_frame(current);
    Handle             h_exception(current, exception);
    methodHandle       h_method   (current, last_frame.method());
-@@ -811,6 +850,43 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
+@@ -588,6 +644,27 @@ JRT_END
+ JRT_ENTRY(void, InterpreterRuntime::throw_pending_exception(JavaThread* current))
+   assert(current->has_pending_exception(), "must only be called if there's an exception pending");
+   // nothing to do - eventually we should remove this code entirely (see comments @ call sites)
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 diag: earlier time-bisect probe for the native frame's [fp+16]
++  // (saved-lr) clobber — this runs from the native entry's pending check,
++  // BEFORE forward_exception/handler lookup.
++  if (::getenv("C9_EXC_DIAG")) {
++    LastFrameAccessor lf(current);
++    frame& fr = lf.get_frame();
++    intptr_t* fp = fr.fp();
++    void* slot_lr = *(void**)((char*)fp + 16);
++    void* slot_mbt = *(void**)((char*)fp +
++        frame::interpreter_frame_monitor_block_top_offset * wordSize);
++    fprintf(stderr, "[C9-tpe] fp=%#lx [fp+16]=%#lx(t%d) mbt=%#lx(t%d) method=%s\n",
++            (unsigned long)__builtin_cheri_address_get((void*)fp),
++            (unsigned long)__builtin_cheri_address_get(slot_lr),
++            (int)__builtin_cheri_tag_get(slot_lr),
++            (unsigned long)__builtin_cheri_address_get(slot_mbt),
++            (int)__builtin_cheri_tag_get(slot_mbt),
++            lf.method()->name_and_sig_as_C_string());
++    fflush(stderr);
++  }
++#endif
+ JRT_END
+ 
+ 
+@@ -811,6 +888,43 @@ void InterpreterRuntime::resolve_invoke(JavaThread* current, Bytecodes::Code byt
      Symbol* signature = call.signature();
      receiver = Handle(current, last_frame.callee_receiver(signature));
  
@@ -130,7 +175,7 @@ index d66ed24d862..cbd1baf2af4 100644
      assert(Universe::heap()->is_in_or_null(receiver()),
             "sanity check");
      assert(receiver.is_null() ||
-@@ -940,6 +1016,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
+@@ -940,6 +1054,9 @@ void InterpreterRuntime::resolve_invokedynamic(JavaThread* current) {
  // cpCache entry.  This doesn't safepoint, but the helper routines safepoint.
  // This function will check for redefinition!
  JRT_ENTRY(void, InterpreterRuntime::resolve_from_cache(JavaThread* current, Bytecodes::Code bytecode)) {
@@ -140,7 +185,7 @@ index d66ed24d862..cbd1baf2af4 100644
    switch (bytecode) {
    case Bytecodes::_getstatic:
    case Bytecodes::_putstatic:
-@@ -1376,7 +1455,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
+@@ -1376,7 +1493,18 @@ void SignatureHandlerLibrary::add(const methodHandle& method) {
          method->set_signature_handler(Interpreter::slow_signature_handler());
        } else {
          // set handler
@@ -160,7 +205,7 @@ index d66ed24d862..cbd1baf2af4 100644
        }
      } else {
        DEBUG_ONLY(JavaThread::current()->check_possible_safepoint());
-@@ -1451,6 +1541,23 @@ JRT_ENTRY(void, InterpreterRuntime::prepare_native_call(JavaThread* current, Met
+@@ -1451,6 +1579,23 @@ JRT_ENTRY(void, InterpreterRuntime::prepare_native_call(JavaThread* current, Met
    if (!m->has_native_function()) {
      NativeLookup::lookup(m, CHECK);
    }

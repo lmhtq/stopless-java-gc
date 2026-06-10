@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
-index e20cffd5767..2741a4568f6 100644
+index e20cffd5767..e3e82d80a0f 100644
 --- a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
 @@ -435,7 +435,13 @@ address TemplateInterpreterGenerator::generate_return_entry_for(TosState state,
@@ -895,7 +895,22 @@ index e20cffd5767..2741a4568f6 100644
  
    __ dispatch_next(vtos);
    // end of PopFrame support
-@@ -1860,12 +2340,29 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1846,7 +2326,14 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+ 
+   // preserve exception over this code sequence
+   __ pop_ptr(r0);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: the exception oop is a 16-byte cap; the stock integer str strips
++  // its tag in vm_result, and get_vm_result below hands a tag-0 exception
++  // to the NEXT unwind hop's handler lookup (klass() SIGPROT).
++  __ cap_str_imm(r0, rthread, in_bytes(JavaThread::vm_result_offset()));
++#else
+   __ str(r0, Address(rthread, JavaThread::vm_result_offset()));
++#endif
+   // remove the activation (without doing throws on illegalMonitorExceptions)
+   __ remove_activation(vtos, false, true, false);
+   // restore exception
+@@ -1860,12 +2347,29 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
    // lr: return address/pc that threw exception
    // esp: expression stack of caller
    // rfp: fp of caller

@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp b/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
-index f5970adc412..3e5488218dd 100644
+index f5970adc412..c2c6d5fdc6c 100644
 --- a/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/interpreterRT_aarch64.cpp
 @@ -39,6 +39,17 @@
@@ -20,7 +20,33 @@ index f5970adc412..3e5488218dd 100644
  // Implementation of SignatureHandlerGenerator
  Register InterpreterRuntime::SignatureHandlerGenerator::from() { return rlocals; }
  Register InterpreterRuntime::SignatureHandlerGenerator::to()   { return sp; }
-@@ -153,9 +164,17 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
+@@ -63,10 +74,25 @@ FloatRegister InterpreterRuntime::SignatureHandlerGenerator::next_fpr() {
+ // for example double/long should be 8 bytes aligned.
+ 
+ int InterpreterRuntime::SignatureHandlerGenerator::next_stack_offset(unsigned elem_size) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // purecap AAPCS: each stack argument occupies max(8, sizeof(arg)) bytes,
++  // aligned to its natural alignment (16 for capabilities). Advancing a
++  // uniform wordSize (16) per argument misplaces every argument after the
++  // first stack-passed int — defineClass0's (pd, initialize, flags,
++  // classData) stack tail then delivered a garbage non-NULL classData
++  // ("classData is only applicable for hidden classes" InternalError in the
++  // indy bootstrap's hidden-class definition).
++  unsigned slot = elem_size < 8 ? 8 : elem_size;
++  _stack_offset = align_up(_stack_offset, (int)slot);
++  int ret = _stack_offset;
++  _stack_offset += slot;
++  return ret;
++#else
+   MACOS_ONLY(_stack_offset = align_up(_stack_offset, elem_size));
+   int ret = _stack_offset;
+   _stack_offset += NOT_MACOS(wordSize) MACOS_ONLY(elem_size);
+   return ret;
++#endif
+ }
+ 
+ InterpreterRuntime::SignatureHandlerGenerator::SignatureHandlerGenerator(
+@@ -153,9 +179,17 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
    Register reg = next_gpr();
    if (reg == c_rarg1) {
      assert(offset() == 0, "argument register 1 can only be (non-null) receiver");
@@ -38,7 +64,7 @@ index f5970adc412..3e5488218dd 100644
      __ mov(reg, 0);
      __ ldr(temp(), r0);
      Label L;
-@@ -163,6 +182,24 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
+@@ -163,6 +197,24 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
      __ mov(reg, r0);
      __ bind(L);
    } else {
@@ -63,7 +89,7 @@ index f5970adc412..3e5488218dd 100644
      __ add(r0, from(), Interpreter::local_offset_in_bytes(offset()));
      __ ldr(temp(), r0);
      Label L;
-@@ -171,6 +208,7 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
+@@ -171,6 +223,7 @@ void InterpreterRuntime::SignatureHandlerGenerator::pass_object() {
      __ bind(L);
      static_assert(sizeof(jobject) == wordSize, "");
      __ str(r0, Address(to(), next_stack_offset(sizeof(jobject))));
@@ -71,7 +97,7 @@ index f5970adc412..3e5488218dd 100644
    }
  }
  
-@@ -180,7 +218,16 @@ void InterpreterRuntime::SignatureHandlerGenerator::generate(uint64_t fingerprin
+@@ -180,7 +233,16 @@ void InterpreterRuntime::SignatureHandlerGenerator::generate(uint64_t fingerprin
  
    // return result handler
    __ lea(r0, ExternalAddress(Interpreter::result_handler(method()->result_type())));

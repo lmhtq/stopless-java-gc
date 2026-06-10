@@ -1,0 +1,33 @@
+diff --git a/src/hotspot/share/oops/typeArrayOop.inline.hpp b/src/hotspot/share/oops/typeArrayOop.inline.hpp
+index cf4cfc6995e..1fc53fed189 100644
+--- a/src/hotspot/share/oops/typeArrayOop.inline.hpp
++++ b/src/hotspot/share/oops/typeArrayOop.inline.hpp
+@@ -27,6 +27,12 @@
+ 
+ #include "oops/typeArrayOop.hpp"
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// C-9: defined in metaspace/virtualSpaceNode.cpp — re-derives a tagged cap
++// for a raw metaspace address (Symbol*/Method* smuggled through jlong slots).
++extern "C" void* stopless_rederive_metaspace(unsigned long);
++#endif
++
+ #include "oops/access.inline.hpp"
+ #include "oops/oop.inline.hpp"
+ #include "oops/arrayOop.hpp"
+@@ -206,7 +212,15 @@ inline void typeArrayOopDesc::release_byte_at_put(int which, jbyte contents) {
+ inline Symbol* typeArrayOopDesc::symbol_at(int which) const {
+   assert(is_within_bounds(which), "index %d out of bounds %d", which, length());
+   ptrdiff_t offset = element_offset<jlong>(which);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9: the jlong round-trip strips the Symbol*'s capability tag (first
++  // hit: Throwable::get_stack_trace_elements -> Symbol::as_unicode SIGPROT).
++  // Re-derive a valid cap from the metaspace reservation registry.
++  jlong raw = HeapAccess<IS_ARRAY>::load_at(as_oop(), offset);
++  return (Symbol*)stopless_rederive_metaspace((unsigned long)raw);
++#else
+   return (Symbol*)(jlong) HeapAccess<IS_ARRAY>::load_at(as_oop(), offset);
++#endif
+ }
+ inline void typeArrayOopDesc::symbol_at_put(int which, Symbol* contents) {
+   assert(is_within_bounds(which), "index %d out of bounds %d", which, length());

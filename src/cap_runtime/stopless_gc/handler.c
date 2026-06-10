@@ -577,36 +577,28 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
                 }
             }
         }
-        #undef COVER
-    }
-    /* C-9 generic tool: STOPLESS_DUMP_RANGE="start_hex,end_hex" dumps that
-       address range as 4-byte hex words (read through the ELR cap, which
-       covers the codecache) — paste into llvm-mc to disassemble a generated
-       codelet offline. Codecache layout is deterministic across runs. */
-    {
-        const char *rng = getenv("STOPLESS_DUMP_RANGE");
-        if (rng) {
-            unsigned long d_lo = 0, d_hi = 0;
-            if (sscanf(rng, "%lx,%lx", &d_lo, &d_hi) == 2 && d_hi > d_lo &&
-                d_hi - d_lo <= 0x10000) {
-                fprintf(stderr, "[stopless]   ---- range dump 0x%lx..0x%lx ----\n",
-                        d_lo, d_hi);
-                /* pick a base cap that covers the range: CSP for stack
-                   addresses, ELR (PCC) for code. */
-                void *base = (void *)(__uintcap_t)cr->cap_elr;
-                {
-                    void *c = (void *)(__uintcap_t)cr->cap_sp;
-                    unsigned long b = (unsigned long)cheri_base_get(c);
-                    unsigned long t = b + (unsigned long)cheri_length_get(c);
-                    if (cheri_tag_get(c) && d_lo >= b && d_hi <= t) base = c;
+        /* C-9 generic tool: STOPLESS_DUMP_RANGE="start_hex,end_hex" dumps that
+           address range as 4-byte hex words via whatever register cap covers
+           each word (COVER) — paste into llvm-mc to disassemble a generated
+           codelet offline. Codecache layout is deterministic across runs. */
+        {
+            const char *rng = getenv("STOPLESS_DUMP_RANGE");
+            if (rng) {
+                unsigned long d_lo = 0, d_hi = 0;
+                if (sscanf(rng, "%lx,%lx", &d_lo, &d_hi) == 2 && d_hi > d_lo &&
+                    d_hi - d_lo <= 0x10000) {
+                    fprintf(stderr, "[stopless]   ---- range dump 0x%lx..0x%lx ----\n",
+                            d_lo, d_hi);
+                    for (unsigned long a = d_lo; a < d_hi; a += 4) {
+                        void *p = COVER(a, 4);
+                        if (p) fprintf(stderr, "%08x\n", *(volatile unsigned int *)p);
+                        else   fprintf(stderr, "deadc0de\n");
+                    }
+                    fprintf(stderr, "[stopless]   ---- end range dump ----\n");
                 }
-                for (unsigned long a = d_lo; a < d_hi; a += 4) {
-                    void *p = cheri_address_set(base, a);
-                    fprintf(stderr, "%08x\n", *(volatile unsigned int *)p);
-                }
-                fprintf(stderr, "[stopless]   ---- end range dump ----\n");
             }
         }
+        #undef COVER
     }
     fprintf(stderr, "[stopless] ===== END CRASH DUMP =====\n");
     fflush(stderr);
