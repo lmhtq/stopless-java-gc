@@ -1,0 +1,41 @@
+diff --git a/src/hotspot/share/runtime/sharedRuntime.cpp b/src/hotspot/share/runtime/sharedRuntime.cpp
+index 9af4b513a99..f47cea94be3 100644
+--- a/src/hotspot/share/runtime/sharedRuntime.cpp
++++ b/src/hotspot/share/runtime/sharedRuntime.cpp
+@@ -528,6 +528,21 @@ address SharedRuntime::raw_exception_handler_for_return_address(JavaThread* curr
+   guarantee(blob == NULL || !blob->is_runtime_stub(), "caller should have skipped stub");
+   guarantee(!VtableStubs::contains(return_address), "NULL exceptions in vtables should have been handled already!");
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-9 diag: name the unrecognized return address before dying.
++  fprintf(stderr, "[C9-rethrow] unrecognized return_address=%#lx tag=%d "
++          "(interp=%d codecache-blob=%s)\n",
++          (unsigned long)__builtin_cheri_address_get((void*)return_address),
++          (int)__builtin_cheri_tag_get((void*)return_address),
++          (int)Interpreter::contains(return_address),
++          (blob != NULL && blob->name() != NULL) ? blob->name() : "(none)");
++  fflush(stderr);
++  if (::getenv("C9_RETHROW_TRAP")) {
++    // trigger the stopless crash dumper for a full register/stack snapshot
++    *(volatile int*)0 = 0;
++  }
++#endif
++
+ #ifndef PRODUCT
+   { ResourceMark rm;
+     tty->print_cr("No exception handler found for exception at " INTPTR_FORMAT " - potential problems:", p2i(return_address));
+@@ -542,7 +557,13 @@ address SharedRuntime::raw_exception_handler_for_return_address(JavaThread* curr
+ 
+ 
+ JRT_LEAF(address, SharedRuntime::exception_handler_for_return_address(JavaThread* current, address return_address))
+-  return raw_exception_handler_for_return_address(current, return_address);
++  address h = raw_exception_handler_for_return_address(current, return_address);
++#ifdef __CHERI_PURE_CAPABILITY__
++  if (0) fprintf(stderr, "[C6EH] returning handler=%#p tag=%d (return_address=%#p)\n",
++          (void*)h, (int)__builtin_cheri_tag_get((void*)h), (void*)return_address);
++  fflush(stderr);
++#endif
++  return h;
+ JRT_END
+ 
+ 

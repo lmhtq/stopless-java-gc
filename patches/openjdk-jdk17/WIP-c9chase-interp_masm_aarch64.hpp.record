@@ -1,0 +1,114 @@
+diff --git a/src/hotspot/cpu/aarch64/interp_masm_aarch64.hpp b/src/hotspot/cpu/aarch64/interp_masm_aarch64.hpp
+index f8d0b4adf92..4e6d40def34 100644
+--- a/src/hotspot/cpu/aarch64/interp_masm_aarch64.hpp
++++ b/src/hotspot/cpu/aarch64/interp_masm_aarch64.hpp
+@@ -65,50 +65,89 @@ class InterpreterMacroAssembler: public MacroAssembler {
+   virtual void check_and_handle_popframe(Register java_thread);
+   virtual void check_and_handle_earlyret(Register java_thread);
+ 
+-  // Interpreter-specific registers
++  // Interpreter-specific registers.
++  // C-6 fix #27: rbcp/rlocals/rcpool/rmethod and the chained metadata
++  // pointers (ConstMethod*, ConstantPool*, cache, tags) are all CAPS.
++  // The stock integer ldr/str strip cap tags, so any reload after a
++  // call_VM yields a tag-0 base that faults PROT_CHERI_TAG on first
++  // use. Use cap-LDR/cap-STR to preserve tags.
+   void save_bcp() {
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_str_imm(rbcp, rfp, frame::interpreter_frame_bcp_offset * wordSize);
++#else
+     str(rbcp, Address(rfp, frame::interpreter_frame_bcp_offset * wordSize));
++#endif
+   }
+ 
+   void restore_bcp() {
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_ldr_imm(rbcp, rfp, frame::interpreter_frame_bcp_offset * wordSize);
++#else
+     ldr(rbcp, Address(rfp, frame::interpreter_frame_bcp_offset * wordSize));
++#endif
+   }
+ 
+   void restore_locals() {
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_ldr_imm(rlocals, rfp, frame::interpreter_frame_locals_offset * wordSize);
++#else
+     ldr(rlocals, Address(rfp, frame::interpreter_frame_locals_offset * wordSize));
++#endif
+   }
+ 
+   void restore_constant_pool_cache() {
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_ldr_imm(rcpool, rfp, frame::interpreter_frame_cache_offset * wordSize);
++#else
+     ldr(rcpool, Address(rfp, frame::interpreter_frame_cache_offset * wordSize));
++#endif
+   }
+ 
+   void get_dispatch();
+ 
+-  // Helpers for runtime call arguments/results
+-
+   // Helpers for runtime call arguments/results
+   void get_method(Register reg) {
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_ldr_imm(reg, rfp, frame::interpreter_frame_method_offset * wordSize);
++#else
+     ldr(reg, Address(rfp, frame::interpreter_frame_method_offset * wordSize));
++#endif
+   }
+ 
+   void get_const(Register reg) {
+     get_method(reg);
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_ldr_imm(reg, reg, in_bytes(Method::const_offset()));
++#else
+     ldr(reg, Address(reg, in_bytes(Method::const_offset())));
++#endif
+   }
+ 
+   void get_constant_pool(Register reg) {
+     get_const(reg);
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_ldr_imm(reg, reg, in_bytes(ConstMethod::constants_offset()));
++#else
+     ldr(reg, Address(reg, in_bytes(ConstMethod::constants_offset())));
++#endif
+   }
+ 
+   void get_constant_pool_cache(Register reg) {
+     get_constant_pool(reg);
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_ldr_imm(reg, reg, ConstantPool::cache_offset_in_bytes());
++#else
+     ldr(reg, Address(reg, ConstantPool::cache_offset_in_bytes()));
++#endif
+   }
+ 
+   void get_cpool_and_tags(Register cpool, Register tags) {
+     get_constant_pool(cpool);
++#ifdef __CHERI_PURE_CAPABILITY__
++    cap_ldr_imm(tags, cpool, ConstantPool::tags_offset_in_bytes());
++#else
+     ldr(tags, Address(cpool, ConstantPool::tags_offset_in_bytes()));
++#endif
+   }
+ 
+   void get_unsigned_2_byte_index_at_bcp(Register reg, int bcp_offset);
+@@ -148,7 +187,16 @@ class InterpreterMacroAssembler: public MacroAssembler {
+   void push(RegSet regs, Register stack) { ((MacroAssembler*)this)->push(regs, stack); }
+ 
+   void empty_expression_stack() {
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: esp is a capability — integer ldr leaves it tag-0 and every
++    // subsequent expression-stack push/pop faults (or worse, scribbles
++    // through a fallback). Hit on the exception path of a NATIVE method
++    // (throw_exception_entry -> empty_expression_stack -> push_ptr).
++    cap_ldr_imm(esp, rfp,
++                frame::interpreter_frame_monitor_block_top_offset * wordSize);
++#else
+     ldr(esp, Address(rfp, frame::interpreter_frame_monitor_block_top_offset * wordSize));
++#endif
+     // NULL last_sp until next java call
+     str(zr, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
+   }

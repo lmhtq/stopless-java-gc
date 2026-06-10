@@ -1055,3 +1055,64 @@ while esp (c20) is tagged at the same address — something on the MH-adapter �
 native-entry path writes CSP through an integer op. mov/cap_add_reg are clean;
 suspect list: prepare_to_jump_from_interpreted / the linkTo adapter's stack
 adjustment / native-entry prologue under this entry sequence.
+
+## AK. The NULL-CSP sweep + exception-path porting (2026-06-10, patch 0165)
+
+Continuing the ConcatTest chase past §AJ's findBootstrapClass frontier.
+
+**Root cause of the §AJ CSP fault — and a whole CLASS of latent twins.** The
+post-native-call "make room for the pushes" used integer `sub`+`andr sp` —
+producing a NULL-DERIVED CSP (value-only write: tag=0 base=0 top=max, NOT a
+detagged stack cap, which would keep bounds). Harmless on the fast path; fatal
+when the slow native->Java transition (safepoint pending on return) does
+call_VM_leaf -> `stp [csp,#-0x20]!`. The same integer-CSP-write pattern was
+then swept across the whole file (the offline range-dump disassembly of the
+deployed native-entry codelet found them):
+  - native return "make room" (the §AJ hit)        -> cap_sub_imm
+  - generate_deopt_entry_for / generate_throw_exception ×2 (stack-limit
+    rebuild: also scaled max_stack ×8 not ×16)     -> cap-LDR + cap-add-reg
+  - generate_stack_overflow_check, 3× CRC32 entries -> cap-mov sp, r13
+  - push/pop_call_clobbered_registers + push/pop_CPU_state (sub/add sp, step)
+    -> cap_sub_imm/cap_add_imm
+
+**Exception path ported (first real exception unwinding ever exercised —
+class loading throws CNFE routinely):**
+  - generate_forward_exception: integer ldr/str of Thread::_pending_exception
+    delivered a TAG-0 exception oop to the interpreter's handler lookup
+    (klass() SIGPROT). cap-LDR/cap-STR (zr cap-store clears the full slot).
+  - call_stub catch_exception: same integer str when SETTING pending.
+  - _remove_activation_entry: integer stp/ldp of (exception, lr) around the
+    handler-address call -> cap_stp_sp_pre + cap_ldp_imm via scratch.
+  - empty_expression_stack: integer ldr of esp (cap) -> cap_ldr_imm.
+  - native fixed frame: slot 0 (initial_sp) re-stored as a full cap after the
+    stock integer stp (which keeps the sp-writeback); the 2nd native oop-temp
+    slot (13) is now zeroed too (stock zeroed 8+8 bytes = one 16B slot).
+
+**Pitfalls found while doing it (encode-level):**
+  - cap_str_imm/cap_ldp_imm CANNOT take HotSpot's `sp` as base (pseudo-encoding
+    #33 silently becomes c1!). Copy csp via cap_add_imm (sp-aware) first.
+  - cap_stp_sp_pre with Ct2=zr appears NOT to store a null cap (suspect C31=
+    CSP in cap-STP Rt2) — broke boot when used for the native frame; reverted
+    to the stock stp + cap re-store of slot 0.
+
+**Tooling:** crash dumper hardened — COVER now requires unsealed+LOAD caps (a
+sentry pick used to nested-fault and kill the dumper mid-print, truncating
+every libjvm-ELR dump at "code words"); STOPLESS_DUMP_RANGE added (hex range
+-> words via CSP/PCC cap, for offline llvm-mc disassembly of GENERATED
+codelets); C9_EXC_DIAG (pending-exception arrival), C9_RETHROW_TRAP (turn the
+unrecognized-return-address abort into a full dumper snapshot).
+
+**CURRENT FRONTIER (precisely diagnosed, fix pending):** ConcatTest rc=134 —
+unwinding the CNFE out of the findBootstrapClass NATIVE frame,
+raw_exception_handler_for_return_address receives return_address == THE
+EXCEPTION OOP (tag=1). Stack archaeology (range dump at the trap): the native
+frame's saved-lr slot [fp+0x10] was overwritten with the exception CAP before
+remove_activation; my save sequence then faithfully propagated it. The writer
+is an exception-cap store with esp mis-pointing into the frame header region
+(fp+0x20) during a throw pass — i.e. the native frame's
+monitor_block_top/initial_sp slot held fp+0x20 at empty_expression_stack
+time, NOT sp_post. Next step: find who updates the native frame's
+monitor-block-top slot (or what loads esp) between native entry and the
+exception path; suspects: the native-entry "allocate space for parameters"
+esp adjustment not being re-stored to the frame slot, or the result-push
+sequence around the safepoint transition.

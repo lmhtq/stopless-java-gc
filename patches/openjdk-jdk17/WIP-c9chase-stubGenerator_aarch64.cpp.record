@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
-index c92f0cf05bd..f30d88e13bb 100644
+index c92f0cf05bd..fefba17c8b7 100644
 --- a/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/stubGenerator_aarch64.cpp
 @@ -227,11 +227,38 @@ class StubGenerator: public StubCodeGenerator {
@@ -265,7 +265,40 @@ index c92f0cf05bd..f30d88e13bb 100644
      return start;
    }
  
-@@ -4910,7 +5069,7 @@ class StubGenerator: public StubCodeGenerator {
+@@ -426,7 +585,14 @@ class StubGenerator: public StubCodeGenerator {
+     // set pending exception
+     __ verify_oop(r0);
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: the pending-exception slot holds a 16-byte oop cap; integer str
++    // strips its tag (forward_exception then hands a tag-0 exception to
++    // InterpreterRuntime::exception_handler_for_exception).
++    __ cap_str_imm(r0, rthread, in_bytes(Thread::pending_exception_offset()));
++#else
+     __ str(r0, Address(rthread, Thread::pending_exception_offset()));
++#endif
+     __ mov(rscratch1, (address)__FILE__);
+     __ str(rscratch1, Address(rthread, Thread::exception_file_offset()));
+     __ movw(rscratch1, (int)__LINE__);
+@@ -507,8 +673,17 @@ class StubGenerator: public StubCodeGenerator {
+     // setup r0 & r3 & clear pending exception
+     __ mov(r3, r19);
+     __ mov(r19, r0);
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-9: the exception oop is a 16-byte cap — integer ldr delivered a tag-0
++    // exception to the interpreter's handler lookup (klass() SIGPROT on the
++    // first ClassNotFoundException of the indy bootstrap). cap-LDR it, and
++    // clear the full 16-byte slot (cap-STR of zr stores a null cap).
++    __ cap_ldr_imm(r0, rthread, in_bytes(Thread::pending_exception_offset()));
++    __ cap_str_imm(zr, rthread, in_bytes(Thread::pending_exception_offset()));
++#else
+     __ ldr(r0, Address(rthread, Thread::pending_exception_offset()));
+     __ str(zr, Address(rthread, Thread::pending_exception_offset()));
++#endif
+ 
+ #ifdef ASSERT
+     // make sure exception is set
+@@ -4910,7 +5085,7 @@ class StubGenerator: public StubCodeGenerator {
      __ cbnz(tmp1, NOT_EQUAL);
      __ ldp(tmp1, tmp3, Address(__ post(a1, 2 * wordSize)));
      __ eor(tmp5, tmp5, tmp6);
@@ -274,7 +307,7 @@ index c92f0cf05bd..f30d88e13bb 100644
      __ eor(tmp7, tmp7, tmp8);
      __ ldp(tmp2, tmp4, Address(__ post(a2, 2 * wordSize)));
      // tmp6 is not used. MacroAssembler::subs is used here (rather than
-@@ -4938,9 +5097,9 @@ class StubGenerator: public StubCodeGenerator {
+@@ -4938,9 +5113,9 @@ class StubGenerator: public StubCodeGenerator {
        __ prfm(Address(a1, SoftwarePrefetchHintDistance));
        __ prfm(Address(a2, SoftwarePrefetchHintDistance));
      }
@@ -287,7 +320,7 @@ index c92f0cf05bd..f30d88e13bb 100644
      __ subs(tmp1, cnt1, loopThreshold);
      __ eor(v0, __ T16B, v0, v4);
      __ eor(v1, __ T16B, v1, v5);
-@@ -5700,9 +5859,22 @@ class StubGenerator: public StubCodeGenerator {
+@@ -5700,9 +5875,22 @@ class StubGenerator: public StubCodeGenerator {
    }
  
    void generate_string_indexof_stubs() {
