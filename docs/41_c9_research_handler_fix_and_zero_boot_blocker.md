@@ -954,3 +954,55 @@ template-oop-handling tail (aload/astore/dup/getfield/aastore/invoke-receiver pa
 each surfaces the same integer-ldr/str-of-a-cap class and is fixed the same way with
 /tmp/bdt.sh + the ELR-auto-disasm dumper. ~14 cap fixes landed this session
 (§S/§W/§X/§Z/§AA-§AG); the dominant blocker (SCVALUE §Z) is fixed.
+
+## AI. ★ C-5 ACHIEVED on the template interpreter: java -version exits 0 (2026-06-10)
+
+`java -Xint -XX:+UnlockExperimentalVMOptions -XX:+UseStoplessGC
+-XX:-UseCompressedOops -XX:-UseCompressedClassPointers -version` prints the full
+banner and EXITS 0 on Morello purecap (3/3 stable). The "clinit 121 /
+CoderResult" framing from patch 0161 was a misread — the post-banner wall was
+three stacked bugs, all in the shutdown path:
+
+1. **SafeFetch never worked on purecap (DDC=NULL alternate-base loads).**
+   safefetch_bsd_aarch64.S's `ldr x0,[x0]` assembles (purecap target) to the
+   Morello ALTERNATE-BASE form `ldur x0,[x0]` — DDC-relative in C64. Purecap
+   processes run with DDC=NULL, so EVERY SafeFetch tag-faulted (SIGPROT code=2,
+   si_addr==_SafeFetchN_fault==0x41f60780 — the "clinit 121" address) and
+   returned the default. Fix: `ldr x0,[c0]` under __CHERI_PURE_CAPABILITY__.
+   BUG CLASS: any hand-written `.S` that takes a pointer argument and writes
+   `[x0]` is silently DDC-relative on purecap.
+
+2. **Crash dumper swallowed the SafeFetch protocol.** stopless_install_crash_diag
+   REPLACES sigprot_handler (which had the C-6 L38 SafeFetch redirect) once
+   re-armed, so an expected SafeFetch probe fault became a fatal dump
+   (ServiceThread -> OopStorage::release -> block_for_ptr -> SafeFetchN).
+   Fix: factored stopless_safefetch_redirect(); BOTH sigprot_handler and
+   stopless_crash_dumper try it first (handler.c).
+
+3. **monitorenter free-slot csel strips the tag.** TemplateTable::monitorenter's
+   search loop `csel(c_rarg1, c_rarg3, c_rarg1, EQ)` is an integer csel: it
+   selects the freed monitor slot's ADDRESS but kills its tag. Hit on the SECOND
+   monitorenter of Shutdown.exit (synchronized(lock) then
+   synchronized(Shutdown.class)): monitorexit freed slot -> csel picks it tag-0
+   -> `str c0,[c1,#obj]` SIGPROT. Fix: branch + cap-aware mov under purecap.
+   BUG CLASS: csel on capability registers (only this one site in the
+   interpreter codegen).
+
+Hardening (same patch): OopStorage::Block::block_for_ptr walks plain addresses
+and re-derives each candidate from ptr's still-tagged cap (the stock pointer
+walk starts 896B below the block allocation — below-base excursions risk
+detagging on CHERI). Tooling: stopless_codeblob_name now names the Interpreter
+CODELET containing a PC ("Interpreter codelet: monitorenter (start=...)") —
+this is what pinned bug 3 in one glance.
+
+Diag method worth keeping: when a probe loop "can't find" something, print what
+each probe SEES vs what a direct in-bounds read returns — SafeFetchN returning
+default-for-everything (0xdeadbeef test) instantly separated "data wrong" from
+"loader broken".
+
+Epsilon control still SIGSEGVs in the `new` template fast path (heap-boundary
+0x45980000) — pre-existing, Epsilon-only (StoplessGC routes _new through the
+runtime), not a regression.
+
+Next frontier: real programs — the C-9 post-move dispatch spin (docs/40) and
+the invokedynamic/Access<> RuntimeDispatch blocker remain.

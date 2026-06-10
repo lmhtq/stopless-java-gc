@@ -1,0 +1,64 @@
+diff --git a/src/hotspot/share/gc/shared/oopStorage.cpp b/src/hotspot/share/gc/shared/oopStorage.cpp
+index e06ac1bf6be..c09bc8273e9 100644
+--- a/src/hotspot/share/gc/shared/oopStorage.cpp
++++ b/src/hotspot/share/gc/shared/oopStorage.cpp
+@@ -299,8 +299,18 @@ void OopStorage::Block::set_active_index(size_t index) {
+ }
+ 
+ size_t OopStorage::Block::active_index_safe(const Block* block) {
++#ifdef __CHERI_PURE_CAPABILITY__
++  // CHERI: SafeFetchN takes intptr_t* and would read sizeof(intptr_t)==16
++  // bytes, over-reading the 8-byte size_t field. There is no SafeFetch64
++  // helper in HotSpot, so use a plain volatile load here. active_index_safe
++  // is a defensive read; the caller (only oopStorage debug paths) does not
++  // require the SIGSEGV-trapping property that SafeFetchN provides.
++  STATIC_ASSERT(sizeof(int64_t) == sizeof(block->_active_index));
++  return *reinterpret_cast<const volatile size_t*>(&block->_active_index);
++#else
+   STATIC_ASSERT(sizeof(intptr_t) == sizeof(block->_active_index));
+   return SafeFetchN((intptr_t*)&block->_active_index, 0);
++#endif
+ }
+ 
+ unsigned OopStorage::Block::get_index(const oop* ptr) const {
+@@ -366,6 +376,32 @@ void OopStorage::Block::delete_block(const Block& block) {
+ OopStorage::Block*
+ OopStorage::Block::block_for_ptr(const OopStorage* owner, const oop* ptr) {
+   STATIC_ASSERT(_data_pos == 0);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // The stock pointer walk below starts (section_count-1)*section_size oops
++  // BELOW the block's allocation. On CHERI that below-base excursion can push
++  // the capability out of its representable range and CLEAR THE TAG, and the
++  // tag does not come back as the loop adds the address back up — so every
++  // probe (including the true block start) tag-faults, SafeFetchN returns the
++  // default, and the block is never found (the NULL then reaches
++  // release_entries, which derefs offset 0x470 of an untagged NULL-derived
++  // cap). Walk plain addresses instead and re-derive each candidate from
++  // ptr's still-tagged capability; out-of-bounds candidates simply fault in
++  // SafeFetchN and are skipped.
++  intptr_t owner_addr = reinterpret_cast<intptr_t>(owner);
++  uint64_t section_addr =
++      align_down((uint64_t)__builtin_cheri_address_get(const_cast<oop*>(ptr)),
++                 (uint64_t)block_alignment);
++  section_addr -= (section_size * (section_count - 1)) * sizeof(oop);
++  for (unsigned i = 0; i < section_count;
++       ++i, section_addr += section_size * sizeof(oop)) {
++    Block* candidate = reinterpret_cast<Block*>(
++        __builtin_cheri_address_set(const_cast<oop*>(ptr), section_addr));
++    if (SafeFetchN(&candidate->_owner_address, 0) == owner_addr) {
++      return candidate;
++    }
++  }
++  return NULL;
++#else
+   // Const-ness of ptr is not related to const-ness of containing block.
+   // Blocks are allocated section-aligned, so get the containing section.
+   oop* section_start = align_down(const_cast<oop*>(ptr), block_alignment);
+@@ -384,6 +420,7 @@ OopStorage::Block::block_for_ptr(const OopStorage* owner, const oop* ptr) {
+     }
+   }
+   return NULL;
++#endif
+ }
+ 
+ //////////////////////////////////////////////////////////////////////////////

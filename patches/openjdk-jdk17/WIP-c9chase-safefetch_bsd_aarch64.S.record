@@ -1,0 +1,34 @@
+diff --git a/src/hotspot/os_cpu/bsd_aarch64/safefetch_bsd_aarch64.S b/src/hotspot/os_cpu/bsd_aarch64/safefetch_bsd_aarch64.S
+index 34d7b8e34a7..825be7aa936 100644
+--- a/src/hotspot/os_cpu/bsd_aarch64/safefetch_bsd_aarch64.S
++++ b/src/hotspot/os_cpu/bsd_aarch64/safefetch_bsd_aarch64.S
+@@ -49,7 +49,15 @@
+     ELF_TYPE(SafeFetch32_impl,@function)
+ SYMBOL(SafeFetch32_impl):
+ SYMBOL(_SafeFetch32_fault):
++#ifdef __CHERI_PURE_CAPABILITY__
++    # The address arrives in c0. Writing `[x0]` makes the Morello assembler
++    # emit the ALTERNATE-BASE form (ldur w0,[x0]) which is DDC-relative in
++    # C64 — and purecap processes run with DDC=NULL, so EVERY SafeFetch
++    # tag-faults and returns the default. Load through the capability.
++    ldr      w0, [c0]
++#else
+     ldr      w0, [x0]
++#endif
+     ret
+ SYMBOL(_SafeFetch32_continuation):
+     mov      x0, x1
+@@ -64,7 +72,13 @@ SYMBOL(_SafeFetch32_continuation):
+     ELF_TYPE(SafeFetchN_impl,@function)
+ SYMBOL(SafeFetchN_impl):
+ SYMBOL(_SafeFetchN_fault):
++#ifdef __CHERI_PURE_CAPABILITY__
++    # See SafeFetch32_impl: `[x0]` assembles to the DDC-relative alternate-
++    # base form; DDC=NULL under purecap, so load through the capability.
++    ldr      x0, [c0]
++#else
+     ldr      x0, [x0]
++#endif
+     ret
+ SYMBOL(_SafeFetchN_continuation):
+     mov      x0, x1

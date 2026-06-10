@@ -66,32 +66,41 @@ extern char _SafeFetch32_continuation[] __attribute__((weak));
 extern char _SafeFetchN_fault[] __attribute__((weak));
 extern char _SafeFetchN_continuation[] __attribute__((weak));
 
+/* C-6 L38 / C-9: if the faulting PC is a SafeFetch probe load, advance PCC
+   to the matching continuation (which returns the caller-supplied default)
+   and resume. Preserve PCC bounds/tag via cheri_address_set. These faults
+   are expected and frequent (os::is_readable_pointer, OopStorage::
+   block_for_ptr, ...), so EVERY handler that can receive the fault signal
+   must try this redirect before treating the fault as fatal. Returns 1 if
+   redirected. */
+static int
+stopless_safefetch_redirect(ucontext_t *ctx)
+{
+    __uintcap_t elr = (__uintcap_t)ctx->uc_mcontext.mc_capregs.cap_elr;
+    uintptr_t pc = (uintptr_t)cheri_address_get((void *)elr);
+    if (_SafeFetch32_fault != NULL && pc == (uintptr_t)(void *)_SafeFetch32_fault) {
+        void *cont = cheri_address_set((void *)elr,
+                        (uintptr_t)(void *)_SafeFetch32_continuation);
+        ctx->uc_mcontext.mc_capregs.cap_elr = (__uintcap_t)cont;
+        return 1;
+    }
+    if (_SafeFetchN_fault != NULL && pc == (uintptr_t)(void *)_SafeFetchN_fault) {
+        void *cont = cheri_address_set((void *)elr,
+                        (uintptr_t)(void *)_SafeFetchN_continuation);
+        ctx->uc_mcontext.mc_capregs.cap_elr = (__uintcap_t)cont;
+        return 1;
+    }
+    return 0;
+}
+
 static void
 sigprot_handler(int sig, siginfo_t *si, void *ctx_)
 {
     ucontext_t *ctx = (ucontext_t *)ctx_;
 
-    /* C-6 L38: SafeFetch redirect FIRST (before any diag/abort) — these
-       faults are expected and frequent. If the faulting PC is a SafeFetch
-       load, advance PCC to the matching continuation (which returns the
-       caller-supplied default) and resume. Preserve PCC bounds/tag via
-       cheri_address_set. */
-    {
-        __uintcap_t elr = (__uintcap_t)ctx->uc_mcontext.mc_capregs.cap_elr;
-        uintptr_t pc = (uintptr_t)cheri_address_get((void *)elr);
-        if (_SafeFetch32_fault != NULL && pc == (uintptr_t)(void *)_SafeFetch32_fault) {
-            void *cont = cheri_address_set((void *)elr,
-                            (uintptr_t)(void *)_SafeFetch32_continuation);
-            ctx->uc_mcontext.mc_capregs.cap_elr = (__uintcap_t)cont;
-            return;
-        }
-        if (_SafeFetchN_fault != NULL && pc == (uintptr_t)(void *)_SafeFetchN_fault) {
-            void *cont = cheri_address_set((void *)elr,
-                            (uintptr_t)(void *)_SafeFetchN_continuation);
-            ctx->uc_mcontext.mc_capregs.cap_elr = (__uintcap_t)cont;
-            return;
-        }
-    }
+    /* SafeFetch redirect FIRST (before any diag/abort). */
+    if (stopless_safefetch_redirect(ctx))
+        return;
 
     /* A GC-revoked cap traps when the mutator loads/stores through it. CheriBSD
        has TWO revocation representations and the kernel build decides which:
@@ -353,6 +362,15 @@ static void
 stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
 {
     ucontext_t *ctx = (ucontext_t *)ctx_;
+
+    /* C-9: the dumper REPLACES sigprot_handler/HotSpot handlers once armed,
+       so it inherits their duty to resume expected SafeFetch probe faults
+       (SIGPROT on CHERI, SEGV/BUS elsewhere) instead of dumping. This was
+       the post-banner "clinit 121" wall: ServiceThread -> OopStorage::
+       release -> block_for_ptr -> SafeFetchN tag-fault treated as fatal. */
+    if (stopless_safefetch_redirect(ctx))
+        return;
+
     struct capregs *cr = &ctx->uc_mcontext.mc_capregs;
     void *csp = (void *)(__uintcap_t)cr->cap_sp;
     unsigned long elr = (unsigned long)cheri_address_get((void *)(__uintcap_t)cr->cap_elr);
