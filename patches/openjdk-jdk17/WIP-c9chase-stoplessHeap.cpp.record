@@ -1,8 +1,8 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..59ec3e5bac3 100644
+index 069115be038..5927ae66c2f 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-@@ -6,12 +6,31 @@
+@@ -6,12 +6,32 @@
  
  #include "precompiled.hpp"
  #include "gc/stopless/stoplessHeap.hpp"
@@ -16,6 +16,7 @@ index 069115be038..59ec3e5bac3 100644
  #include "memory/universe.hpp"
  #include "runtime/globals.hpp"
  #include "gc/shared/gc_globals.hpp"
++#include "gc/shared/concurrentGCThread.hpp"
  #include "gc/shared/tlab_globals.hpp"
 +#include "gc/shared/oopStorageSet.hpp"
 +#include "gc/shared/oopStorageSet.inline.hpp"
@@ -34,7 +35,7 @@ index 069115be038..59ec3e5bac3 100644
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,22 +43,39 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +44,347 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -44,6 +45,7 @@ index 069115be038..59ec3e5bac3 100644
  }
  
 +extern "C" int   stopless_handler_install(void);
++static void stopless_start_collector(StoplessHeap* h, int interval_ms);
 +// C-9: shared forwarding table in cap_runtime (the SIGPROT handler reads it).
 +extern "C" void  forward_table_init(void);
 +extern "C" void* forward_table_cas_insert(uintptr_t from_addr, void* new_cap);
@@ -83,7 +85,16 @@ index 069115be038..59ec3e5bac3 100644
    // because the CHERI cap-tag check IS the barrier.
    _barrier_set = new StoplessBarrierSet();
    BarrierSet::set_barrier_set(_barrier_set);
-@@ -48,28 +84,259 @@ jint StoplessHeap::initialize() {
+ 
++  // C-9: optional concurrent collector (period in ms via env).
++  const char* conc = ::getenv("STOPLESS_CONCURRENT_MS");
++  if (conc != nullptr) {
++    int ms = (int)strtol(conc, nullptr, 10);
++    if (ms < 10) ms = 10;
++    stopless_start_collector(this, ms);
++  }
++
+   return JNI_OK;
  }
  
  bool StoplessHeap::is_in(const void* p) const {
@@ -289,7 +300,45 @@ index 069115be038..59ec3e5bac3 100644
 +  }
 +};
 +
++// C-9 final form: the CONCURRENT collector. A background thread triggers the
++// same short-STW collect cycle (root scan+move+revoke inside a VM op) on a
++// period; everything else — healing of stale heap-internal refs — happens
++// concurrently in the mutators via SIGPROT, by design. Mutator pause time is
++// therefore just the root-fixup window, independent of heap size (the paper's
++// claim). Enabled with STOPLESS_CONCURRENT_MS=<period>.
++class StoplessCollectorThread : public ConcurrentGCThread {
++  StoplessHeap* _heap;
++  int           _interval_ms;
++ public:
++  StoplessCollectorThread(StoplessHeap* h, int interval_ms)
++      : _heap(h), _interval_ms(interval_ms) {
++    set_name("Stopless Collector");
++    create_and_start();
++  }
++  void run_service() override {
++    fprintf(stderr, "[Stopless] concurrent collector running (period=%dms)\n",
++            _interval_ms);
++    fflush(stderr);
++    while (!should_terminate()) {
++      int slept = 0;
++      while (slept < _interval_ms && !should_terminate()) {
++        int chunk = MIN2(_interval_ms - slept, 200);
++        os::naked_short_sleep(chunk);
++        slept += chunk;
++      }
++      if (should_terminate()) break;
++      VM_StoplessCollect op(_heap);
++      VMThread::execute(&op);
++    }
++  }
++  void stop_service() override {}
++};
++
 +} // anonymous namespace
++
++static void stopless_start_collector(StoplessHeap* h, int interval_ms) {
++  new StoplessCollectorThread(h, interval_ms);
++}
 +
 +oop StoplessHeap::move_object(oop o) {
 +  size_t nwords = (size_t)o->size();                // size in HeapWords (16B each)

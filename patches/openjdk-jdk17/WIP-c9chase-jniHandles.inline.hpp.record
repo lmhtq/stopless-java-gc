@@ -1,0 +1,39 @@
+diff --git a/src/hotspot/share/runtime/jniHandles.inline.hpp b/src/hotspot/share/runtime/jniHandles.inline.hpp
+index 48f11af3e50..0a323a83977 100644
+--- a/src/hotspot/share/runtime/jniHandles.inline.hpp
++++ b/src/hotspot/share/runtime/jniHandles.inline.hpp
+@@ -27,6 +27,12 @@
+ 
+ #include "runtime/jniHandles.hpp"
+ 
++#ifdef __CHERI_PURE_CAPABILITY__
++// C-10: acmp-barrier slow path (cap_runtime/handler.c) — identity compare
++// that normalizes revoked caps through the forward table.
++extern "C" intptr_t stopless_acmp_eq(void*, void*);
++#endif
++
+ #include "oops/access.inline.hpp"
+ #include "oops/oop.hpp"
+ #include "utilities/debug.hpp"
+@@ -85,7 +91,21 @@ inline oop JNIHandles::resolve_no_keepalive(jobject handle) {
+ inline bool JNIHandles::is_same_object(jobject handle1, jobject handle2) {
+   oop obj1 = resolve_no_keepalive(handle1);
+   oop obj2 = resolve_no_keepalive(handle2);
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-10: same identity rule as the interpreter's acmp barrier — a stale
++  // (revoked) cap and the moved object's new cap must compare EQUAL.
++  // Fast path mirrors if_acmp: equal addresses or both tags valid decide
++  // directly; otherwise normalize through the forward table.
++  {
++    void* a = (void*)(oopDesc*)obj1;
++    void* b = (void*)(oopDesc*)obj2;
++    if (a == b) return true;
++    if (__builtin_cheri_tag_get(a) && __builtin_cheri_tag_get(b)) return false;
++    return stopless_acmp_eq(a, b) != 0;
++  }
++#else
+   return obj1 == obj2;
++#endif
+ }
+ 
+ inline oop JNIHandles::resolve_non_null(jobject handle) {

@@ -1266,3 +1266,26 @@ identity hash (mark-word based — moved objects keep their mark word, so
 hashes survive the move ✓ by construction), JNI IsSameObject (C++ ==,
 needs the same normalize), interpreter-internal oop == in C++ runtime
 paths. Then: the concurrent collector loop + the write barrier (docs/40).
+
+## AP. THE CONCURRENT COLLECTOR ARRIVES + safepoint-dispatch caps (2026-06-11, patch 0170)
+
+1. JNI IsSameObject now uses the acmp-barrier identity rule (fast paths +
+   stopless_acmp_eq normalize) — same semantics as if_acmpeq.
+2. ★ StoplessCollectorThread (ConcurrentGCThread): a background thread
+   triggers the short-STW collect cycle every STOPLESS_CONCURRENT_MS ms.
+   Mutator pause = root-fixup window only; stale-ref healing remains
+   concurrent in the mutators by design. This is the architecture the
+   paper claims ("Stopless").
+3. The concurrent mode instantly exposed TWO latent NULL-cap dispatch bugs
+   (latent because polls are rare without a GC):
+   - dispatch_base's non-active-table branch: integer `mov rscratch2,&table`;
+   - dispatch_base's PENDING-POLL branch (bind(safepoint)):
+     `lea ExternalAddress(safepoint_table)` from the codecache.
+   Both now route through lea_libjvm_global (the C-6 cap_data_table).
+
+STATUS: STW matrix (6 tests + unlimited-move IntegrityGC) ALL GREEN — no
+regression. CONCURRENT mode (STOPLESS_CONCURRENT_MS=50, unlimited moves)
+boots through ~17 background collects then faults in the getstatic codelet
+(c4 == NULL deref at +0x124, method Set12$1.<init> — suspected cpcache
+mirror/f1 oop vs concurrent move interleaving). That codelet-by-codelet
+concurrency chase is the next work stream; the debug kit applies as-is.
