@@ -738,3 +738,30 @@ stopless_handler_remove(void)
 {
     sigaction(34, &prev_sa, NULL);
 }
+/* C-10: acmp-barrier slow path. `==`/if_acmpeq does NOT dereference, so a
+   stale (revoked) cap never SIGPROT-heals and compares unequal to the same
+   object's forwarded cap — reference identity breaks after a move (first
+   hit: MethodType's exact-type `==` check -> WrongMethodTypeException with
+   identical-printing types). The interpreter's if_acmp template calls this
+   only when the addresses differ AND at least one operand is untagged:
+   normalize each operand through the forward table (base-keyed, offset
+   re-applied) and compare the normalized addresses. */
+static uintptr_t
+stopless_acmp_normalize(void *c)
+{
+    if (c == NULL) return 0;
+    if (cheri_tag_get(c) && cheri_perms_get(c) != 0)
+        return (uintptr_t)cheri_address_get(c);   /* live cap: address is identity */
+    uintptr_t base = (uintptr_t)cheri_base_get(c);
+    void *fwd = forward_table_lookup(base);
+    if (fwd == NULL)
+        return (uintptr_t)cheri_address_get(c);   /* not a moved object */
+    return (uintptr_t)cheri_address_get(fwd) +
+           ((uintptr_t)cheri_address_get(c) - base);
+}
+
+intptr_t
+stopless_acmp_eq(void *a, void *b)
+{
+    return stopless_acmp_normalize(a) == stopless_acmp_normalize(b);
+}

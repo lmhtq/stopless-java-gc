@@ -1225,3 +1225,44 @@ root-held object incl. Strings/MethodTypes) exposed two things:
    measures the acmp-barrier overhead the paper needs anyway.
 
 STATUS: limit=8 matrix still ALL GREEN (incl. IntegrityGC/StoplessBench).
+
+## AO. ★★★ THE ACMP BARRIER: whole-heap moves with correct identity (2026-06-11, patch 0169)
+
+The §AN identity frontier is CLOSED. Implementation (the first C-10 barrier):
+
+- TemplateTable::if_acmp (purecap): three-tier compare.
+  1. equal addresses -> EQ (same object, both stale or both fixed alike);
+  2. unequal addresses, BOTH capability tags set (gctag+and+cbnz) -> NE
+     (live caps' addresses ARE identity);
+  3. unequal addresses with an untagged operand -> runtime slow path
+     stopless_acmp_eq(a, b): normalize each operand through the forward
+     table (base-keyed + offset re-apply, same as the heal path) and
+     compare normalized addresses. Common case overhead: 2x gctag + and +
+     cbnz; the slow call is taken only when a REVOKED cap (or null vs
+     non-null with differing addresses... null has tag 0) is compared.
+- New MacroAssembler::cap_gctag(Xd, Cn) (GCTAG = 0xC2C09000|Cn<<5|Xd,
+  verified vs llvm-mc).
+- esp is rebuilt from csp after the leaf call (C-6 L57 trampoline detag).
+
+Pitfalls hit (and worth remembering):
+- `cmp(zr, imm)`/`subs(zr,...)`/`movw(r, int)` — zr pseudo-encoding 32 blew
+  the 5-bit field guarantee ("Field too big for insn"); use a scratch reg +
+  cmpw(reg, 1u) and unsigned literals.
+- call_VM_leaf(fn, r1, r0): r0 IS c_rarg0 — pass_arg0 clobbers it before
+  pass_arg1 reads it; both args became r1 and EVERY slow-path compare
+  returned "equal" (symptom: "package jdk.internal.org.xml.sax in modules
+  java.base and java.base" — the module system seeing one object as two).
+  Stage the second operand in r2 first.
+
+RESULT MATRIX (Morello purecap, -Xint StoplessGC):
+  limit=8 (default):  all 6 tests rc=0 (unchanged)
+  IntegrityGC  STOPLESS_MOVE_LIMIT=100000: moved=1016 -> [IG] ALL-OK
+  StoplessBench STOPLESS_MOVE_LIMIT=100000: 3 rounds x ~800 moved -> ALL-OK
+
+WHOLE-HEAP STW moves (Strings, MethodTypes, Class mirrors, everything
+root-held) now preserve reference identity and graph integrity under
+allocation pressure. Remaining identity surfaces to audit for C-10:
+identity hash (mark-word based — moved objects keep their mark word, so
+hashes survive the move ✓ by construction), JNI IsSameObject (C++ ==,
+needs the same normalize), interpreter-internal oop == in C++ runtime
+paths. Then: the concurrent collector loop + the write barrier (docs/40).

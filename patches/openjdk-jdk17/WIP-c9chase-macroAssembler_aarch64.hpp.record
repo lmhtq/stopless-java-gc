@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
-index 9b1c0a93539..0d0c597ab8d 100644
+index 9b1c0a93539..132c10870a7 100644
 --- a/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
 +++ b/src/hotspot/cpu/aarch64/macroAssembler_aarch64.hpp
 @@ -237,9 +237,43 @@ class MacroAssembler: public Assembler {
@@ -61,7 +61,7 @@ index 9b1c0a93539..0d0c597ab8d 100644
  
    inline void movw(Register dst, uint32_t imm32)
    {
-@@ -699,16 +741,236 @@ public:
+@@ -699,16 +741,243 @@ public:
    // Alignment
    void align(int modulus);
  
@@ -120,6 +120,13 @@ index 9b1c0a93539..0d0c597ab8d 100644
 +    unsigned rd_enc = (Cd == sp) ? 31u : (unsigned)Cd->encoding();
 +    unsigned rn_enc = (Cn == sp) ? 31u : (unsigned)Cn->encoding();
 +    emit_int32(0x02800000U | ((imm12 & 0xFFF) << 10) | (rn_enc << 5) | rd_enc);
++  }
++  // gctag Xd, Cn — read Cn's capability tag (0/1) into Xd. Verified vs
++  // llvm-mc: gctag x8,c1 = 0xC2C09028.
++  inline void cap_gctag(Register Xd, Register Cn) {
++    assert(Xd->encoding() <= 30 && Cn->encoding() <= 30, "no zr/sp here");
++    emit_int32(0xC2C09000U | ((unsigned)Cn->encoding() << 5)
++               | (unsigned)Xd->encoding());
 +  }
 +  // add Cd, Cn, #imm12   (cap-add immediate, preserves cap metadata)
 +  inline void cap_add_imm(Register Cd, Register Cn, unsigned imm12) {
@@ -298,7 +305,7 @@ index 9b1c0a93539..0d0c597ab8d 100644
    }
  
    // Support for getting the JavaThread pointer (i.e.; a reference to thread-local information)
-@@ -1013,8 +1275,25 @@ public:
+@@ -1013,8 +1282,25 @@ public:
    void bang_stack_with_offset(int offset) {
      // stack grows down, caller passes positive offset
      assert(offset > 0, "must bang with negative offset");
