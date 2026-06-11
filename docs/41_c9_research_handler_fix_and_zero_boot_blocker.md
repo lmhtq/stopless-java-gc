@@ -1190,3 +1190,38 @@ heap-internal refs is correct end-to-end on real workloads. Remaining C-9
 scope before C-10: raise STOPLESS_MOVE_LIMIT beyond 8 (whole-heap moves),
 the move-while-allocating interleavings, and promoting the collect from
 System.gc-triggered STW to the concurrent StoplessCollectorThread loop.
+
+## AN. Whole-heap moves: interior-pointer heal + THE IDENTITY FRONTIER (2026-06-11, patch 0168)
+
+Raising STOPLESS_MOVE_LIMIT past 8 (64 / unlimited -> moved=1016, every
+root-held object incl. Strings/MethodTypes) exposed two things:
+
+1. FIXED — interior-pointer heal: Unsafe.compareAndSetReference faults on a
+   FIELD cap (obj_base + 0xC0). The forward table is keyed by object base;
+   the handler looked up cap.address and missed. stopless_try_heal now looks
+   up cheri_base(cap) first (the alloc csetbounds makes base = object start)
+   and re-applies the offset to the forwarded cap. CAS on moved objects then
+   heals like any load.
+
+2. OPEN — REFERENCE IDENTITY ACROSS MOVES (the real C-10 design problem):
+   IntegrityGC@limit>=64 now dies with
+     WrongMethodTypeException: expected (Lookup,String,MethodType,String,
+     Object[])CallSite but found (Lookup,...same...)CallSite
+   — the two types PRINT identically because they ARE the same logical
+   object: one reference was root-fixed to the new address while another is
+   still the stale (revoked) cap. `==` / if_acmpeq does NOT dereference, so
+   it cannot SIGPROT-heal — the stale and fixed caps compare unequal and
+   MethodType's identity-based exact-type check fails. This is exactly why
+   ZGC heals on LOAD (load barrier), not on use. Options for us (docs/40
+   territory):
+     a) acmp barrier: normalize both operands through the forward table in
+        the if_acmpeq/if_acmpne templates (cheap: two tag checks; only
+        tag-0/perms-0 caps need the table lookup);
+     b) heal on load_heap_oop (full read barrier — closer to ZGC, more
+        sites, also fixes ident-hash / lock-word paths);
+     c) eager full-heap fixup at collect time (gives up laziness; simplest
+        but defeats the paper's point).
+   Plan: (a) first — it unblocks identity correctness with minimal cost and
+   measures the acmp-barrier overhead the paper needs anyway.
+
+STATUS: limit=8 matrix still ALL GREEN (incl. IntegrityGC/StoplessBench).

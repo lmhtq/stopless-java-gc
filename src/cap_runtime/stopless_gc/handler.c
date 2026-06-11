@@ -131,12 +131,28 @@ stopless_try_heal(siginfo_t *si, ucontext_t *ctx)
             if (!cheri_tag_get((void *)_c) ||                                 \
                 cheri_perms_get((void *)_c) == 0) {                            \
                 uintptr_t _a = (uintptr_t)cheri_address_get((void *)_c);      \
-                void *_fwd = forward_table_lookup(_a);                        \
-                if (_fwd == NULL && g_evacuate_cb != NULL) {                  \
-                    _fwd = g_evacuate_cb(_a);                                 \
-                    if (_fwd != NULL) stopless_handler_assists++;             \
+                /* The forward table is keyed by OBJECT BASE. A faulting cap   \
+                   may be an INTERIOR pointer (field CAS via Unsafe, array     \
+                   element, ...) whose address = base + offset; the alloc     \
+                   csetbounds makes cheri_base the object start, so look the  \
+                   BASE up first and re-apply the offset to the new cap. */    \
+                uintptr_t _b = (uintptr_t)cheri_base_get((void *)_c);         \
+                void *_fwd = forward_table_lookup(_b);                        \
+                uintptr_t _off = (_fwd != NULL) ? (_a - _b) : 0;              \
+                if (_fwd == NULL && _a != _b) {                               \
+                    _fwd = forward_table_lookup(_a);                          \
                 }                                                             \
-                if (_fwd != NULL) { new_cap = _fwd; fault_addr = _a; faulting_reg = _i; } \
+                if (_fwd == NULL && g_evacuate_cb != NULL) {                  \
+                    _fwd = g_evacuate_cb(_b);                                 \
+                    if (_fwd != NULL) { _off = _a - _b; stopless_handler_assists++; } \
+                }                                                             \
+                if (_fwd != NULL) {                                           \
+                    if (_off != 0) {                                          \
+                        _fwd = cheri_address_set(_fwd,                        \
+                            (uintptr_t)cheri_address_get(_fwd) + _off);       \
+                    }                                                         \
+                    new_cap = _fwd; fault_addr = _a; faulting_reg = _i;       \
+                }                                                             \
             }                                                                 \
         }                                                                     \
     } while (0)
