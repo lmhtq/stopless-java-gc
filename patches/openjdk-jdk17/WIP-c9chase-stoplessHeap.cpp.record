@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..5927ae66c2f 100644
+index 069115be038..287e21980b0 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 @@ -6,12 +6,32 @@
@@ -35,7 +35,7 @@ index 069115be038..5927ae66c2f 100644
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,52 +44,347 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +44,352 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -45,6 +45,7 @@ index 069115be038..5927ae66c2f 100644
  }
  
 +extern "C" int   stopless_handler_install(void);
++extern "C" void  forward_table_maybe_grow(void);
 +static void stopless_start_collector(StoplessHeap* h, int interval_ms);
 +// C-9: shared forwarding table in cap_runtime (the SIGPROT handler reads it).
 +extern "C" void  forward_table_init(void);
@@ -278,6 +279,10 @@ index 069115be038..5927ae66c2f 100644
 +    const bool  verbose  = (::getenv("STOPLESS_MOVE_VERBOSE") != nullptr);
 +    const char* kfilter  = ::getenv("STOPLESS_MOVE_KLASS");
 +    const bool  no_fixup = (::getenv("STOPLESS_NO_FIXUP") != nullptr);
++
++    // C-9: grow the forward table before adding this cycle's entries. We are
++    // at a safepoint (single writer, readers quiesced) — the only safe place.
++    forward_table_maybe_grow();
 +
 +    ResourceMark rm;
 +    GrowableArray<oop> moved_from(64);

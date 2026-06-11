@@ -29,6 +29,9 @@ extern "C" {
 /* Insert: from_addr -> new_cap. NULL new_cap == "delete entry". */
 void forward_table_insert(uintptr_t from_addr, void *new_cap);
 
+/* Grow the table if load is high. Collector-only, at a safepoint. */
+void forward_table_maybe_grow(void);
+
 /* C-9/C-10: multi-writer insert-or-get. Returns the authoritative cap for
    from_addr — new_cap if this caller won the race, else the cap installed
    by whoever won. The single linearization point for concurrent moves. */
