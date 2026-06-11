@@ -1289,3 +1289,46 @@ boots through ~17 background collects then faults in the getstatic codelet
 (c4 == NULL deref at +0x124, method Set12$1.<init> — suspected cpcache
 mirror/f1 oop vs concurrent move interleaving). That codelet-by-codelet
 concurrency chase is the next work stream; the debug kit applies as-is.
+
+## AQ. Concurrent-collector hardening: forward-table grow + the fixup-untagged race (2026-06-12, patch 0172)
+
+Three findings while pushing the concurrent collector under whole-heap moves:
+
+1. FIXED (patch 0171): the fixed 8192-slot forward table overflowed after
+   ~17 concurrent whole-heap cycles and silently DROPPED forwardings.
+   forward_table_maybe_grow() now doubles at >70% load (collector-only, at
+   the safepoint); g_table/g_capacity atomic, old table leaked (bounded).
+   Concurrent ConcatTest went 17 -> 23-25 collects before the next wall.
+
+2. ORTHOGONAL: a perfdata-sampling thread derefs a wild cap (0xffff...)
+   under concurrent load — independent of the GC; -XX:-UsePerfData sidesteps
+   it. Not chased further.
+
+3. THE CONCURRENT FRONTIER — precisely localized, root cause still open.
+   New env diag C9_MOVE_CHECK validates every moved cap + every fixup write.
+   Result:
+     STW (any limit incl. 100000):  C9_MOVE_CHECK reports ZERO bad caps.
+     CONCURRENT (any limit >=200):  37-181 "fixup wrote UNTAGGED fwd" — the
+       forward-table lookup/cas hands back a cap whose ADDRESS is correct
+       (a valid moved-object heap address, e.g. 0x44a34840) but whose TAG
+       is cleared. The root slot then gets an untagged oop; a later mutator
+       deref faults with an address the table can't re-key (it's the NEW
+       address, table keys are OLD) -> fatal unforwarded fault, OR boot-layer
+       NPE when identity logic sees the untagged ref as different.
+   Verified NOT the cause: the atomic accessors are cap-wide
+   (forward_table.o disasm: new_cap store = `stlr c0`, load = `ldar c0`),
+   and STW exercises the identical store/lookup path with zero corruption.
+   So a tag is being cleared specifically under concurrency. The diff vs STW
+   is only that mutator threads + frequent safepoints are live. Leading
+   hypotheses: (a) a writer other than the collector touches a table slot's
+   new_cap with an integer store under concurrency; (b) the interior-pointer
+   heal's cheri_address_set path interacts with a slot being rewritten;
+   (c) a half-published slot read across the collector's cas + a mutator
+   handler's lookup despite the 128-bit atomics. Needs a dedicated isolation
+   pass (a standalone calloc+stlr-c/ldar-c torture under two threads).
+
+STATUS unchanged for the verified configuration: STW matrix (6 tests +
+unlimited-move IntegrityGC) ALL GREEN. Concurrent collector works under light
+load (ConcatTest limit=8 reaches 53-55 collects, [CT] 3 DONE) but is not yet
+robust under sustained whole-heap concurrent moves — the fixup-untagged race
+above is the single open blocker, now reproducible and instrumented.

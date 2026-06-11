@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..287e21980b0 100644
+index 069115be038..83ad4c949a0 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 @@ -6,12 +6,32 @@
@@ -35,7 +35,7 @@ index 069115be038..287e21980b0 100644
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,52 +44,352 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +44,378 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -243,6 +243,22 @@ index 069115be038..287e21980b0 100644
 +      oop o2 = _heap->move_object(o);
 +      if (o2 == o) return;                          // OOM: leave in place
 +      fwd = forward_table_cas_insert(from, (void*)(oopDesc*)o2);
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-9 race hunt: validate the freshly-moved cap and the forwarding the
++      // table handed back. A bad tag / wild address here pins the move-time
++      // corruption (vs a later mutator read).
++      if (::getenv("C9_MOVE_CHECK")) {
++        void* fc = (void*)(oopDesc*)o2;
++        unsigned long fa = (unsigned long)__builtin_cheri_address_get(fc);
++        if (!__builtin_cheri_tag_get(fc) || fa < 0x40000000UL || fa > 0x60000000UL ||
++            fwd != fc) {
++          fprintf(stderr, "[C9-mvchk] BAD move: from=%p o2=%#lx tag=%d fwd=%p "
++                  "klass=%s\n", (void*)from, fa, (int)__builtin_cheri_tag_get(fc),
++                  fwd, kn);
++          fflush(stderr);
++        }
++      }
++#endif
 +      _moved_from->append(o);                       // remember old cap to revoke
 +      _moved++;
 +    }
@@ -250,6 +266,16 @@ index 069115be038..287e21980b0 100644
 +                                                     // stale root; revoke makes it
 +                                                     // fault → handler forwards
 +    RawAccess<>::oop_store(p, cast_to_oop((oopDesc*)fwd));
++#ifdef __CHERI_PURE_CAPABILITY__
++    if (::getenv("C9_MOVE_CHECK")) {
++      void* fc = (void*)fwd;
++      if (!__builtin_cheri_tag_get(fc)) {
++        fprintf(stderr, "[C9-mvchk] fixup wrote UNTAGGED fwd=%p to slot %p\n",
++                fwd, (void*)p);
++        fflush(stderr);
++      }
++    }
++#endif
 +    _fixed++;
 +  }
 +  virtual void do_oop(narrowOop* p) {}

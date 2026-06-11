@@ -16,7 +16,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FT_INITIAL_CAP 8192  /* must be power of 2 */
+#define FT_INITIAL_CAP (1u<<16)  /* must be power of 2; grows on demand */
 
 typedef struct ft_slot {
     _Atomic(uintptr_t) from_addr;
