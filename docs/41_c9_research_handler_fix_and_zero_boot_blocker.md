@@ -1164,3 +1164,29 @@ StaticRootGC rc=0 [SR] OK. NEXT FRONTIER: IntegrityGC (8-node linked graph,
 moves + integrity verify) crashes in round 0 at the gc-call phase
 (0x4290c110, codecache) — the C-9 multi-object move correctness work starts
 here.
+
+## AM. ★★★ ALL C-9 INTEGRATION TESTS GREEN (2026-06-11, patch 0167)
+
+One architectural fix: the forward-table self-heal core is now a shared
+stopless_try_heal(si, ctx), called by BOTH sigprot_handler and the crash
+dumper. The dumper had REPLACED sigprot_handler at re-arm time, so after a
+(successful!) collect the very first stale heap-internal deref — which is
+EXPECTED and must be forwarded by design — was treated as a fatal dump.
+That was the whole IntegrityGC "crash": the GC itself (moved=8 fixed_roots=17
+revoked=8) had already worked.
+
+Result matrix (java -Xint -XX:+UseStoplessGC, Morello purecap QEMU):
+  java -version   rc=0
+  ConcatTest      rc=0  (full invokedynamic chain)
+  MinMove         rc=0  [MM] OK
+  StaticRootGC    rc=0  [SR] OK
+  IntegrityGC     rc=0  [IG] ALL-OK   (8-node graph, post-GC traversal heals
+                                       every stale next-link via SIGPROT)
+  StoplessBench   rc=0  [BENCH] ALL-OK (3 collect rounds under allocation
+                                        pressure, verify each round)
+
+This closes the C-9 STW form: move -> root fixup -> revoke -> lazy heal of
+heap-internal refs is correct end-to-end on real workloads. Remaining C-9
+scope before C-10: raise STOPLESS_MOVE_LIMIT beyond 8 (whole-heap moves),
+the move-while-allocating interleavings, and promoting the collect from
+System.gc-triggered STW to the concurrent StoplessCollectorThread loop.

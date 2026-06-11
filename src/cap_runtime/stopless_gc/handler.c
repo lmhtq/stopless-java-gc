@@ -93,31 +93,23 @@ stopless_safefetch_redirect(ucontext_t *ctx)
     return 0;
 }
 
-static void
-sigprot_handler(int sig, siginfo_t *si, void *ctx_)
+/* Forward-table self-heal core, shared by sigprot_handler AND the crash
+   dumper (which REPLACES sigprot_handler once re-armed — without this, the
+   first post-revoke stale-cap deref under the dumper was treated as fatal:
+   IntegrityGC died right after a SUCCESSFUL collect). Returns 1 if the fault
+   was healed (caller must simply return so the insn retries), 0 otherwise.
+
+   A GC-revoked cap traps when the mutator loads/stores through it. CheriBSD
+   has TWO revocation representations and the kernel build decides which:
+     - CHERI_CAPREVOKE_CLEARTAGS defined  -> tag cleared  -> PROT_CHERI_TAG (2)
+     - default (CLEARTAGS *undefined*)    -> perms cleared -> PROT_CHERI_PERM (5)
+   (see cheri_revoke_is_revoked() in sys/cheri/revoke.h). Accept BOTH. */
+static int
+stopless_try_heal(siginfo_t *si, ucontext_t *ctx)
 {
-    ucontext_t *ctx = (ucontext_t *)ctx_;
-
-    /* SafeFetch redirect FIRST (before any diag/abort). */
-    if (stopless_safefetch_redirect(ctx))
-        return;
-
-    /* A GC-revoked cap traps when the mutator loads/stores through it. CheriBSD
-       has TWO revocation representations and the kernel build decides which:
-         - CHERI_CAPREVOKE_CLEARTAGS defined  -> tag cleared  -> PROT_CHERI_TAG (2)
-         - default (CLEARTAGS *undefined*)    -> perms cleared -> PROT_CHERI_PERM (5)
-       (see cheri_revoke_is_revoked() in sys/cheri/revoke.h: revoked iff
-        tag==0 || perms==0). The default build clears PERMS, so a revoked cap
-       keeps tag=1 and faults as PROT_CHERI_PERM. Accept BOTH so the handler
-       works regardless of how the guest kernel was built; rejecting code 5
-       here was the cause of the MinMove silent re-fault spin (handler returned
-       without healing or advancing PC -> instruction retried -> faulted -> ...). */
     if (si->si_code != /*PROT_CHERI_TAG=*/2 &&
         si->si_code != /*PROT_CHERI_PERM=*/5) {
-        if (prev_sa.sa_sigaction) {
-            prev_sa.sa_sigaction(sig, si, ctx_);
-        }
-        return;
+        return 0;
     }
 
     /* On CHERI, si_addr = faulting PC, not the cap value. */
@@ -211,9 +203,7 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
                 (int)cheri_flags_get((void *)clr_v));
         fprintf(stderr, "  -- cheri_flags: bit0=C64-mode (1=C64, 0=A64) --\n");
         fflush(stderr);
-        signal(sig, SIG_DFL);
-        raise(sig);
-        return;
+        return 0;
     }
     /* Install the new cap into the faulting register so the retry
        sees a valid cap. */
@@ -265,6 +255,32 @@ sigprot_handler(int sig, siginfo_t *si, void *ctx_)
        destination, and advance PC. The retry-from-PC approach is
        simpler and matches Cornucopia Reloaded's expected behaviour.)
      */
+    return 1;
+}
+
+static void
+sigprot_handler(int sig, siginfo_t *si, void *ctx_)
+{
+    ucontext_t *ctx = (ucontext_t *)ctx_;
+
+    /* SafeFetch redirect FIRST (before any diag/abort). */
+    if (stopless_safefetch_redirect(ctx))
+        return;
+
+    if (si->si_code != /*PROT_CHERI_TAG=*/2 &&
+        si->si_code != /*PROT_CHERI_PERM=*/5) {
+        if (prev_sa.sa_sigaction) {
+            prev_sa.sa_sigaction(sig, si, ctx_);
+        }
+        return;
+    }
+
+    if (stopless_try_heal(si, ctx))
+        return;
+
+    /* Unhealable: fall to default fatal handling. */
+    signal(sig, SIG_DFL);
+    raise(sig);
 }
 
 __thread volatile void **stopless_v1_pending_slot;
@@ -369,6 +385,13 @@ stopless_crash_dumper(int sig, siginfo_t *si, void *ctx_)
        the post-banner "clinit 121" wall: ServiceThread -> OopStorage::
        release -> block_for_ptr -> SafeFetchN tag-fault treated as fatal. */
     if (stopless_safefetch_redirect(ctx))
+        return;
+
+    /* C-9: likewise it inherits the REVOKED-CAP SELF-HEAL duty — after a
+       collect, every stale heap-internal reference faults SIGPROT by DESIGN
+       and must be forwarded, not dumped (IntegrityGC died on the first
+       post-GC `next` deref while the dumper owned sig 34). */
+    if (sig == 34 && stopless_try_heal(si, ctx))
         return;
 
     struct capregs *cr = &ctx->uc_mcontext.mc_capregs;
