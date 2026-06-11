@@ -1,0 +1,235 @@
+/*
+ * forward_table.c — open-addressed hash map for forwarding.
+ *
+ * C-10 KEY DESIGN POINT: the table stores forwarding *addresses* (integers),
+ * NOT capabilities to the moved objects. Storing a real heap cap is fatal
+ * under a CONCURRENT collector: when an object is moved AGAIN in a later
+ * cycle and its (now-old) location is revoked, the kernel's cheri_revoke
+ * sweep scans ALL memory and clears the tag of any cap pointing into the
+ * revoked range — INCLUDING the forward-table entry that still points at
+ * that intermediate address. The entry then reads back untagged and a
+ * mutator gets an untagged oop -> fatal unforwarded fault. (Confirmed:
+ * STOPLESS_NO_REVOKE makes the corruption vanish entirely.)
+ *
+ * Fix: store the destination ADDRESS (an integer, immune to revocation) and
+ * rebuild a usable oop capability at lookup time from the arena base cap
+ * (which carries PERM_SW_VMEM and is therefore itself revocation-immune).
+ * The rebuilt cap has PERM_SW_VMEM stripped, so it is a normal mutator oop
+ * that CAN be revoked in a later cycle — but it lives only in registers /
+ * root slots, never in this table, so the table stays stable forever.
+ *
+ * Concurrency: single writer (collector at a safepoint), many readers
+ * (mutator handlers). Grows at >70% load; the old table is leaked (a reader
+ * may be mid-lookup on it) — bounded by geometric growth.
+ */
+
+#include "forward_table.h"
+
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdio.h>
+#include <cheriintrin.h>
+#include <cheri/cherireg.h>
+
+#define FT_INITIAL_CAP (1u<<16)  /* must be power of 2; grows on demand */
+
+typedef struct ft_slot {
+    _Atomic(uintptr_t) from_addr;
+    _Atomic(uintptr_t) new_addr;   /* integer: immune to revocation */
+} ft_slot_t;
+
+static _Atomic(ft_slot_t *) g_table = NULL;
+static _Atomic size_t       g_capacity = 0;
+static _Atomic size_t       g_size = 0;
+
+/* Arena base cap (carries PERM_SW_VMEM, revocation-immune). Set once at heap
+   init; read by lookup to rebuild oop caps. A plain pointer is fine: it is
+   published before any collect and never changes. */
+static void *g_arena_base = NULL;
+
+void
+forward_table_set_arena_base(void *base)
+{
+    g_arena_base = base;
+}
+
+/* Rebuild a usable oop cap addressing `addr` from the arena base. Strips
+   PERM_SW_VMEM so the result is an ordinary, revocable mutator oop. Bounds
+   are arena-wide (functionally correct for oop field/header access; tight
+   per-object bounds would require reading the object size — a future tweak). */
+static unsigned long long g_ft_derive_fail = 0;
+static inline void *
+ft_derive(uintptr_t addr)
+{
+    if (addr == 0 || g_arena_base == NULL) return NULL;
+    void *c = cheri_address_set(g_arena_base, addr);
+    c = cheri_perms_and(c, ~CHERI_PERM_SW_VMEM);
+    /* representability check: a tag-cleared or address-mismatched result means
+       address_set fell outside g_arena_base's representable range. */
+    if (!cheri_tag_get(c) ||
+        (uintptr_t)cheri_address_get(c) != addr) {
+        if (g_ft_derive_fail < 4) {
+            fprintf(stderr, "[ft-derive] FAIL addr=%#lx -> tag=%d got=%#lx "
+                    "base=%#lx top=%#lx\n", (unsigned long)addr,
+                    (int)cheri_tag_get(c), (unsigned long)cheri_address_get(c),
+                    (unsigned long)cheri_base_get(g_arena_base),
+                    (unsigned long)(cheri_base_get(g_arena_base)+cheri_length_get(g_arena_base)));
+            fflush(stderr);
+        }
+        g_ft_derive_fail++;
+    }
+    return c;
+}
+
+static inline uintptr_t
+mix(uintptr_t x)
+{
+    x ^= x >> 30;
+    x *= 0xbf58476d1ce4e5b9ULL;
+    x ^= x >> 27;
+    x *= 0x94d049bb133111ebULL;
+    x ^= x >> 31;
+    return x;
+}
+
+void
+forward_table_init(void)
+{
+    if (atomic_load_explicit(&g_table, memory_order_acquire) != NULL) return;
+    ft_slot_t *t = calloc(FT_INITIAL_CAP, sizeof(ft_slot_t));
+    atomic_store_explicit(&g_capacity, FT_INITIAL_CAP, memory_order_release);
+    atomic_store_explicit(&g_table, t, memory_order_release);
+    atomic_store(&g_size, 0);
+}
+
+void
+forward_table_clear(void)
+{
+    ft_slot_t *t = atomic_load_explicit(&g_table, memory_order_acquire);
+    size_t cap = atomic_load_explicit(&g_capacity, memory_order_acquire);
+    if (t == NULL) return;
+    memset(t, 0, cap * sizeof(ft_slot_t));
+    atomic_store(&g_size, 0);
+}
+
+void
+forward_table_maybe_grow(void)
+{
+    ft_slot_t *old = atomic_load_explicit(&g_table, memory_order_acquire);
+    if (old == NULL) { forward_table_init(); return; }
+    size_t cap = atomic_load_explicit(&g_capacity, memory_order_acquire);
+    size_t sz  = atomic_load(&g_size);
+    if (sz * 10 < cap * 7) return;                 /* load < 70% */
+
+    size_t newcap = cap * 2;
+    ft_slot_t *nt = calloc(newcap, sizeof(ft_slot_t));
+    if (nt == NULL) return;
+    size_t mask = newcap - 1;
+    for (size_t j = 0; j < cap; j++) {
+        uintptr_t k = atomic_load_explicit(&old[j].from_addr, memory_order_relaxed);
+        if (k == 0) continue;
+        uintptr_t v = atomic_load_explicit(&old[j].new_addr, memory_order_relaxed);
+        size_t i = mix(k) & mask;
+        while (atomic_load_explicit(&nt[i].from_addr, memory_order_relaxed) != 0) {
+            i = (i + 1) & mask;
+        }
+        atomic_store_explicit(&nt[i].from_addr, k, memory_order_relaxed);
+        atomic_store_explicit(&nt[i].new_addr, v, memory_order_relaxed);
+    }
+    atomic_store_explicit(&g_capacity, newcap, memory_order_release);
+    atomic_store_explicit(&g_table, nt, memory_order_release);
+    /* old table deliberately leaked — see file header. */
+}
+
+void
+forward_table_insert(uintptr_t from_addr, void *new_cap)
+{
+    ft_slot_t *t = atomic_load_explicit(&g_table, memory_order_acquire);
+    if (t == NULL) { forward_table_init(); t = atomic_load_explicit(&g_table, memory_order_acquire); }
+    uintptr_t na = (uintptr_t)cheri_address_get(new_cap);
+    size_t mask = atomic_load_explicit(&g_capacity, memory_order_acquire) - 1;
+    size_t i = mix(from_addr) & mask;
+    for (size_t probe = 0; probe <= mask; probe++) {
+        uintptr_t k = atomic_load_explicit(&t[i].from_addr, memory_order_acquire);
+        if (k == 0 || k == from_addr) {
+            atomic_store_explicit(&t[i].new_addr, na, memory_order_release);
+            atomic_store_explicit(&t[i].from_addr, from_addr, memory_order_release);
+            if (k == 0) atomic_fetch_add(&g_size, 1);
+            return;
+        }
+        i = (i + 1) & mask;
+    }
+}
+
+void *
+forward_table_cas_insert(uintptr_t from_addr, void *new_cap)
+{
+    ft_slot_t *t = atomic_load_explicit(&g_table, memory_order_acquire);
+    if (t == NULL) { forward_table_init(); t = atomic_load_explicit(&g_table, memory_order_acquire); }
+    uintptr_t na = (uintptr_t)cheri_address_get(new_cap);
+    size_t mask = atomic_load_explicit(&g_capacity, memory_order_acquire) - 1;
+    size_t i = mix(from_addr) & mask;
+    for (size_t probe = 0; probe <= mask; probe++) {
+        uintptr_t k = atomic_load_explicit(&t[i].from_addr, memory_order_acquire);
+        if (k == from_addr) {
+            uintptr_t w;
+            while ((w = atomic_load_explicit(&t[i].new_addr, memory_order_acquire)) == 0) {}
+            return ft_derive(w);
+        }
+        if (k == 0) {
+            uintptr_t expected = 0;
+            if (atomic_compare_exchange_strong_explicit(
+                    &t[i].from_addr, &expected, from_addr,
+                    memory_order_acq_rel, memory_order_acquire)) {
+                atomic_store_explicit(&t[i].new_addr, na, memory_order_release);
+                atomic_fetch_add(&g_size, 1);
+                return ft_derive(na);
+            }
+            if (expected == from_addr) {
+                uintptr_t w;
+                while ((w = atomic_load_explicit(&t[i].new_addr, memory_order_acquire)) == 0) {}
+                return ft_derive(w);
+            }
+        }
+        i = (i + 1) & mask;
+    }
+    return NULL;
+}
+
+void *
+forward_table_lookup(uintptr_t from_addr)
+{
+    ft_slot_t *t = atomic_load_explicit(&g_table, memory_order_acquire);
+    if (t == NULL) return NULL;
+    size_t mask = atomic_load_explicit(&g_capacity, memory_order_acquire) - 1;
+    size_t i = mix(from_addr) & mask;
+    for (size_t probe = 0; probe <= mask; probe++) {
+        uintptr_t k = atomic_load_explicit(&t[i].from_addr, memory_order_acquire);
+        if (k == 0) return NULL;
+        if (k == from_addr) {
+            uintptr_t na = atomic_load_explicit(&t[i].new_addr, memory_order_acquire);
+            return ft_derive(na);
+        }
+        i = (i + 1) & mask;
+    }
+    return NULL;
+}
+
+/* Address-based storage cannot be tag-corrupted, so this now only reports a
+   missing/unset arena base. Kept for the C9_FT_AUDIT harness. */
+size_t
+forward_table_audit(void)
+{
+    if (g_arena_base == NULL) {
+        fprintf(stderr, "[ft-audit] arena base not set!\n");
+        return 1;
+    }
+    return 0;
+}
+
+size_t
+forward_table_size(void)
+{
+    return atomic_load(&g_size);
+}

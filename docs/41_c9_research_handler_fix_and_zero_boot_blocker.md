@@ -1332,3 +1332,45 @@ unlimited-move IntegrityGC) ALL GREEN. Concurrent collector works under light
 load (ConcatTest limit=8 reaches 53-55 collects, [CT] 3 DONE) but is not yet
 robust under sustained whole-heap concurrent moves — the fixup-untagged race
 above is the single open blocker, now reproducible and instrumented.
+
+## AR. ★ ROOT CAUSE of the concurrent fixup-untagged: revoke clears forward-table caps (2026-06-12, patch 0173)
+
+The C9_MOVE_CHECK + C9_FT_AUDIT instrumentation pinned it decisively:
+
+- C9_FT_AUDIT (audit the table at each cycle START, before adding anything)
+  reported 19-25 untagged entries ALREADY PRESENT — i.e. corrupted during the
+  MUTATOR-RUN window between cycles, not at insert time.
+- STOPLESS_NO_REVOKE makes the corruption VANISH (mvchk=0, audit=0). 
+
+ROOT CAUSE: the forward table stored real heap CAPABILITIES to moved objects.
+When an object is moved AGAIN in a later cycle and its now-old location is
+revoked, the kernel's cheri_revoke sweep scans ALL memory for caps pointing
+into the revoked range and clears their tags — INCLUDING the forward-table
+entry still pointing at that intermediate address. Lookup then returns an
+untagged cap; the root gets an untagged oop; a later deref faults with the NEW
+address (which the table can't re-key) -> fatal. STW never hits this (objects
+are moved at most once per run).
+
+THE FIX (designed + implemented, saved as WIP-c10-forward_table-address-mode.*):
+store the destination ADDRESS (an integer, immune to revocation) and rebuild a
+usable oop cap at lookup from the arena base cap (which carries PERM_SW_VMEM
+and is itself revocation-immune), stripping PERM_SW_VMEM so the result is an
+ordinary revocable mutator oop that lives only in registers/roots, never in
+the table. This DROVE mvchk TO ZERO — the untagged corruption is gone.
+
+REGRESSION (open): the address-mode build hit a NEW fault — unlimited-move
+IntegrityGC (STW) gets a real NULL receiver in MethodHandles$Lookup.in's
+invokevirtual (c2=0, unforwarded). The ft_derive representability check fired
+ZERO times (addresses rebuild correctly), so it is NOT a derive failure; the
+only behavioral change is arena-wide bounds on the rebuilt cap vs the stored
+tight cap. Mechanism not yet understood (a tight-bounds derive or an acmp/
+identity interaction are the leading suspects). Because this breaks the
+previously-green STW unlimited-move config, the address-mode change is REVERTED
+on main (forward table back to cap-storage, STW matrix all green) and saved as
+WIP records for the next session to finish.
+
+STATUS: main is back to the patch-0172 baseline — STW matrix (6 tests +
+unlimited-move IntegrityGC) ALL GREEN; concurrent collector works under light
+load. The concurrent whole-heap blocker is now FULLY ROOT-CAUSED with a
+designed fix; only the ft_derive regression stands between here and robust
+concurrent whole-heap moves.
