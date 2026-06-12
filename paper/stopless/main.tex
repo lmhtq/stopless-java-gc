@@ -769,8 +769,8 @@ data directory). Figure~\ref{fig:sound} shows the pause structure
 over a heap growing $0.3\to79$\,MiB, full trace, no filtering: the
 mutator pause is \emph{median 18.5\,ms, p90 25.7\,ms, p99
 146.5\,ms, max 461\,ms}---the epoch-open contributes a median
-3.7\,ms---while the closing scan grows $0.70\to5.54$\,s
-\emph{off-pause}. At the large end the synchronous design pays
+3.9\,ms---while the closing scan grows from 0.70\,s to 5.54\,s
+across the trace (per-close maximum 6.27\,s) \emph{off-pause}. At the large end the synchronous design pays
 several seconds inside every pause. Notably, the request coalescing
 also eliminated a 1.5\,s pause tail present in our first
 (unsound) trace: those spikes were epoch-opens blocking in-kernel

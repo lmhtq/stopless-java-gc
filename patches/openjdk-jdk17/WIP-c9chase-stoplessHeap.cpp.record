@@ -1,8 +1,8 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..28d887aed39 100644
+index 069115be038..2d7fa9df019 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-@@ -6,12 +6,32 @@
+@@ -6,12 +6,33 @@
  
  #include "precompiled.hpp"
  #include "gc/stopless/stoplessHeap.hpp"
@@ -30,12 +30,13 @@ index 069115be038..28d887aed39 100644
 +#include "runtime/thread.hpp"
 +#include "runtime/vmThread.hpp"
 +#include "runtime/vmOperations.hpp"
++#include "runtime/atomic.hpp"
 +#include "memory/resourceArea.hpp"
 +#include "utilities/growableArray.hpp"
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,52 +44,529 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +45,549 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -48,9 +49,12 @@ index 069115be038..28d887aed39 100644
 +extern "C" int   stopless_revoke_open(void);
 +extern "C" int   stopless_revoke_close(void);
 +// Phase-2 (CLG load-side): set when a cycle OPENed an epoch in-pause and the
-+// collector thread owes a CLOSE off-pause. VMThread-serialized writes;
-+// collector thread reads after VMThread::execute returns.
-+static volatile bool g_stopless_close_pending = false;
++// collector thread owes a CLOSE off-pause. Written by the VMThread (inside
++// the safepoint op) and by the collector thread (after a successful close);
++// accessed with HotSpot Atomic acquire/release to avoid a C++ data race.
++static volatile int g_stopless_close_pending = 0;
++static inline bool stopless_close_pending()        { return Atomic::load_acquire(&g_stopless_close_pending) != 0; }
++static inline void stopless_set_close_pending(int v){ Atomic::release_store(&g_stopless_close_pending, v); }
 +extern "C" void  forward_table_maybe_grow(void);
 +extern "C" unsigned long long stopless_handler_faults;
 +extern "C" unsigned long long stopless_handler_heal_ns;
@@ -357,7 +361,7 @@ index 069115be038..28d887aed39 100644
 +    // published before mutators resume. The request coalesces with the next
 +    // collector cycle. (Root fixups via the forward table still run.)
 +    if (::getenv("STOPLESS_REVOKE_CONCURRENT") != nullptr &&
-+        g_stopless_close_pending) {
++        stopless_close_pending()) {
 +      limit = 0;
 +    }
 +
@@ -411,16 +415,25 @@ index 069115be038..28d887aed39 100644
 +      // SKIPS relocation when a close is pending (see the limit=0 guard at
 +      // the top); this branch only runs when the epoch is closed, and every
 +      // relocation's marks are published before mutators resume.
-+      assert(!g_stopless_close_pending || moved_from.length() == 0,
++      assert(!stopless_close_pending() || moved_from.length() == 0,
 +             "relocated with close pending: unsound");
 +      for (int i = 0; i < moved_from.length(); i++) {
 +        _heap->mark_for_revoke((void*)(oopDesc*)moved_from.at(i));
 +      }
 +      if (moved_from.length() > 0) {
-+        stopless_revoke_open();
-+        g_stopless_close_pending = true;
-+        revoked = moved_from.length();   // published (revocation now armed)
-+        swept = false;                   // close happens off-pause
++        // FAIL-SAFE: if the open fails, mutators must NOT resume with
++        // unpublished marks. Fall back to the synchronous full sweep inside
++        // this pause (slow but sound), and leave nothing pending.
++        if (stopless_revoke_open() == 0) {
++          stopless_set_close_pending(1);
++          swept = false;                 // close happens off-pause
++        } else {
++          fprintf(stderr, "[Stopless] WARN: epoch open FAILED; falling back "
++                  "to synchronous sweep in-pause\n");
++          _heap->revoke_sweep();
++          swept = true;
++        }
++        revoked = moved_from.length();
 +      }
 +    } else if (!no_revoke) {
 +      for (int i = 0; i < moved_from.length(); i++) {
@@ -490,11 +503,19 @@ index 069115be038..28d887aed39 100644
 +      // running; the CLG load barrier (armed by the in-pause open) keeps
 +      // them sound. [C11-close] is the off-pause cost the old design paid
 +      // inside the pause.
-+      if (g_stopless_close_pending) {
++      if (stopless_close_pending()) {
 +        jlong c0 = os::javaTimeNanos();
 +        int crc = stopless_revoke_close();
 +        jlong c1 = os::javaTimeNanos();
-+        g_stopless_close_pending = false;
++        if (crc == 0) {
++          stopless_set_close_pending(0);
++        } else {
++          // FAIL-SAFE: keep the pending flag — relocation stays coalesced
++          // (sound, degraded throughput) and the close is retried next
++          // iteration.
++          fprintf(stderr, "[Stopless] WARN: epoch close failed (rc=%d); "
++                  "retrying next cycle\n", crc);
++        }
 +        fprintf(stderr, "[C11-close] off_pause_close_us=%.1f rc=%d\n",
 +                (c1 - c0) / 1000.0, crc);
 +        fflush(stderr);

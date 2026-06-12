@@ -1852,3 +1852,22 @@ no relocation can outrun its epoch; assert guards the invariant. Re-measured:
 Paper §5.5 rewritten with the coalescing rule + the review-caught-it story +
 full-trace stats (no filter), fig regenerated, stale text fixed, trial logs
 exported (paper/data/c11_sound_trials.log).
+
+## BG. Round-6 review: fail-safe state machine + evidence archival (2026-06-12, patch 0188)
+
+Round-6 verified all round-5 fixes (independently re-derived our stats; confirmed
+the tail attribution by checking all 15 >500ms opens sat inside pending closes;
+trace arithmetic closes). Remaining items, all fixed:
+- FAIL-SAFE: open() rc now checked — on failure fall back to the synchronous
+  in-pause sweep (slow but sound; mutators never resume with unpublished
+  marks). close() failure no longer clears pending — relocation stays
+  coalesced and the close retries next cycle (sound, degraded throughput).
+- Cross-thread pending flag: volatile bool -> int with HotSpot
+  Atomic::load_acquire / release_store (data race eliminated).
+- Evidence: FULL trial outputs (gzipped) committed at paper/data/trials/
+  (the previous c11_sound_trials.log was tail-fragments AND gitignored by
+  *.log — caught by the reviewer checking HEAD).
+- Numbers: epoch-open median 3.9 ms (was rounded 3.7); close "0.70->5.54 s
+  across the trace (per-close max 6.27 s)".
+Re-verified on the fail-safe build: STW green; mixed-trigger IG 16/16 with 16
+coalesced cycles; CT pass. Reviewer's stated bar for Weak Accept met.
