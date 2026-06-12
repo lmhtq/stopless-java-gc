@@ -104,6 +104,12 @@ stopless_safefetch_redirect(ucontext_t *ctx)
      - CHERI_CAPREVOKE_CLEARTAGS defined  -> tag cleared  -> PROT_CHERI_TAG (2)
      - default (CLEARTAGS *undefined*)    -> perms cleared -> PROT_CHERI_PERM (5)
    (see cheri_revoke_is_revoked() in sys/cheri/revoke.h). Accept BOTH. */
+/* C-11: cumulative heal-fault time (ns), gated so the clock_gettime overhead
+   is only paid when measuring. clock_gettime(CLOCK_MONOTONIC) is
+   async-signal-safe. Read these + stopless_handler_faults from the JVM. */
+unsigned long long stopless_handler_heal_ns = 0;
+static int g_stopless_time_heals = -1;   /* -1 = unprobed */
+
 static int
 stopless_try_heal(siginfo_t *si, ucontext_t *ctx)
 {
@@ -111,6 +117,10 @@ stopless_try_heal(siginfo_t *si, ucontext_t *ctx)
         si->si_code != /*PROT_CHERI_PERM=*/5) {
         return 0;
     }
+    if (g_stopless_time_heals < 0)
+        g_stopless_time_heals = (getenv("C11_HEAL_TIME") != NULL) ? 1 : 0;
+    struct timespec _ts0;
+    if (g_stopless_time_heals) clock_gettime(CLOCK_MONOTONIC, &_ts0);
 
     /* On CHERI, si_addr = faulting PC, not the cap value. */
     struct capregs *cregs = &ctx->uc_mcontext.mc_capregs;
@@ -271,6 +281,13 @@ stopless_try_heal(siginfo_t *si, ucontext_t *ctx)
        destination, and advance PC. The retry-from-PC approach is
        simpler and matches Cornucopia Reloaded's expected behaviour.)
      */
+    if (g_stopless_time_heals) {
+        struct timespec _ts1;
+        clock_gettime(CLOCK_MONOTONIC, &_ts1);
+        stopless_handler_heal_ns +=
+            (unsigned long long)(_ts1.tv_sec - _ts0.tv_sec) * 1000000000ULL
+            + (unsigned long long)(_ts1.tv_nsec - _ts0.tv_nsec);
+    }
     return 1;
 }
 

@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..18a5ad32e9d 100644
+index 069115be038..5f12360e8cd 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 @@ -6,12 +6,32 @@
@@ -35,7 +35,7 @@ index 069115be038..18a5ad32e9d 100644
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,52 +44,423 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +44,436 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -46,6 +46,8 @@ index 069115be038..18a5ad32e9d 100644
  
 +extern "C" int   stopless_handler_install(void);
 +extern "C" void  forward_table_maybe_grow(void);
++extern "C" unsigned long long stopless_handler_faults;
++extern "C" unsigned long long stopless_handler_heal_ns;
 +static void stopless_start_collector(StoplessHeap* h, int interval_ms);
 +// C-9: shared forwarding table in cap_runtime (the SIGPROT handler reads it).
 +extern "C" void  forward_table_init(void);
@@ -478,4 +480,15 @@ index 069115be038..18a5ad32e9d 100644
 +  if (::getenv("STOPLESS_ROOTSCAN_AT_EXIT") != nullptr) {
 +    collect(GCCause::_java_lang_system_gc);
 +  }
++#ifdef __CHERI_PURE_CAPABILITY__
++  // C-11: dump the concurrent read-barrier (heal-fault) totals at VM exit —
++  // the per-fault cost of the hardware capability barrier.
++  if (::getenv("C11_HEAL_TIME") != nullptr) {
++    unsigned long long n = stopless_handler_faults;
++    unsigned long long ns = stopless_handler_heal_ns;
++    fprintf(stderr, "[C11-heal] heal_faults=%llu total_ns=%llu avg_ns=%.1f\n",
++            n, ns, n ? (double)ns / (double)n : 0.0);
++    fflush(stderr);
++  }
++#endif
 +}

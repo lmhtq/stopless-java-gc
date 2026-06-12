@@ -1555,3 +1555,31 @@ This is genuine paper §5 data: the hardware-capability moving-GC mutator
 pause (the move) is ~30 µs and heap-size-independent; the revocation sweep is
 the cost to amortize. Next: vary the app to plot scan_move vs root count, and
 prototype batched revocation to show the amortized total pause.
+
+## AX. C-11 read-barrier (heal-fault) cost — completes the microbench triad (2026-06-12, patch 0178)
+
+Added cumulative heal-fault timing in the SIGPROT handler
+(clock_gettime(CLOCK_MONOTONIC), async-signal-safe, env C11_HEAL_TIME) +
+stopless_handler_faults; dumped at VM exit as [C11-heal].
+
+IntegrityGC, concurrent (CONCURRENT_MS=50, MOVE_LIMIT=8), Morello purecap/QEMU:
+  heal_faults=805  total_ns=7,005,648  avg_ns=8703  (~8.7 us / heal-fault)
+
+This completes the C-11 microbench triad (all QEMU-emulated; real Morello is
+faster, but the relative structure is the architectural result):
+
+  | metric                         | cost            | scales with        |
+  | move pause (STW scan+move)     | ~30 us          | #roots (NOT heap)  |
+  | revoke pause (cheri_revoke)    | ~1 s / cycle    | (full sweep)       |
+  | heal-fault (concurrent barrier)| ~8.7 us / fault | #stale derefs      |
+
+Reading: the per-access concurrent read barrier (the CHERI fault->forward->
+resume) is ~8.7 us (signal delivery + forward_table_lookup + ft_derive +
+register patch + return; signal delivery dominates under QEMU). Over the whole
+IntegrityGC run that is 805 faults x 8.7 us = ~7 ms total — negligible next to
+ONE ~1 s revoke sweep. So the cost hierarchy is unambiguous:
+revoke (1 s) >> move (30 us) ~ aggregate-heal (7 ms). The moving-GC mutator
+pause is tiny and heap-size-independent; the concurrent barrier is cheap; the
+revocation sweep is the single cost to amortize (batch sweeps / per-page
+load-barrier revocation, Cornucopia-Reloaded-style) — which is precisely the
+Phase-2 direction in the original two-phase plan.
