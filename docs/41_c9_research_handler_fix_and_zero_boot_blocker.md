@@ -1659,3 +1659,44 @@ expensive path is rare — the acmp barrier is not a meaningful overhead.
 C-11 COMPLETE: heap-independence figure (§AY), microbench triad (§AW/§AX),
 batched-revoke amortization + acmp cost (this §AZ). The empirical core of the
 paper is done.
+
+## BA. External review round 1 (codex/gpt-5.5) — one REAL bug + batching verdict (2026-06-12, patch 0181)
+
+User ran the paper through codex (gpt-5.5). Triage against source:
+
+(1) REAL BUG CONFIRMED & FIXED: forward_table_lookup was ONE-HOP. For a
+chain A->A'->A'', resolving a stale-A ref derived a FRESH cap to A' from the
+revocation-exempt arena root — fresh caps are always VALID (revocation kills
+caps existing at sweep time; it does not poison the range), so the expected
+second fault never fired and the mutator silently read the stale A' copy.
+The docs' "heals in two faults, one per generation" claim only held if the
+first heal raced between the two sweeps. FIX: transitive chase inside the
+integer table (ft_find loop, FT_CHASE_MAX=128) before deriving; cas_insert
+hit-paths chase too. Full matrix re-verified green (batch=1).
+
+(2) BATCHING VERDICT REVISED: with the chase in place and repeated trials on
+a clean guest, batch>1 under the concurrent collector fails
+NONDETERMINISTICALLY (clean-guest: b32 0/3, b8 0/2; pre-reboot 1/3+0/2;
+batch=1 stable ALL-OK). Root cause is the SECOND unsoundness mode of the
+batch window, sharper than the mutation caveat: until the sweep, stale caps
+are still TAGGED, so the acmp both-tagged fast path judges old vs new copies
+of the SAME object UNEQUAL. Boot's java.lang.invoke identity-keyed caches hit
+this when cycles land on bootstrap (symptom: IllegalAccessError ... LambdaMetafactory).
+Patch 0180's 3/3 batch passes were timing luck (single samples). The 11.9x
+figure stands as the measured AMORTISATION POTENTIAL of the mechanism, NOT a
+deployable configuration; paper §3.5/§5.4 now say exactly that. Sound design
+= close the window with the per-page capability-load generation barrier
+(Cornucopia Reloaded), which is the Phase-2 instrument anyway.
+
+(3) Other accepted points, fixed in paper (no code change): not yet a complete
+GC (no liveness/reclaim/reuse — reframed contributions + new limitation
+paragraphs incl. the address-reuse generation-ambiguity analysis); handler is
+NOT slot-self-healing (use-time trap can't identify the source slot — fields
+re-fault per reload; structural asymmetry vs ZGC's load-time barrier, stated);
+identity-barrier coverage incomplete (CAS/JNI IsSameObject/VM tables
+enumerated; identity hash safe via header copy); flat-pause experiment framed
+as negative control (no hidden heap term); "off-pause sweep" contradiction
+fixed (sweep IS in-pause today); batching improves mean not worst case.
+
+Rejected/deferred: reproducibility complaints (reviewer had no source/data
+access — user said skip).

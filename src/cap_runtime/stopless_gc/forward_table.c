@@ -181,7 +181,7 @@ forward_table_cas_insert(uintptr_t from_addr, void *new_cap)
         if (k == from_addr) {
             uintptr_t w;
             while ((w = atomic_load_explicit(&t[i].new_addr, memory_order_acquire)) == 0) {}
-            return ft_derive(w, atomic_load_explicit(&t[i].new_len, memory_order_acquire));
+            return forward_table_lookup(from_addr);   /* transitive chase */
         }
         if (k == 0) {
             uintptr_t expected = 0;
@@ -196,7 +196,7 @@ forward_table_cas_insert(uintptr_t from_addr, void *new_cap)
             if (expected == from_addr) {
                 uintptr_t w;
                 while ((w = atomic_load_explicit(&t[i].new_addr, memory_order_acquire)) == 0) {}
-                return ft_derive(w, atomic_load_explicit(&t[i].new_len, memory_order_acquire));
+                return forward_table_lookup(from_addr);   /* transitive chase */
             }
         }
         i = (i + 1) & mask;
@@ -204,24 +204,54 @@ forward_table_cas_insert(uintptr_t from_addr, void *new_cap)
     return NULL;
 }
 
-void *
-forward_table_lookup(uintptr_t from_addr)
+/* Raw one-hop probe: *na/*nl <- mapping for from_addr. Returns 1 on hit. */
+static int
+ft_find(uintptr_t from_addr, uintptr_t *na, size_t *nl)
 {
     ft_slot_t *t = atomic_load_explicit(&g_table, memory_order_acquire);
-    if (t == NULL) return NULL;
+    if (t == NULL) return 0;
     size_t mask = atomic_load_explicit(&g_capacity, memory_order_acquire) - 1;
     size_t i = mix(from_addr) & mask;
     for (size_t probe = 0; probe <= mask; probe++) {
         uintptr_t k = atomic_load_explicit(&t[i].from_addr, memory_order_acquire);
-        if (k == 0) return NULL;
+        if (k == 0) return 0;
         if (k == from_addr) {
-            uintptr_t na = atomic_load_explicit(&t[i].new_addr, memory_order_acquire);
-            if (na == 0) return NULL;   /* slot mid-publish: treat as absent */
-            return ft_derive(na, atomic_load_explicit(&t[i].new_len, memory_order_acquire));
+            uintptr_t a = atomic_load_explicit(&t[i].new_addr, memory_order_acquire);
+            if (a == 0) return 0;       /* slot mid-publish: treat as absent */
+            *na = a;
+            *nl = atomic_load_explicit(&t[i].new_len, memory_order_acquire);
+            return 1;
         }
         i = (i + 1) & mask;
     }
-    return NULL;
+    return 0;
+}
+
+/* Lookup is TRANSITIVE: chase A -> A' -> A'' inside the integer table and
+   derive a cap only for the FINAL address. One hop is NOT enough: if A' was
+   itself moved+revoked in a later cycle, a cap to A' freshly derived here
+   (post-sweep, from the revocation-exempt arena root) would be VALID and the
+   mutator would silently read the stale A' copy -- revocation only kills
+   caps that exist at sweep time, it does not poison the address range. So
+   the expected "second fault that heals A'->A''" never happens unless the
+   first heal raced between the two sweeps. (Found via external review of
+   the paper's incorrect one-fault-per-generation claim, 2026-06-12.)
+   Depth-bounded: the table maps distinct from-addresses and the arena never
+   re-issues addresses (bump alloc, no reuse), so chains are acyclic;
+   FT_CHASE_MAX is paranoia against table corruption. */
+#define FT_CHASE_MAX 128
+void *
+forward_table_lookup(uintptr_t from_addr)
+{
+    uintptr_t na; size_t nl;
+    if (!ft_find(from_addr, &na, &nl)) return NULL;
+    for (int depth = 0; depth < FT_CHASE_MAX; depth++) {
+        uintptr_t nna; size_t nnl;
+        if (!ft_find(na, &nna, &nnl)) break;
+        if (nna == na) break;          /* self-map paranoia */
+        na = nna; nl = nnl;
+    }
+    return ft_derive(na, nl);
 }
 
 /* Address-based storage cannot be tag-corrupted; report only a missing

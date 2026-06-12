@@ -155,13 +155,23 @@ This paper makes the following contributions:
   hundreds of times per run.
 \end{itemize}
 
-We are explicit about scope (\S\ref{sec:limits}): the evaluation runs
-under QEMU system emulation, so absolute times are inflated and only
-the \emph{shapes}---flat versus linear, the amortisation ratio---are
-architectural claims; relocation is stop-the-world in the measured
+We are explicit about scope (\S\ref{sec:limits}). What is built and
+measured is the \emph{relocation and barrier substrate} of a moving
+collector: relocation, revocation, healing, and identity, validated by
+whole-heap-relocation integrity tests. It is not yet a complete
+collector---there is no liveness analysis (relocation candidates come
+from the root scan), no reclamation of dead objects, and no address
+reuse (\S\ref{sec:design:fwd})---and the evaluation runs under QEMU
+system emulation, so absolute times are inflated and only the
+\emph{shapes}---flat versus linear, the amortisation ratio---are
+architectural claims. Relocation is stop-the-world in the measured
 configuration (a concurrent collector thread is implemented and stable
-under light load); and execution is interpreter-only, as JIT
-compilation on Morello remains future work across the ecosystem.
+under light load), and execution is interpreter-only, as JIT
+compilation on Morello remains future work across the ecosystem. We
+believe the substrate is the research question---liveness and
+reclamation compose with it by known techniques---but the reader should
+weigh the results as mechanism measurements, not end-to-end GC
+benchmarks.
 
 % =====================================================================
 \section{Background}
@@ -293,9 +303,16 @@ permissions stripped). A collection cycle (Figure~\ref{fig:protocol}):
   are never used are never healed and cost nothing.
 \end{enumerate}
 
-The protocol is self-correcting in the same sense as ZGC's self-healing
-barrier: each stale reference traps at most a handful of times (once
-per register copy) before the healed value propagates.
+Unlike ZGC's self-healing barrier, the handler cannot repair the
+memory slot the stale reference was loaded from: the trap fires at
+\emph{use} time, after the reference was loaded, and the source slot's
+address is no longer identifiable. Only the faulting register is
+patched. A heap field holding a stale reference therefore re-traps on
+every reload until the program itself overwrites the field (or a later
+cycle's fixup pass reaches it); the cost is bounded by the per-heal
+cost (\S\ref{sec:eval:costs}) per reload, not amortised away. This is
+a structural asymmetry of use-time barriers versus load-time barriers,
+and the honest price of getting the barrier for free.
 
 \subsection{The forwarding table must not contain capabilities}
 \label{sec:design:fwd}
@@ -335,9 +352,34 @@ collector. The general law: \emph{on revocation-based systems, GC
 metadata that must survive revocation must be integers, with
 capabilities re-derived on demand from a revocation-exempt root.}
 
-Forwarding entries persist across cycles, so a reference that is
-multiple relocations stale heals through a chain of faults, one per
-generation.
+Forwarding entries persist across cycles, and lookups must chase them
+\emph{transitively}: when $A\to A'$ and later $A'\to A''$, a handler
+that resolves a stale reference to $A$ by one table hop would derive a
+\emph{fresh, valid} capability to $A'$---revocation invalidates the
+capabilities that exist at sweep time, it does not poison the address
+range---and the mutator would silently read the stale intermediate
+copy, with no second fault to save it. The lookup therefore follows the
+integer chain to the final address before deriving a capability. We
+state this explicitly because we initially got it wrong: the intuitive
+``one fault per generation'' model only holds if the first heal races
+between the two sweeps. It is the second instance of the same design
+law---\emph{a freshly derived capability is always live; correctness
+must come from the integer metadata, never from expecting revocation to
+re-trap}.
+
+\paragraph{Address reuse.} The prototype's arena is a bump allocator
+that never reuses addresses, so a forwarding key denotes one object
+generation forever. Reuse breaks that: if address $X$ held $A$ (moved,
+entry $X\to\cdot$) and is later reallocated to $B$ which is also
+moved, the table would need two entries keyed $X$, and a trapped
+capability with base $X$ would be ambiguous between generations. Reuse
+therefore requires an invariant the prototype does not yet implement:
+a region may be recycled only once no unhealed reference into its
+previous generation can remain (an epoch scheme, a forced heal pass
+over surviving stale capability stores, or relocation-set draining as
+in ZGC's per-cycle remap). We flag this as the main gap between the
+relocation substrate measured here and a complete collector
+(\S\ref{sec:limits}).
 
 \subsection{The heal handler}
 \label{sec:design:heal}
@@ -516,10 +558,17 @@ isolating heap size as the variable. Over a $46\times$ heap range at a
 constant 894 roots, the relocation pause moves from 13.7\,ms to
 14.6\,ms ($+6\%$, within cycle-to-cycle noise), because the pause does
 work proportional to roots scanned plus objects moved---never to heap
-size. There is no marking phase, no per-object liveness traversal, and
-no card or remembered-set scan in the pause: unreferenced old copies
-are simply never healed, and their reclamation is the (off-pause)
-revocation sweep. By contrast the sweep itself, panel~(b), is linear in
+size. Part of this flatness is by construction---the workload holds roots
+and per-cycle relocation volume fixed---and that is the point of the
+experiment: it is a negative control showing the pause contains
+\emph{no hidden heap-proportional term}. There is no marking phase, no
+per-object liveness traversal, and no card or remembered-set scan; a
+collector design that secretly depended on heap size would show it
+here. The sweep, which is heap-proportional, also currently executes
+inside the safepoint and is therefore pause time too---panel~(b) and
+\S\ref{sec:eval:batch} quantify it; making it concurrent (as
+Cornucopia Reloaded does for C heaps) is the obvious next step and is
+orthogonal to the relocation path measured in panel~(a). By contrast the sweep itself, panel~(b), is linear in
 mapped memory---$0.83$\,s at $3.6$\,MiB to $5.95$\,s at
 $163$\,MiB---confirming that sweeping, exactly as in the C/C++
 revocation literature~\cite{cherivoke,cornucopia-reloaded}, is the cost
@@ -636,6 +685,17 @@ knowledge~\cite{mojo-jvm,cheri-interpreter}, we run interpreted.
 Template-interpreter bytecodes are exactly where our barrier costs sit
 (the \texttt{acmp} tiers), so JIT changes the constant factors, not the
 structure.
+
+\paragraph{Not yet a complete collector.} Liveness, reclamation, and
+address reuse remain unimplemented: relocation candidates come from the
+root scan rather than a marking traversal, dead objects are never
+collected, and the bump arena never recycles addresses (which also
+sidesteps the forwarding-generation ambiguity of
+\S\ref{sec:design:fwd}). Composing a marker and an evacuating
+reclaimer with this substrate uses standard machinery; the open
+CHERI-specific question is the reuse invariant---when has every stale
+capability into a region provably been healed or destroyed---for which
+the revocation epoch counter itself looks like the right primitive.
 
 \paragraph{Memory overhead.} Old copies occupy arena space until swept,
 so batching trades pause time for float, bounded by (moved bytes per
