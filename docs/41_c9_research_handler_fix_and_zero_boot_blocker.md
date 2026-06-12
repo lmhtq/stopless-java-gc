@@ -1394,12 +1394,20 @@ RESULTS:
 - Concurrent whole-heap torture: C9_MOVE_CHECK = 0 across all runs — the
   revoke-clears-table corruption is GONE for good.
 - Remaining (separate) concurrent races, ~23-31 collects into boot:
-  (a) rc=162: all-ones cap (0xffff...ffff) as the THREAD argument of
-      check_special_condition_for_native_trans during the slow native->Java
-      transition of Unsafe.compareAndSetReference — i.e. the CAS-on-moved-
-      object + safepoint-pending interleaving corrupts c0 before/at the
-      transition call. NOT the forward table (mvchk=0): suspect the native
-      entry's result save/restore vs the transition call's argument setup,
-      or the LDAXR/STLXR heal-retry window.
+  (a) rc=162 in the native->Java slow transition of
+      Unsafe.compareAndSetReference: deeper analysis shows the real fault is
+      a CSP OUT-OF-BOUNDS at the entry `stp c29,c30,[csp,#-0x30]!` of
+      check_special_condition_for_native_trans — CSP base/top = the wrong
+      256K stack segment (base=0x422af100 top=0x422ef100) while addr is in
+      the LIVE segment (0x426c37a0). The dumper's "0xffff... c0" was an
+      odd-PC misread (ELR bit0 = C64 marker). This native-trans SLOW path
+      (`mov rscratch2,fn; blr rscratch2` + the CSP it inherits) is taken ONLY
+      when a safepoint/handshake is pending on native return — which STW
+      never produces, so it was never cap-ported. It is a native-entry
+      slow-path porting gap (integer blr + a stale/narrow CSP), NOT a GC
+      correctness bug — the forward table is clean (mvchk=0). The next work
+      item: cap-port generate_native_entry's _thread_in_native_trans branch
+      (CSP reconstruction + the runtime-call) the way the rest of the entry
+      was ported.
   (b) rc=1: boot-layer NPE (no cap fault at all) — identity/ordering issue
       under early aggressive moves, to be re-examined after (a).
