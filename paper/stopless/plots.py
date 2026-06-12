@@ -160,7 +160,51 @@ def fig_batched():
               f"({avgs[0]/a:.1f}x lower)")
 
 
+# ---------------------------------------------------------------- figure 3
+def fig_sound_concurrent():
+    import re as _re
+    rows = []; closes = []
+    heap_at = 0.0
+    for ln in open(os.path.join(DATA, "c11_sound_concurrent_heapgrowth.txt")):
+        m = _re.search(r"heap_used_K=(\d+) scan_move_us=([\d.]+) "
+                       r"revoke_us=([\d.]+) pause_us=([\d.]+)", ln)
+        if m:
+            heap_at = int(m.group(1)) / 1024.0
+            rows.append((heap_at, float(m.group(4)) / 1e3))
+            continue
+        m = _re.search(r"off_pause_close_us=([\d.]+)", ln)
+        if m:
+            closes.append((heap_at, float(m.group(1)) / 1e6))
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(5.4, 2.1))
+
+    x = [r[0] for r in rows]; y = [r[1] for r in rows]
+    ax1.scatter(x, y, s=4, color=BLUE, alpha=0.6, linewidths=0)
+    ax1.set_yscale("log")
+    ax1.set_xlabel("heap used (MiB)")
+    ax1.set_ylabel("mutator pause (ms)")
+    ax1.set_title("(a) in-pause: move + epoch-open", loc="left")
+    ax1.axhline(18.6, color=GRAY, lw=0.7, ls="--")
+    ax1.annotate("median 18.6 ms", xy=(50, 21), fontsize=8, color=GRAY)
+
+    cx = [c[0] for c in closes]; cy = [c[1] for c in closes]
+    ax2.plot(cx, cy, "s-", color=VERMILION, ms=2.0, lw=0.9)
+    ax2.set_xlabel("heap used (MiB)")
+    ax2.set_ylabel("off-pause closing scan (s)")
+    ax2.set_title("(b) off-pause: closing scan", loc="left")
+
+    fig.tight_layout(w_pad=2.0)
+    fig.savefig(os.path.join(FIGS, "sound_concurrent.pdf"))
+    plt.close(fig)
+    import statistics as st
+    steady = [p for h, p in rows if h > 2.0]
+    print(f"fig3: n={len(rows)} closes={len(closes)} "
+          f"median={st.median(steady):.1f}ms p90={sorted(steady)[int(len(steady)*0.9)]:.1f} "
+          f"max={max(steady):.0f} close {cy[0]:.2f}->{cy[-1]:.2f}s")
+
+
 if __name__ == "__main__":
     fig_heap_independence()
     fig_batched()
+    fig_sound_concurrent()
     print("figures written to", FIGS)

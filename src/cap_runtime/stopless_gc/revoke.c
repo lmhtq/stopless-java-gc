@@ -153,3 +153,55 @@ stopless_revoke_now(void)
     }
     return 0;
 }
+
+/* Phase-2 split protocol. See revoke.h. Quiet by default
+   (STOPLESS_REVOKE_VERBOSE=1 to trace). */
+static int g_rv_verbose = -1;
+static int
+rv_verbose(void)
+{
+    if (g_rv_verbose < 0)
+        g_rv_verbose = (getenv("STOPLESS_REVOKE_VERBOSE") != NULL) ? 1 : 0;
+    return g_rv_verbose;
+}
+
+int
+stopless_revoke_open(void)
+{
+    if (ensure_cri() != 0) return -1;
+    atomic_thread_fence(memory_order_acq_rel);
+    cheri_revoke_epoch_t e0 = g_cri->epochs.enqueue;
+    int rc = cheri_revoke(CHERI_REVOKE_IGNORE_START, e0, NULL);
+    if (rv_verbose()) {
+        fprintf(stderr, "[stopless] revoke_open rc=%d errno=%d enq=%llu deq=%llu\n",
+                rc, errno,
+                (unsigned long long)g_cri->epochs.enqueue,
+                (unsigned long long)g_cri->epochs.dequeue);
+        fflush(stderr);
+    }
+    /* The opening pass returns non-zero on some kernels even when the epoch
+       advanced (stats/copyout quirks). The epoch counter is the truth. */
+    return (g_cri->epochs.enqueue > e0 || rc == 0) ? 0 : rc;
+}
+
+int
+stopless_revoke_close(void)
+{
+    if (ensure_cri() != 0) return -1;
+    atomic_thread_fence(memory_order_acq_rel);
+    cheri_revoke_epoch_t target = g_cri->epochs.enqueue;
+    int rc = cheri_revoke(CHERI_REVOKE_LAST_PASS, target, NULL);
+    int loops = 0;
+    while (!cheri_revoke_epoch_clears(g_cri->epochs.dequeue, target) && loops < 10) {
+        rc = cheri_revoke(CHERI_REVOKE_LAST_PASS, target, NULL);
+        loops++;
+    }
+    if (rv_verbose()) {
+        fprintf(stderr, "[stopless] revoke_close rc=%d loops=%d enq=%llu deq=%llu\n",
+                rc, loops,
+                (unsigned long long)g_cri->epochs.enqueue,
+                (unsigned long long)g_cri->epochs.dequeue);
+        fflush(stderr);
+    }
+    return cheri_revoke_epoch_clears(g_cri->epochs.dequeue, target) ? 0 : -1;
+}

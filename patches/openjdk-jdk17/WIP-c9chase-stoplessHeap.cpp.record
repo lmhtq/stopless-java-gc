@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..db2fe1eb6a3 100644
+index 069115be038..f028c028aa1 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 @@ -6,12 +6,32 @@
@@ -35,7 +35,7 @@ index 069115be038..db2fe1eb6a3 100644
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,52 +44,468 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +44,515 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -45,6 +45,12 @@ index 069115be038..db2fe1eb6a3 100644
  }
  
 +extern "C" int   stopless_handler_install(void);
++extern "C" int   stopless_revoke_open(void);
++extern "C" int   stopless_revoke_close(void);
++// Phase-2 (CLG load-side): set when a cycle OPENed an epoch in-pause and the
++// collector thread owes a CLOSE off-pause. VMThread-serialized writes;
++// collector thread reads after VMThread::execute returns.
++static volatile bool g_stopless_close_pending = false;
 +extern "C" void  forward_table_maybe_grow(void);
 +extern "C" unsigned long long stopless_handler_faults;
 +extern "C" unsigned long long stopless_handler_heal_ns;
@@ -372,9 +378,37 @@ index 069115be038..db2fe1eb6a3 100644
 +    { const char* b = ::getenv("STOPLESS_REVOKE_BATCH");
 +      if (b != nullptr) { batch = strtol(b, nullptr, 10); if (batch < 1) batch = 1; } }
 +
++    // Phase-2 SOUND mode (STOPLESS_REVOKE_CONCURRENT=1): publish this
++    // cycle's marks by OPENING a revocation epoch inside the pause
++    // (milliseconds, no data scan — the CLG load barrier is armed and no
++    // stale cap can be loaded tagged from here on). The heap-linear closing
++    // scan runs OFF-PAUSE on the collector thread (g_stopless_close_pending).
++    // Mutators run during the close under the per-page load barrier.
++    // Constraint: an epoch must be closed before the NEXT cycle's open can
++    // publish new marks; the collector thread closes before re-triggering,
++    // so cycles serialized through it are always sound. A System.gc arriving
++    // while a close is pending would leave its marks unpublished until the
++    // next epoch — detect and warn.
++    static bool conc_revoke = ::getenv("STOPLESS_REVOKE_CONCURRENT") != nullptr;
++
 +    int revoked = 0;
 +    bool swept = false;
-+    if (!no_revoke) {
++    if (!no_revoke && conc_revoke) {
++      for (int i = 0; i < moved_from.length(); i++) {
++        _heap->mark_for_revoke((void*)(oopDesc*)moved_from.at(i));
++      }
++      if (g_stopless_close_pending) {
++        fprintf(stderr, "[Stopless] WARN: epoch still open at next collect; "
++                "this cycle's %d marks publish at the NEXT open\n",
++                moved_from.length());
++      }
++      if (moved_from.length() > 0) {
++        stopless_revoke_open();
++        g_stopless_close_pending = true;
++        revoked = moved_from.length();   // published (revocation now armed)
++        swept = false;                   // close happens off-pause
++      }
++    } else if (!no_revoke) {
 +      for (int i = 0; i < moved_from.length(); i++) {
 +        _heap->mark_for_revoke((void*)(oopDesc*)moved_from.at(i));
 +      }
@@ -438,6 +472,19 @@ index 069115be038..db2fe1eb6a3 100644
 +      if (should_terminate()) break;
 +      VM_StoplessCollect op(_heap);
 +      VMThread::execute(&op);
++      // Phase-2: run the heap-linear closing scan OFF-PAUSE. Mutators are
++      // running; the CLG load barrier (armed by the in-pause open) keeps
++      // them sound. [C11-close] is the off-pause cost the old design paid
++      // inside the pause.
++      if (g_stopless_close_pending) {
++        jlong c0 = os::javaTimeNanos();
++        int crc = stopless_revoke_close();
++        jlong c1 = os::javaTimeNanos();
++        g_stopless_close_pending = false;
++        fprintf(stderr, "[C11-close] off_pause_close_us=%.1f rc=%d\n",
++                (c1 - c0) / 1000.0, crc);
++        fflush(stderr);
++      }
 +    }
 +  }
 +  void stop_service() override {}

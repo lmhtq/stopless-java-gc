@@ -60,8 +60,25 @@ void stopless_unmark_revoke(stopless_arena_t *a, uintptr_t obj_addr, size_t len)
    manual address arithmetic. */
 int  stopless_mark_revoke_cap(stopless_arena_t *a, void *obj_cap);
 
-/* Trigger the actual kernel revocation sweep. Returns 0 on success. */
+/* Trigger the actual kernel revocation sweep (open+close, synchronous,
+   blocks the caller for the full heap-linear scan). Returns 0 on success. */
 int  stopless_revoke_now(void);
+
+/* Phase-2 split protocol (load-side / CLG barrier):
+   - stopless_revoke_open(): OPEN a revocation epoch. Publishes all shadow
+     marks set so far and arms the per-page capability-load generation
+     barrier: from return onward, no stale capability into a marked range
+     can be loaded with its tag intact (the first load from any
+     not-yet-scanned page CLG-faults and the kernel lazily sweeps it).
+     Costs milliseconds, NO data scan. Call INSIDE the GC pause.
+   - stopless_revoke_close(): run the closing scan (LAST_PASS) and wait for
+     the epoch to clear. Heap-linear; call OUTSIDE the pause (collector
+     thread) — mutators run concurrently under the load-side barrier.
+   open() while an epoch is already open is a no-op for the load side; the
+   caller must close before marks of a NEW cycle can be published by the
+   next open. Returns 0 on success. */
+int  stopless_revoke_open(void);
+int  stopless_revoke_close(void);
 
 #ifdef __cplusplus
 }

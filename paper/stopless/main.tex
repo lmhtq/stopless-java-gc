@@ -65,10 +65,13 @@ it revokes, batching relocations across collection cycles amortises the mean
 cycle pause by an observed $10.3\times$ at batch size 8 in a
 workload-constrained stop-the-world configuration---though we show the batch window is
 unsound for general concurrent programs (stale-but-still-tagged
-capabilities break reference identity), and we verify that the hardware
-primitive that closes the window, the per-page capability-load
-generation barrier, works under our stack: opening a revocation epoch
-costs milliseconds and lazily revokes on first capability load. What we build and measure is the
+capabilities break reference identity), We then close the window with the hardware: in load-side (CLG) mode
+the collector opens the revocation epoch inside the pause
+(milliseconds; afterwards no stale capability can be loaded with its
+tag intact) and runs the heap-linear closing scan off-pause. The
+previously-failing concurrent configurations pass, and over a heap
+growing to 82\,MiB the mutator pause is median 18.6\,ms (p90 33\,ms)
+while the closing scan grows to 6.3\,s off-pause. What we build and measure is the
 relocation and barrier substrate of a moving collector (liveness,
 reclamation, and address reuse are future work, and we are explicit
 about that boundary). We also report the design laws capability
@@ -160,7 +163,10 @@ This paper makes the following contributions:
   plus relocated bytes, not heap size.
   The revocation sweep is linear in memory size and dominates total
   cost; batching amortises the mean cycle pause by an observed $10.3\times$
-  at batch size 8 (workload-constrained stop-the-world configuration). Healing a trapped reference costs $\sim$20\,\textmu s of in-handler
+  at batch size 8 (workload-constrained stop-the-world configuration),
+  and the implemented load-side (CLG) mode makes concurrent revocation
+  \emph{sound}: median pause 18.6\,ms over a heap growing to
+  82\,MiB, with the heap-linear scan off-pause. Healing a trapped reference costs $\sim$20\,\textmu s of in-handler
   work under emulation, and the identity barrier's slow path executes only
   hundreds of times per run.
 \end{itemize}
@@ -702,26 +708,62 @@ caches compare references inside the window. Batched revocation is
 sound only when the window is closed to identity-sensitive and
 mutating code.
 
-\paragraph{Feasibility of the sound design.} The instrument that
-closes the window exists in our stack, and we verified it works under
-QEMU emulation: CheriBSD's load-side revocation drives Morello's
-per-page capability-load generation (CLG) barrier, and a minimal probe
-shows that (i)~\emph{opening} a revocation epoch---after which no
-stale capability can be loaded with its tag intact---costs 3.7\,ms
+\subsection{The sound design, implemented: epoch-open in the pause,
+closing scan off-pause}
+\label{sec:eval:sound}
+
+\begin{figure}
+\centering
+\includegraphics[width=\linewidth]{figs/sound_concurrent.pdf}
+\caption{Sound concurrent revocation (load-side/CLG mode),
+allocation benchmark growing the heap $0.3\to82$\,MiB; 345 cycles,
+one trace. (a)~Mutator pause (relocation + epoch-open), log scale:
+median 18.6\,ms, p90 33\,ms across the whole range; the tail (max
+1.5\,s, $\sim$1 cycle in 10 late in the run) is the epoch-open's
+page-table component, which grows with pages touched during the
+previous closing scan. (b)~The heap-linear closing scan
+($0.6\to6.3$\,s) runs on the collector thread with mutators live.
+For comparison, the synchronous design pays panel~(b) \emph{inside}
+panel~(a)'s pause.}
+\label{fig:sound}
+\end{figure}
+
+The instrument that closes the window exists in our stack: CheriBSD's
+load-side revocation drives Morello's per-page capability-load
+generation (CLG) barrier. A minimal probe verified it under QEMU:
+(i)~\emph{opening} a revocation epoch---after which no stale
+capability can be loaded with its tag intact---costs $\sim$3\,ms
 with no data scan; (ii)~the first capability load from a
 not-yet-scanned page takes a CLG fault and the kernel lazily sweeps
 that page ($\sim$0.17\,ms per first-touch page, probed across a
-16\,MiB capability-dense region); (iii)~the kernel API additionally offers a worker-thread vmspace scan
-(\texttt{CHERI\_REVOKE\_ASYNC}; the probe confirmed only its flag
-constraints---it is rejected in combination with the closing
-flag---so asynchronous operation is an API capability we have not yet
-exercised).
-The sound batched design follows: relocate and mark each cycle;
-\emph{open} the epoch inside the pause (milliseconds,
-heap-independent); run the heap-linear scan asynchronously off-pause.
-The mutator pause becomes relocation plus epoch-open---both
-heap-independent---which is the Cornucopia Reloaded result transplanted
-to a moving collector. Building this is the immediate next step.
+16\,MiB capability-dense region); (iii)~the kernel API additionally
+offers a worker-thread vmspace scan (\texttt{CHERI\_REVOKE\_ASYNC};
+we have exercised only its flag constraints).
+
+We then \emph{implemented} the sound mode in the collector
+(\texttt{STOPLESS\_REVOKE\_CONCURRENT}): each cycle relocates,
+marks, and \emph{opens} the epoch inside the pause; the heap-linear
+closing scan runs on the collector thread after the safepoint ends,
+with mutators running under the CLG barrier. Because every cycle's
+marks are published before mutators resume, there is no window in
+which a stale capability can be loaded tagged---both unsoundness modes
+of \S\ref{sec:design:batch} are closed by construction.
+
+Empirically the previously-failing configurations now pass: the
+concurrent \textsf{IntegrityGC} runs that failed under batching
+completed 3 of 3 trials with full verification (plus 2 of 2
+\textsf{ConcatTest}), and Figure~\ref{fig:sound} shows the pause
+structure over a heap growing $0.3\to82$\,MiB: the mutator pause is
+\emph{median 18.6\,ms, p90 33\,ms}---the epoch-open contributes a
+median 3.7\,ms---while the closing scan grows $0.6\to6.3$\,s
+\emph{off-pause}. At the large end the synchronous design would pay
+several seconds inside every pause; the sound mode pays tens of
+milliseconds typically. We disclose the tail honestly: occasional
+opens reach 1.5\,s, consistent with the open's page-table (LCLG
+update) work scaling with pages the mutator touched during the
+previous, heap-linear close; bounding this tail (incremental LCLG
+update, or the kernel worker-thread scan) is the next engineering
+step, not a new mechanism.
 
 \subsection{The identity barrier's slow path is rare}
 \label{sec:eval:acmp}
@@ -845,11 +887,11 @@ table on the other side of it. StoplessGC demonstrates the
 combination end to end in OpenJDK on Morello: relocation pauses bound
 by roots rather than heap ($+7\%$ pause across a $46\times$ heap),
 lazy per-use healing measured in microseconds, an identity barrier
-that almost never takes its slow path, and a sweep cost that batches
-away $10.3\times$ in a controlled configuration because the sweep's
-cost is approximately independent of how much it revokes---with the
-per-page load-barrier instrument that makes batching sound verified
-working under our stack. The capability-specific lessons---integer-only GC
+that almost never takes its slow path, and the heap-linear sweep moved \emph{off-pause} by the implemented
+load-side mode---epoch-open in the pause, closing scan concurrent with
+mutators under the per-page capability-load barrier---bringing the
+median mutator pause to 18.6\,ms on a heap where the synchronous
+design pauses for seconds. The capability-specific lessons---integer-only GC
 metadata rebuilt from revocation-exempt roots, identity as the one
 barrier hardware cannot give you, reads-as-values as the residual
 coverage gap---are, we believe, durable properties of building moving

@@ -1795,3 +1795,34 @@ Cornucopia Reloaded transplanted to a moving collector — the paper's §5.4
 an EARLIER section duplicated 270 lines of the paper (caught by section-count
 audit; fixed by line-surgery + assert). Rule reinforced: structural grep
 audit after every scripted edit.
+
+## BE. ★★★ PHASE-2 IMPLEMENTED: sound concurrent revocation (CLG load-side) (2026-06-12, patch 0186)
+
+Implemented STOPLESS_REVOKE_CONCURRENT=1:
+- runtime: stopless_revoke_open() (IGNORE_START, ~3ms, arms CLG barrier) +
+  stopless_revoke_close() (LAST_PASS + epoch_clears wait) in revoke.c.
+- JVM: VM_StoplessCollect marks + OPENS the epoch inside the safepoint;
+  StoplessCollectorThread runs the heap-linear CLOSE after VMThread::execute
+  returns, mutators live under the load-side barrier ([C11-close] line).
+  Every cycle's marks publish before mutators resume => NO window in which a
+  stale cap can be loaded tagged => both unsoundness modes (identity +
+  mutation) closed BY CONSTRUCTION.
+
+RESULTS:
+- Previously-failing configs now PASS: concurrent IntegrityGC 3/3 ALL-OK,
+  ConcatTest 2/2 (batching: 1/6 and 0/4).
+- Heap-growth run (StoplessBench 8192x40x32, heap 0.3->82 MiB, 345 cycles,
+  paper/data/c11_sound_concurrent_heapgrowth.txt):
+    mutator pause: MEDIAN 18.6 ms, p90 33 ms (epoch-open median 3.7 ms)
+    off-pause close: 0.64 -> 6.28 s (heap-linear, collector thread)
+  vs synchronous design which pays the close INSIDE every pause (~seconds).
+- HONEST TAIL: occasional opens ~1.5s (~1/10 late in run), consistent with
+  the open's page-table (LCLG) work scaling with pages touched during the
+  previous close. Mitigation = incremental LCLG / kernel worker scan; an
+  engineering step, not a new mechanism.
+- STW sync path untouched (regression green).
+
+Paper: new §5.5(sound) + Fig 4 (sound_concurrent.pdf); abstract/intro/
+conclusion upgraded from "feasibility verified" to "implemented + measured".
+This was the original Phase-2 thesis: Cornucopia Reloaded's load barrier
+transplanted to a moving collector, end to end.
