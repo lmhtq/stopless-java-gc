@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..750a2fe5b0e 100644
+index 069115be038..e43b3548fee 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 @@ -6,12 +6,32 @@
@@ -35,7 +35,7 @@ index 069115be038..750a2fe5b0e 100644
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,52 +44,385 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +44,401 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -214,6 +214,7 @@ index 069115be038..750a2fe5b0e 100644
 +  bool        _verbose;       // STOPLESS_MOVE_VERBOSE: log klass of each moved obj
 +  const char* _klass_filter;  // STOPLESS_MOVE_KLASS: only move objs whose
 +                              // external_name contains this substring (NULL = any)
++  bool        _skip_complex; // STOPLESS_SKIP_COMPLEX: skip arrays + Class mirrors
 +  bool        _no_fixup;      // STOPLESS_NO_FIXUP: move+forward+revoke but do NOT
 +                              // rewrite the root slot — let it fault+self-heal
 +                              // (the paper's pure hardware-barrier mechanism;
@@ -222,7 +223,9 @@ index 069115be038..750a2fe5b0e 100644
 +                           bool verbose, const char* kfilter, bool no_fixup)
 +    : _heap(h), _moved_from(mf), _limit(lim),
 +      _moved(0), _fixed(0), _nonheap(0), _skipped(0),
-+      _verbose(verbose), _klass_filter(kfilter), _no_fixup(no_fixup) {}
++      _verbose(verbose), _klass_filter(kfilter),
++      _skip_complex(::getenv("STOPLESS_SKIP_COMPLEX") != nullptr),
++      _no_fixup(no_fixup) {}
 +
 +  virtual void do_oop(oop* p) {
 +    oop o = RawAccess<>::oop_load(p);
@@ -242,6 +245,19 @@ index 069115be038..750a2fe5b0e 100644
 +        _skipped++;
 +        return;                                     // not targeted: leave in place
 +      }
++#ifdef __CHERI_PURE_CAPABILITY__
++      // C-10 experiment: STOPLESS_SKIP_COMPLEX skips object types with heavy
++      // VM-internal aliasing the root scan does not cover — array klasses and
++      // java.lang.Class mirrors (referenced from cpcache resolved-klass slots,
++      // MethodHandles, etc., none of which are OopClosure roots). Isolates
++      // whether the aggressive-move boot NULL is a coverage gap on those types.
++      if (_skip_complex && k != nullptr &&
++          (k->is_array_klass() ||
++           (kn != nullptr && ::strcmp(kn, "java.lang.Class") == 0))) {
++        _skipped++;
++        return;
++      }
++#endif
 +      if (_verbose) {
 +        fprintf(stderr, "[C9move] move #%zu klass=%s from=%p\n",
 +                _moved, kn, (void*)from);
