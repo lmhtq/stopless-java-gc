@@ -1,650 +1,630 @@
-[C11-pause] roots=521 heap_in=511 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=301 scan_move_us=68377.6 revoke_us=14052.6 pause_us=82430.2
-[C11-close] off_pause_close_us=641944.4 rc=0
-[C11-pause] roots=517 heap_in=508 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=310 scan_move_us=8263.3 revoke_us=6070.1 pause_us=14333.4
-[C11-close] off_pause_close_us=523896.8 rc=0
-[C11-pause] roots=545 heap_in=533 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=319 scan_move_us=10398.0 revoke_us=6218.3 pause_us=16616.4
-[C11-close] off_pause_close_us=611271.9 rc=0
-[C11-pause] roots=552 heap_in=542 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=326 scan_move_us=16193.9 revoke_us=6224.5 pause_us=22418.4
-[C11-close] off_pause_close_us=622696.0 rc=0
-[C11-pause] roots=563 heap_in=551 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=348 scan_move_us=17782.9 revoke_us=6387.2 pause_us=24170.1
-[C11-close] off_pause_close_us=611072.4 rc=0
-[C11-pause] roots=588 heap_in=574 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=371 scan_move_us=127845.7 revoke_us=6089.6 pause_us=133935.4
-[C11-close] off_pause_close_us=594661.8 rc=0
-[C11-pause] roots=606 heap_in=587 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=400 scan_move_us=130392.3 revoke_us=7475.9 pause_us=137868.1
-[C11-close] off_pause_close_us=614998.4 rc=0
-[C11-pause] roots=603 heap_in=586 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=409 scan_move_us=131780.0 revoke_us=8131.5 pause_us=139911.5
-[C11-close] off_pause_close_us=728168.8 rc=0
-[C11-pause] roots=622 heap_in=607 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=457 scan_move_us=138452.3 revoke_us=5081.1 pause_us=143533.4
-[C11-close] off_pause_close_us=833098.4 rc=0
-[C11-pause] roots=619 heap_in=605 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=528 scan_move_us=132868.1 revoke_us=5063.3 pause_us=137931.4
-[C11-close] off_pause_close_us=766430.9 rc=0
-[C11-pause] roots=650 heap_in=638 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=569 scan_move_us=131120.8 revoke_us=5920.6 pause_us=137041.5
-[C11-close] off_pause_close_us=1061733.6 rc=0
-[C11-pause] roots=774 heap_in=761 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=706 scan_move_us=135994.0 revoke_us=5404.1 pause_us=141398.1
-[C11-close] off_pause_close_us=812185.0 rc=0
-[C11-pause] roots=626 heap_in=615 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=780 scan_move_us=17766.0 revoke_us=5750.9 pause_us=23517.0
-[C11-close] off_pause_close_us=838177.5 rc=0
-[C11-pause] roots=693 heap_in=676 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=819 scan_move_us=22378.9 revoke_us=5772.4 pause_us=28151.3
-[C11-close] off_pause_close_us=814290.5 rc=0
-[C11-pause] roots=709 heap_in=697 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=888 scan_move_us=24692.3 revoke_us=6249.2 pause_us=30941.5
-[C11-close] off_pause_close_us=934829.7 rc=0
-[C11-pause] roots=699 heap_in=688 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=907 scan_move_us=36517.0 revoke_us=8099.5 pause_us=44616.4
-[C11-close] off_pause_close_us=828837.8 rc=0
-[C11-pause] roots=716 heap_in=704 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=937 scan_move_us=18115.4 revoke_us=5331.4 pause_us=23446.8
-[C11-close] off_pause_close_us=924367.7 rc=0
-[C11-pause] roots=733 heap_in=720 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=993 scan_move_us=20394.9 revoke_us=5230.2 pause_us=25625.0
-[C11-close] off_pause_close_us=1007055.5 rc=0
-[C11-pause] roots=739 heap_in=724 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1050 scan_move_us=22341.5 revoke_us=5398.8 pause_us=27740.4
-[C11-close] off_pause_close_us=951598.6 rc=0
-[C11-pause] roots=788 heap_in=768 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1095 scan_move_us=26437.9 revoke_us=5419.5 pause_us=31857.4
-[C11-close] off_pause_close_us=800183.1 rc=0
-[C11-pause] roots=817 heap_in=802 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1128 scan_move_us=23615.1 revoke_us=5503.7 pause_us=29118.8
-[C11-close] off_pause_close_us=1140134.9 rc=0
-[C11-pause] roots=831 heap_in=814 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1209 scan_move_us=28590.3 revoke_us=5511.6 pause_us=34101.9
-[C11-close] off_pause_close_us=1040019.3 rc=0
-[C11-pause] roots=811 heap_in=796 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1309 scan_move_us=22879.6 revoke_us=3808.8 pause_us=26688.4
-[C11-close] off_pause_close_us=810313.5 rc=0
-[C11-pause] roots=817 heap_in=802 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1349 scan_move_us=23895.3 revoke_us=5424.5 pause_us=29319.8
-[C11-close] off_pause_close_us=859523.2 rc=0
-[C11-pause] roots=827 heap_in=810 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1376 scan_move_us=23523.9 revoke_us=6297.3 pause_us=29821.3
-[C11-close] off_pause_close_us=868964.9 rc=0
-[C11-pause] roots=836 heap_in=817 moved=8 fixed=31 revoked=8 swept=0 batch=1 heap_used_K=1395 scan_move_us=16525.6 revoke_us=6006.2 pause_us=22531.8
-[C11-close] off_pause_close_us=742930.6 rc=0
-[C11-pause] roots=853 heap_in=832 moved=8 fixed=31 revoked=8 swept=0 batch=1 heap_used_K=1404 scan_move_us=20357.0 revoke_us=6304.7 pause_us=26661.8
-[C11-close] off_pause_close_us=1048631.5 rc=0
-[C11-pause] roots=895 heap_in=870 moved=8 fixed=31 revoked=8 swept=0 batch=1 heap_used_K=1425 scan_move_us=18526.7 revoke_us=5584.1 pause_us=24110.8
-[C11-close] off_pause_close_us=873370.7 rc=0
-[C11-pause] roots=944 heap_in=916 moved=8 fixed=41 revoked=8 swept=0 batch=1 heap_used_K=1442 scan_move_us=23128.0 revoke_us=5923.7 pause_us=29051.7
-[C11-close] off_pause_close_us=865974.4 rc=0
-[C11-pause] roots=906 heap_in=887 moved=8 fixed=22 revoked=8 swept=0 batch=1 heap_used_K=1476 scan_move_us=16232.2 revoke_us=5684.9 pause_us=21917.1
-[C11-close] off_pause_close_us=978597.2 rc=0
-[C11-pause] roots=885 heap_in=872 moved=8 fixed=21 revoked=8 swept=0 batch=1 heap_used_K=1617 scan_move_us=12314.8 revoke_us=6487.6 pause_us=18802.4
-[C11-close] off_pause_close_us=1306655.5 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=1873 scan_move_us=12517.5 revoke_us=6130.0 pause_us=18647.5
-[C11-close] off_pause_close_us=1075544.7 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=2014 scan_move_us=14346.7 revoke_us=5974.5 pause_us=20321.2
-[C11-close] off_pause_close_us=1097341.5 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=2158 scan_move_us=13022.1 revoke_us=7111.4 pause_us=20133.5
-[C11-close] off_pause_close_us=1790019.5 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=2444 scan_move_us=13958.9 revoke_us=6128.7 pause_us=20087.6
-[C11-close] off_pause_close_us=1164455.9 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=2599 scan_move_us=15355.2 revoke_us=6810.7 pause_us=22165.9
-[C11-close] off_pause_close_us=1115184.3 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=2753 scan_move_us=13984.3 revoke_us=6185.6 pause_us=20169.9
-[C11-close] off_pause_close_us=1156682.3 rc=0
-[C11-pause] roots=890 heap_in=876 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=2955 scan_move_us=13859.2 revoke_us=6596.4 pause_us=20455.6
-[C11-close] off_pause_close_us=1303269.9 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=3151 scan_move_us=15759.1 revoke_us=7414.1 pause_us=23173.2
-[C11-close] off_pause_close_us=1235533.2 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=3321 scan_move_us=13588.0 revoke_us=7192.8 pause_us=20780.8
-[C11-close] off_pause_close_us=1219922.6 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=3491 scan_move_us=13897.7 revoke_us=7269.0 pause_us=21166.8
-[C11-close] off_pause_close_us=1362118.3 rc=0
-[C11-pause] roots=889 heap_in=875 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=3690 scan_move_us=13444.2 revoke_us=7458.9 pause_us=20903.1
-[C11-pause] roots=890 heap_in=876 moved=8 fixed=14 revoked=8 swept=0 batch=1 heap_used_K=3694 scan_move_us=13324.8 revoke_us=114775.1 pause_us=128099.9
-[C11-close] off_pause_close_us=1380313.1 rc=0
-[C11-pause] roots=889 heap_in=875 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=3697 scan_move_us=15089.1 revoke_us=7726.1 pause_us=22815.2
-[C11-close] off_pause_close_us=1066282.8 rc=0
-[C11-pause] roots=913 heap_in=892 moved=8 fixed=24 revoked=8 swept=0 batch=1 heap_used_K=3707 scan_move_us=16142.3 revoke_us=7124.8 pause_us=23267.1
-[C11-close] off_pause_close_us=1348638.5 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=3847 scan_move_us=14523.5 revoke_us=7453.9 pause_us=21977.4
-[C11-close] off_pause_close_us=1299582.0 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4009 scan_move_us=14242.4 revoke_us=7270.6 pause_us=21513.0
-[C11-close] off_pause_close_us=1322310.3 rc=0
-[C11-pause] roots=890 heap_in=876 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=4189 scan_move_us=14938.8 revoke_us=7421.7 pause_us=22360.5
-[C11-close] off_pause_close_us=1192857.0 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4329 scan_move_us=14288.1 revoke_us=7360.4 pause_us=21648.5
-[C11-close] off_pause_close_us=1443204.8 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4598 scan_move_us=15212.5 revoke_us=8644.5 pause_us=23857.0
-[C11-close] off_pause_close_us=1116885.0 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4713 scan_move_us=13043.0 revoke_us=7359.7 pause_us=20402.7
-[C11-close] off_pause_close_us=1411502.1 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4929 scan_move_us=13601.1 revoke_us=8741.6 pause_us=22342.6
-[C11-close] off_pause_close_us=1413388.3 rc=0
-[C11-pause] roots=890 heap_in=876 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=5130 scan_move_us=13652.8 revoke_us=8792.1 pause_us=22444.9
-[C11-close] off_pause_close_us=1359433.4 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=5327 scan_move_us=13947.0 revoke_us=3480.9 pause_us=17427.9
-[C11-close] off_pause_close_us=1082025.3 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=5412 scan_move_us=12308.9 revoke_us=7220.4 pause_us=19529.3
-[C11-close] off_pause_close_us=1271085.2 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=5571 scan_move_us=13397.1 revoke_us=8324.6 pause_us=21721.7
-[C11-close] off_pause_close_us=1259002.7 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=5728 scan_move_us=19704.5 revoke_us=10710.8 pause_us=30415.4
-[C11-close] off_pause_close_us=1560886.6 rc=0
-[C11-pause] roots=889 heap_in=875 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=5785 scan_move_us=15227.2 revoke_us=7236.5 pause_us=22463.8
-[C11-pause] roots=890 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=5788 scan_move_us=12728.3 revoke_us=7656.3 pause_us=20384.6
-[C11-close] off_pause_close_us=1276643.0 rc=0
-[C11-pause] roots=889 heap_in=875 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=5791 scan_move_us=19816.7 revoke_us=86.1 pause_us=19902.8
-[C11-close] off_pause_close_us=1301192.7 rc=0
- alloc[C11-pause] roots=898 heap_in=881 moved=8 fixed=24 revoked=8 swept=0 batch=1 heap_used_K=5795 scan_move_us=15540.9 revoke_us=7297.7 pause_us=22838.7
-[C11-close] off_pause_close_us=1432822.5 rc=0
-[C11-pause] roots=889 heap_in=875 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=5991 scan_move_us=13888.8 revoke_us=8470.7 pause_us=22359.5
-[C11-close] off_pause_close_us=1290487.0 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=6155 scan_move_us=13162.2 revoke_us=7662.3 pause_us=20824.4
-[C11-close] off_pause_close_us=1604273.6 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=6445 scan_move_us=15310.4 revoke_us=7445.2 pause_us=22755.6
-[C11-close] off_pause_close_us=1340567.4 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=6632 scan_move_us=14932.7 revoke_us=3365.8 pause_us=18298.6
-[C11-close] off_pause_close_us=1773958.5 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=6956 scan_move_us=13937.3 revoke_us=3542.5 pause_us=17479.8
-[C11-close] off_pause_close_us=1260868.1 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=7097 scan_move_us=13405.7 revoke_us=3440.2 pause_us=16845.9
-[C11-close] off_pause_close_us=1417774.2 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=7273 scan_move_us=13180.8 revoke_us=3556.9 pause_us=16737.8
-[C11-close] off_pause_close_us=1344197.6 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=7425 scan_move_us=14036.9 revoke_us=3332.0 pause_us=17368.9
-[C11-close] off_pause_close_us=1542700.7 rc=0
-[C11-pause] roots=886 heap_in=873 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=7693 scan_move_us=13945.7 revoke_us=3790.8 pause_us=17736.6
-[C11-close] off_pause_close_us=1429605.3 rc=0
-[C11-pause] roots=899 heap_in=882 moved=8 fixed=23 revoked=8 swept=0 batch=1 heap_used_K=7866 scan_move_us=15585.2 revoke_us=3417.7 pause_us=19002.9
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=7870 scan_move_us=13850.7 revoke_us=113492.8 pause_us=127343.5
-[C11-close] off_pause_close_us=1598416.9 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=7872 scan_move_us=13482.4 revoke_us=7264.2 pause_us=20746.6
-[C11-close] off_pause_close_us=1442135.6 rc=0
- alloc[C11-pause] roots=894 heap_in=880 moved=8 fixed=23 revoked=8 swept=0 batch=1 heap_used_K=7877 scan_move_us=13782.3 revoke_us=7200.9 pause_us=20983.2
-[C11-close] off_pause_close_us=1217550.3 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=7974 scan_move_us=14579.3 revoke_us=7366.7 pause_us=21946.0
-[C11-close] off_pause_close_us=1376018.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=8147 scan_move_us=13357.4 revoke_us=7707.1 pause_us=21064.5
-[C11-close] off_pause_close_us=1495072.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=8340 scan_move_us=12761.3 revoke_us=7418.3 pause_us=20179.6
-[C11-close] off_pause_close_us=1684368.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=8630 scan_move_us=14719.5 revoke_us=7213.3 pause_us=21932.8
-[C11-close] off_pause_close_us=1507839.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=8836 scan_move_us=13689.5 revoke_us=3847.9 pause_us=17537.4
-[C11-close] off_pause_close_us=1448930.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9014 scan_move_us=13507.4 revoke_us=7413.8 pause_us=20921.2
-[C11-close] off_pause_close_us=1514346.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9227 scan_move_us=13153.0 revoke_us=3555.9 pause_us=16708.9
-[C11-close] off_pause_close_us=1619403.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9459 scan_move_us=20219.6 revoke_us=3230.1 pause_us=23449.6
-[C11-close] off_pause_close_us=1429799.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9638 scan_move_us=13870.6 revoke_us=3511.6 pause_us=17382.2
-[C11-close] off_pause_close_us=1726136.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9788 scan_move_us=14305.9 revoke_us=3661.3 pause_us=17967.2
-[C11-close] off_pause_close_us=1348697.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9935 scan_move_us=14065.9 revoke_us=3362.2 pause_us=17428.1
-[C11-close] off_pause_close_us=1595330.1 rc=0
-[C11-pause] roots=924 heap_in=902 moved=8 fixed=25 revoked=8 swept=0 batch=1 heap_used_K=9952 scan_move_us=20911.7 revoke_us=3576.5 pause_us=24488.2
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=9955 scan_move_us=16786.8 revoke_us=473504.8 pause_us=490291.6
-[C11-close] off_pause_close_us=1614264.2 rc=0
-[C11-pause] roots=919 heap_in=898 moved=8 fixed=31 revoked=8 swept=0 batch=1 heap_used_K=9958 scan_move_us=20320.6 revoke_us=7797.2 pause_us=28117.8
-[C11-close] off_pause_close_us=1559421.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=10112 scan_move_us=12852.3 revoke_us=7342.4 pause_us=20194.8
-[C11-close] off_pause_close_us=1669337.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=10342 scan_move_us=13876.4 revoke_us=7507.3 pause_us=21383.7
-[C11-close] off_pause_close_us=1334491.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=10463 scan_move_us=14755.0 revoke_us=3377.4 pause_us=18132.4
-[C11-close] off_pause_close_us=1897313.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=10773 scan_move_us=13992.7 revoke_us=3851.3 pause_us=17844.0
-[C11-close] off_pause_close_us=1849658.8 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=11039 scan_move_us=14076.3 revoke_us=3590.1 pause_us=17666.4
-[C11-close] off_pause_close_us=1703235.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=11301 scan_move_us=13727.9 revoke_us=3826.5 pause_us=17554.4
-[C11-close] off_pause_close_us=1611884.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=11482 scan_move_us=13523.6 revoke_us=3429.3 pause_us=16952.9
-[C11-close] off_pause_close_us=1558143.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=11654 scan_move_us=12610.3 revoke_us=3465.6 pause_us=16075.9
-[C11-close] off_pause_close_us=1831736.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=11921 scan_move_us=13647.8 revoke_us=3442.8 pause_us=17090.6
-[C11-close] off_pause_close_us=2255868.3 rc=0
-[C11-pause] roots=900 heap_in=884 moved=8 fixed=23 revoked=8 swept=0 batch=1 heap_used_K=12031 scan_move_us=18080.5 revoke_us=3411.0 pause_us=21491.5
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=12033 scan_move_us=14696.0 revoke_us=153989.4 pause_us=168685.4
-[C11-close] off_pause_close_us=1744567.3 rc=0
-[C11-pause] roots=906 heap_in=888 moved=8 fixed=23 revoked=8 swept=0 batch=1 heap_used_K=12036 scan_move_us=20231.7 revoke_us=7575.0 pause_us=27806.6
-[C11-close] off_pause_close_us=1770682.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=12197 scan_move_us=13028.2 revoke_us=3707.4 pause_us=16735.7
-[C11-close] off_pause_close_us=1626358.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=12418 scan_move_us=13362.5 revoke_us=3629.4 pause_us=16991.9
-[C11-close] off_pause_close_us=1621932.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=12607 scan_move_us=13281.8 revoke_us=3926.3 pause_us=17208.1
-[C11-close] off_pause_close_us=1731567.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=12843 scan_move_us=13276.0 revoke_us=3803.0 pause_us=17078.9
-[C11-close] off_pause_close_us=2227533.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=13224 scan_move_us=13850.6 revoke_us=4098.6 pause_us=17949.2
-[C11-close] off_pause_close_us=1810470.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=13462 scan_move_us=13507.1 revoke_us=3610.0 pause_us=17117.1
-[C11-close] off_pause_close_us=1896457.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=13739 scan_move_us=13478.1 revoke_us=3441.6 pause_us=16919.7
-[C11-close] off_pause_close_us=1782515.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=13966 scan_move_us=13664.4 revoke_us=3480.3 pause_us=17144.7
-[C11-close] off_pause_close_us=1847050.8 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=14106 scan_move_us=15454.7 revoke_us=3554.7 pause_us=19009.5
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=14110 scan_move_us=53071.7 revoke_us=586133.8 pause_us=639205.6
-[C11-close] off_pause_close_us=1831370.2 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=14113 scan_move_us=21911.1 revoke_us=10883.2 pause_us=32794.3
- alloc[C11-close] off_pause_close_us=2094590.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=14159 scan_move_us=12567.9 revoke_us=3536.0 pause_us=16103.9
-[C11-close] off_pause_close_us=1778711.8 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=14390 scan_move_us=14419.5 revoke_us=3551.4 pause_us=17970.9
-[C11-close] off_pause_close_us=1701849.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=14632 scan_move_us=14099.7 revoke_us=3609.4 pause_us=17709.1
-[C11-close] off_pause_close_us=1747660.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=14854 scan_move_us=13741.8 revoke_us=3883.0 pause_us=17624.8
-[C11-close] off_pause_close_us=2164489.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=15214 scan_move_us=14122.1 revoke_us=3431.0 pause_us=17553.0
-[C11-close] off_pause_close_us=1884611.1 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=15448 scan_move_us=13879.4 revoke_us=3468.9 pause_us=17348.4
-[C11-close] off_pause_close_us=1925884.7 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=15684 scan_move_us=15220.3 revoke_us=3764.0 pause_us=18984.2
-[C11-close] off_pause_close_us=1669160.5 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=15839 scan_move_us=12879.1 revoke_us=3093.1 pause_us=15972.1
-[C11-close] off_pause_close_us=1645460.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=16004 scan_move_us=14596.0 revoke_us=4106.0 pause_us=18702.1
-[C11-close] off_pause_close_us=1833482.6 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=16185 scan_move_us=16493.4 revoke_us=3407.5 pause_us=19900.9
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=16188 scan_move_us=13662.9 revoke_us=3692.6 pause_us=17355.6
-[C11-close] off_pause_close_us=2513393.8 rc=0
-[C11-pause] roots=904 heap_in=887 moved=8 fixed=28 revoked=8 swept=0 batch=1 heap_used_K=16193 scan_move_us=15416.7 revoke_us=8234.4 pause_us=23651.1
-[C11-close] off_pause_close_us=2211919.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=16521 scan_move_us=14498.5 revoke_us=4089.8 pause_us=18588.3
-[C11-close] off_pause_close_us=2177844.1 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=16878 scan_move_us=13761.2 revoke_us=3438.5 pause_us=17199.7
-[C11-close] off_pause_close_us=2273925.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=17161 scan_move_us=19290.1 revoke_us=4703.6 pause_us=23993.7
-[C11-close] off_pause_close_us=2202385.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=17458 scan_move_us=13837.4 revoke_us=3775.6 pause_us=17613.0
-[C11-close] off_pause_close_us=2041964.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=17708 scan_move_us=13820.0 revoke_us=3617.1 pause_us=17437.1
-[C11-close] off_pause_close_us=2163269.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=18013 scan_move_us=14764.0 revoke_us=3737.1 pause_us=18501.1
-[C11-close] off_pause_close_us=1785694.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=18210 scan_move_us=13246.3 revoke_us=3344.5 pause_us=16590.8
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=18260 scan_move_us=173622.9 revoke_us=325515.2 pause_us=499138.1
-[C11-close] off_pause_close_us=2455128.5 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=18263 scan_move_us=15315.9 revoke_us=3652.2 pause_us=18968.1
-[C11-close] off_pause_close_us=2372564.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=18427 scan_move_us=12208.0 revoke_us=3432.9 pause_us=15640.8
-[C11-close] off_pause_close_us=2009680.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=18666 scan_move_us=14475.6 revoke_us=3523.9 pause_us=17999.5
-[C11-close] off_pause_close_us=2239677.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=18979 scan_move_us=13510.7 revoke_us=3783.7 pause_us=17294.4
-[C11-close] off_pause_close_us=2324627.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=19322 scan_move_us=13544.2 revoke_us=3411.3 pause_us=16955.5
-[C11-close] off_pause_close_us=2164398.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=19609 scan_move_us=13802.8 revoke_us=3599.4 pause_us=17402.2
-[C11-close] off_pause_close_us=2547492.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=20036 scan_move_us=14171.6 revoke_us=3563.8 pause_us=17735.4
-[C11-close] off_pause_close_us=2310590.6 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=20329 scan_move_us=17694.6 revoke_us=3693.8 pause_us=21388.4
-8[C11-close] off_pause_close_us=2271669.5 rc=0
-[C11-pause] roots=903 heap_in=886 moved=8 fixed=23 revoked=8 swept=0 batch=1 heap_used_K=20332 scan_move_us=16445.0 revoke_us=3414.6 pause_us=19859.6
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=20335 scan_move_us=25053.8 revoke_us=609.6 pause_us=25663.3
-[C11-close] off_pause_close_us=2539822.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=20455 scan_move_us=12919.8 revoke_us=3350.1 pause_us=16269.9
-[C11-close] off_pause_close_us=2482844.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=20815 scan_move_us=12795.2 revoke_us=3303.3 pause_us=16098.5
-[C11-close] off_pause_close_us=2056885.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=21055 scan_move_us=13166.3 revoke_us=3708.5 pause_us=16874.8
-[C11-close] off_pause_close_us=2497545.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=21423 scan_move_us=13768.4 revoke_us=3657.9 pause_us=17426.3
-[C11-close] off_pause_close_us=2180445.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=21681 scan_move_us=14468.9 revoke_us=3385.2 pause_us=17854.2
-[C11-close] off_pause_close_us=2041331.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=21882 scan_move_us=13837.8 revoke_us=3497.3 pause_us=17335.1
-[C11-close] off_pause_close_us=2425053.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=22240 scan_move_us=14528.2 revoke_us=3778.9 pause_us=18307.1
-[C11-close] off_pause_close_us=2704924.0 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=22404 scan_move_us=15360.9 revoke_us=3578.5 pause_us=18939.4
-[C11-pause] roots=908 heap_in=891 moved=8 fixed=24 revoked=8 swept=0 batch=1 heap_used_K=22406 scan_move_us=24361.1 revoke_us=607.2 pause_us=24968.4
- alloc[C11-close] off_pause_close_us=2338400.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=22451 scan_move_us=12726.4 revoke_us=3550.8 pause_us=16277.2
-[C11-close] off_pause_close_us=2189752.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=22709 scan_move_us=14052.2 revoke_us=3414.9 pause_us=17467.1
-[C11-close] off_pause_close_us=2027202.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=22921 scan_move_us=14378.8 revoke_us=3957.4 pause_us=18336.1
-[C11-close] off_pause_close_us=1806407.1 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=23037 scan_move_us=13059.7 revoke_us=3557.2 pause_us=16616.9
-[C11-close] off_pause_close_us=2188793.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=23263 scan_move_us=13494.5 revoke_us=3518.0 pause_us=17012.5
-[C11-close] off_pause_close_us=2373068.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=23564 scan_move_us=14862.1 revoke_us=3802.5 pause_us=18664.6
-[C11-close] off_pause_close_us=2529566.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=23912 scan_move_us=13708.4 revoke_us=3694.0 pause_us=17402.4
-[C11-close] off_pause_close_us=2571029.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=24261 scan_move_us=14315.3 revoke_us=3487.6 pause_us=17803.0
-[C11-close] off_pause_close_us=2432822.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=24466 scan_move_us=28651.1 revoke_us=5190.3 pause_us=33841.4
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=24481 scan_move_us=17136.9 revoke_us=168481.5 pause_us=185618.4
-[C11-close] off_pause_close_us=2588822.9 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=24484 scan_move_us=15147.2 revoke_us=7703.5 pause_us=22850.7
-[C11-close] off_pause_close_us=2313062.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=24547 scan_move_us=13158.1 revoke_us=3636.0 pause_us=16794.1
-[C11-close] off_pause_close_us=3149535.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=25109 scan_move_us=15220.5 revoke_us=3885.7 pause_us=19106.1
-[C11-close] off_pause_close_us=2479284.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=25396 scan_move_us=17033.5 revoke_us=3664.1 pause_us=20697.6
-[C11-close] off_pause_close_us=2612344.1 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=25730 scan_move_us=14628.4 revoke_us=3998.3 pause_us=18626.8
-[C11-close] off_pause_close_us=2563314.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=26040 scan_move_us=14306.2 revoke_us=3630.0 pause_us=17936.2
-[C11-close] off_pause_close_us=2290825.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=26276 scan_move_us=14989.4 revoke_us=3973.0 pause_us=18962.5
-[C11-close] off_pause_close_us=2369947.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=26529 scan_move_us=14306.6 revoke_us=3386.5 pause_us=17693.2
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=26553 scan_move_us=187017.1 revoke_us=436109.1 pause_us=623126.2
-627581392[C11-close] off_pause_close_us=2619817.1 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=26556 scan_move_us=15435.7 revoke_us=3455.6 pause_us=18891.3
-[C11-close] off_pause_close_us=2579815.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=26668 scan_move_us=15997.8 revoke_us=6233.7 pause_us=22231.6
-[C11-close] off_pause_close_us=2190330.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=26859 scan_move_us=14187.9 revoke_us=3462.0 pause_us=17649.8
-[C11-close] off_pause_close_us=2826399.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=27149 scan_move_us=13718.9 revoke_us=3733.1 pause_us=17452.0
-[C11-close] off_pause_close_us=2966746.1 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=27583 scan_move_us=14046.4 revoke_us=3421.0 pause_us=17467.4
-[C11-close] off_pause_close_us=2909946.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=27996 scan_move_us=13975.3 revoke_us=4573.7 pause_us=18549.0
-[C11-close] off_pause_close_us=2985836.1 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=28429 scan_move_us=14989.3 revoke_us=3432.1 pause_us=18421.3
-[C11-close] off_pause_close_us=2885928.6 rc=0
-[C11-pause] roots=915 heap_in=895 moved=8 fixed=32 revoked=8 swept=0 batch=1 heap_used_K=28622 scan_move_us=19982.2 revoke_us=3574.7 pause_us=23556.9
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=28625 scan_move_us=17560.0 revoke_us=621700.0 pause_us=639259.9
-[C11-close] off_pause_close_us=2580741.0 rc=0
-13[C11-pause] roots=908 heap_in=889 moved=8 fixed=25 revoked=8 swept=0 batch=1 heap_used_K=28629 scan_move_us=22079.5 revoke_us=3167.6 pause_us=25247.0
-[C11-close] off_pause_close_us=2177232.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=28813 scan_move_us=15090.1 revoke_us=3799.5 pause_us=18889.6
-[C11-close] off_pause_close_us=3056033.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=29294 scan_move_us=13489.6 revoke_us=3739.9 pause_us=17229.4
-[C11-close] off_pause_close_us=2840381.6 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=29598 scan_move_us=21424.4 revoke_us=5069.6 pause_us=26494.0
-[C11-close] off_pause_close_us=2681457.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=29949 scan_move_us=14349.8 revoke_us=3944.3 pause_us=18294.1
-[C11-close] off_pause_close_us=2909830.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=30379 scan_move_us=13375.8 revoke_us=3743.6 pause_us=17119.5
-[C11-close] off_pause_close_us=2349395.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=30617 scan_move_us=14672.5 revoke_us=3401.7 pause_us=18074.3
-[C11-close] off_pause_close_us=2610206.7 rc=0
-[C11-pause] roots=900 heap_in=884 moved=8 fixed=23 revoked=8 swept=0 batch=1 heap_used_K=30694 scan_move_us=16096.8 revoke_us=3500.0 pause_us=19596.8
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=30697 scan_move_us=17035.8 revoke_us=698980.6 pause_us=716016.4
-[C11-close] off_pause_close_us=2562431.4 rc=0
-14[C11-pause] roots=909 heap_in=891 moved=8 fixed=29 revoked=8 swept=0 batch=1 heap_used_K=30701 scan_move_us=16228.2 revoke_us=3460.2 pause_us=19688.4
-[C11-close] off_pause_close_us=2873977.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=31079 scan_move_us=14012.0 revoke_us=3359.6 pause_us=17371.5
-[C11-close] off_pause_close_us=2849726.1 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=31467 scan_move_us=13668.8 revoke_us=3744.1 pause_us=17413.0
-[C11-close] off_pause_close_us=2626703.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=31748 scan_move_us=14489.7 revoke_us=4746.0 pause_us=19235.7
-[C11-close] off_pause_close_us=3282729.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=32245 scan_move_us=13458.3 revoke_us=3595.6 pause_us=17053.9
-[C11-close] off_pause_close_us=2878016.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=32487 scan_move_us=13801.3 revoke_us=3522.9 pause_us=17324.1
-[C11-close] off_pause_close_us=2763746.4 rc=0
-[C11-pause] roots=923 heap_in=903 moved=8 fixed=36 revoked=8 swept=0 batch=1 heap_used_K=32762 scan_move_us=19155.5 revoke_us=3451.1 pause_us=22606.6
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=32766 scan_move_us=14933.2 revoke_us=164603.8 pause_us=179537.0
-[C11-close] off_pause_close_us=3094383.2 rc=0
-[C11-pause] roots=919 heap_in=898 moved=8 fixed=31 revoked=8 swept=0 batch=1 heap_used_K=32769 scan_move_us=21145.6 revoke_us=3472.9 pause_us=24618.5
-[C11-close] off_pause_close_us=3050936.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=33112 scan_move_us=14511.8 revoke_us=3645.3 pause_us=18157.1
-[C11-close] off_pause_close_us=3359165.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=33565 scan_move_us=13692.6 revoke_us=4085.9 pause_us=17778.4
-[C11-close] off_pause_close_us=3133196.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=33970 scan_move_us=13560.2 revoke_us=4000.9 pause_us=17561.2
-[C11-close] off_pause_close_us=3030737.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=34393 scan_move_us=13327.1 revoke_us=3884.7 pause_us=17211.8
-[C11-close] off_pause_close_us=3005038.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=34768 scan_move_us=14623.5 revoke_us=3700.6 pause_us=18324.1
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=34834 scan_move_us=19026.8 revoke_us=672143.4 pause_us=691170.2
-695709264[C11-close] off_pause_close_us=2984175.4 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=34836 scan_move_us=13805.5 revoke_us=3508.1 pause_us=17313.7
-[C11-close] off_pause_close_us=3060203.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=35004 scan_move_us=14044.1 revoke_us=3310.8 pause_us=17354.9
-[C11-close] off_pause_close_us=2904072.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=35327 scan_move_us=15588.0 revoke_us=3441.9 pause_us=19029.9
-[C11-close] off_pause_close_us=2830450.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=35525 scan_move_us=16056.8 revoke_us=3447.7 pause_us=19504.5
-[C11-close] off_pause_close_us=3023874.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=35891 scan_move_us=17063.8 revoke_us=4006.9 pause_us=21070.6
-[C11-close] off_pause_close_us=3228267.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=36312 scan_move_us=15246.6 revoke_us=3579.4 pause_us=18826.0
-[C11-close] off_pause_close_us=3029686.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=36632 scan_move_us=14660.4 revoke_us=3726.7 pause_us=18387.1
-[C11-close] off_pause_close_us=3115396.3 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=36902 scan_move_us=16741.5 revoke_us=3634.2 pause_us=20375.7
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=36906 scan_move_us=16716.2 revoke_us=419233.5 pause_us=435949.6
-[C11-close] off_pause_close_us=3189642.6 rc=0
-[C11-pause] roots=907 heap_in=888 moved=8 fixed=26 revoked=8 swept=0 batch=1 heap_used_K=36909 scan_move_us=16060.1 revoke_us=3356.6 pause_us=19416.6
-[C11-close] off_pause_close_us=3027895.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=37227 scan_move_us=12842.4 revoke_us=3567.4 pause_us=16409.8
-[C11-close] off_pause_close_us=2960099.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=37437 scan_move_us=13931.3 revoke_us=4424.4 pause_us=18355.7
-[C11-close] off_pause_close_us=3629837.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=38015 scan_move_us=14620.5 revoke_us=4003.5 pause_us=18624.0
-[C11-close] off_pause_close_us=3292207.1 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=38428 scan_move_us=14951.9 revoke_us=3662.6 pause_us=18614.6
-[C11-close] off_pause_close_us=2839978.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=38690 scan_move_us=14890.5 revoke_us=3926.2 pause_us=18816.7
-[C11-close] off_pause_close_us=2909201.0 rc=0
-[C11-pause] roots=900 heap_in=885 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=38970 scan_move_us=15684.8 revoke_us=3479.1 pause_us=19163.9
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=38974 scan_move_us=13616.8 revoke_us=25257.2 pause_us=38873.9
-[C11-close] off_pause_close_us=3827801.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=39029 scan_move_us=14770.6 revoke_us=3600.3 pause_us=18370.8
-[C11-close] off_pause_close_us=3889501.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=39543 scan_move_us=14039.3 revoke_us=3790.3 pause_us=17829.6
-[C11-close] off_pause_close_us=3439287.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=39987 scan_move_us=15247.9 revoke_us=3647.1 pause_us=18895.0
-[C11-close] off_pause_close_us=2954425.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=40275 scan_move_us=13834.6 revoke_us=3573.1 pause_us=17407.8
-[C11-close] off_pause_close_us=3236056.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=40692 scan_move_us=14846.4 revoke_us=3792.9 pause_us=18639.3
-[C11-close] off_pause_close_us=3064502.5 rc=0
-[C11-pause] roots=923 heap_in=903 moved=8 fixed=37 revoked=8 swept=0 batch=1 heap_used_K=41038 scan_move_us=19548.4 revoke_us=3390.8 pause_us=22939.1
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=41042 scan_move_us=14387.7 revoke_us=47109.2 pause_us=61496.9
-[C11-close] off_pause_close_us=3615051.8 rc=0
-18[C11-pause] roots=902 heap_in=886 moved=8 fixed=21 revoked=8 swept=0 batch=1 heap_used_K=41045 scan_move_us=16158.7 revoke_us=3442.2 pause_us=19600.9
-[C11-close] off_pause_close_us=3015812.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=41312 scan_move_us=14368.6 revoke_us=3666.3 pause_us=18034.9
-[C11-close] off_pause_close_us=3121425.8 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=41586 scan_move_us=19156.0 revoke_us=5778.4 pause_us=24934.4
-[C11-close] off_pause_close_us=3233813.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=41913 scan_move_us=13608.1 revoke_us=7917.4 pause_us=21525.6
-[C11-close] off_pause_close_us=3111329.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=42244 scan_move_us=13837.9 revoke_us=3538.2 pause_us=17376.0
-[C11-close] off_pause_close_us=3574185.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=42697 scan_move_us=14048.3 revoke_us=3599.6 pause_us=17648.0
-[C11-close] off_pause_close_us=3189784.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=43022 scan_move_us=13455.2 revoke_us=4556.3 pause_us=18011.5
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=43111 scan_move_us=14081.9 revoke_us=4688.8 pause_us=18770.8
-[C11-close] off_pause_close_us=4222980.1 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=43148 scan_move_us=15250.8 revoke_us=3616.6 pause_us=18867.4
-[C11-close] off_pause_close_us=2574497.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=43288 scan_move_us=13344.8 revoke_us=3815.4 pause_us=17160.2
-[C11-close] off_pause_close_us=4138339.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=43841 scan_move_us=14023.3 revoke_us=4537.1 pause_us=18560.4
-[C11-close] off_pause_close_us=3399664.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=44268 scan_move_us=14650.7 revoke_us=4488.7 pause_us=19139.4
-[C11-close] off_pause_close_us=3461880.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=44676 scan_move_us=13953.7 revoke_us=3724.1 pause_us=17677.8
-[C11-close] off_pause_close_us=3839829.5 rc=0
-[C11-pause] roots=910 heap_in=891 moved=8 fixed=26 revoked=8 swept=0 batch=1 heap_used_K=45175 scan_move_us=18212.1 revoke_us=3905.0 pause_us=22117.2
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=45178 scan_move_us=16379.9 revoke_us=518461.2 pause_us=534841.2
-[C11-close] off_pause_close_us=3689721.1 rc=0
-21[C11-pause] roots=901 heap_in=885 moved=8 fixed=27 revoked=8 swept=0 batch=1 heap_used_K=45182 scan_move_us=14948.1 revoke_us=3475.0 pause_us=18423.1
-[C11-close] off_pause_close_us=3564322.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=45599 scan_move_us=13712.9 revoke_us=4181.3 pause_us=17894.2
-[C11-close] off_pause_close_us=3010814.3 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=45832 scan_move_us=15430.3 revoke_us=3501.7 pause_us=18932.0
-[C11-close] off_pause_close_us=3756631.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=46342 scan_move_us=13740.7 revoke_us=3564.4 pause_us=17305.1
-[C11-close] off_pause_close_us=4247370.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=46977 scan_move_us=14976.6 revoke_us=3527.7 pause_us=18504.3
-[C11-close] off_pause_close_us=3928369.5 rc=0
-[C11-pause] roots=919 heap_in=899 moved=8 fixed=33 revoked=8 swept=0 batch=1 heap_used_K=47243 scan_move_us=18456.4 revoke_us=3614.7 pause_us=22071.1
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=47245 scan_move_us=16708.9 revoke_us=936851.9 pause_us=953560.8
-[C11-close] off_pause_close_us=3250364.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=47266 scan_move_us=12138.2 revoke_us=3375.6 pause_us=15513.8
-[C11-close] off_pause_close_us=4101497.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=47848 scan_move_us=13061.0 revoke_us=8028.4 pause_us=21089.4
-[C11-close] off_pause_close_us=3979796.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=48395 scan_move_us=13694.6 revoke_us=3538.4 pause_us=17232.9
-[C11-close] off_pause_close_us=4219185.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=48873 scan_move_us=13835.2 revoke_us=3650.1 pause_us=17485.3
-[C11-close] off_pause_close_us=4089860.6 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=49307 scan_move_us=15373.9 revoke_us=3851.2 pause_us=19225.1
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=49311 scan_move_us=16167.4 revoke_us=719578.9 pause_us=735746.3
-[BENCH] round [C11-close] off_pause_close_us=3577104.1 rc=0
-[C11-pause] roots=903 heap_in=885 moved=8 fixed=23 revoked=8 swept=0 batch=1 heap_used_K=49315 scan_move_us=15829.8 revoke_us=3670.9 pause_us=19500.7
-[C11-close] off_pause_close_us=4019631.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=49808 scan_move_us=14936.2 revoke_us=3743.1 pause_us=18679.3
-[C11-close] off_pause_close_us=4409438.9 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=50451 scan_move_us=14653.2 revoke_us=3847.9 pause_us=18501.2
-[C11-close] off_pause_close_us=3245087.1 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=50699 scan_move_us=12875.9 revoke_us=3561.1 pause_us=16436.9
-[C11-close] off_pause_close_us=4169625.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=51165 scan_move_us=13226.2 revoke_us=3586.4 pause_us=16812.6
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=51376 scan_move_us=60420.7 revoke_us=413068.1 pause_us=473488.8
-478384976[C11-close] off_pause_close_us=4227889.8 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=51378 scan_move_us=14417.9 revoke_us=4100.1 pause_us=18518.0
-[C11-close] off_pause_close_us=4161191.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=51667 scan_move_us=13928.2 revoke_us=3579.0 pause_us=17507.2
-[C11-close] off_pause_close_us=3918209.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=52128 scan_move_us=14179.8 revoke_us=3634.0 pause_us=17813.8
-[C11-close] off_pause_close_us=4262662.3 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=52665 scan_move_us=13843.3 revoke_us=3804.1 pause_us=17647.4
-[C11-close] off_pause_close_us=4444224.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=53167 scan_move_us=13398.5 revoke_us=3660.0 pause_us=17058.5
-[C11-close] off_pause_close_us=4309860.4 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=53441 scan_move_us=15842.2 revoke_us=3799.6 pause_us=19641.8
-[C11-pause] roots=911 heap_in=891 moved=8 fixed=24 revoked=8 swept=0 batch=1 heap_used_K=53442 scan_move_us=22440.8 revoke_us=657.8 pause_us=23098.7
-[C11-close] off_pause_close_us=4358314.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=53736 scan_move_us=14841.4 revoke_us=3442.1 pause_us=18283.5
-[C11-close] off_pause_close_us=3700315.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=54110 scan_move_us=13940.0 revoke_us=3516.4 pause_us=17456.4
-[C11-close] off_pause_close_us=4272223.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=54680 scan_move_us=14383.9 revoke_us=3566.8 pause_us=17950.7
-[C11-close] off_pause_close_us=5053438.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=55366 scan_move_us=13440.6 revoke_us=3943.7 pause_us=17384.3
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=55505 scan_move_us=20378.9 revoke_us=945060.8 pause_us=965439.8
-970394672[C11-close] off_pause_close_us=4159660.2 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=55508 scan_move_us=15701.8 revoke_us=3504.1 pause_us=19205.9
-[C11-close] off_pause_close_us=3709242.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=55633 scan_move_us=12752.0 revoke_us=7928.9 pause_us=20680.9
-[C11-close] off_pause_close_us=4676952.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=56336 scan_move_us=13897.9 revoke_us=3750.9 pause_us=17648.9
-[C11-close] off_pause_close_us=4188236.4 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=56846 scan_move_us=14426.4 revoke_us=4139.0 pause_us=18565.4
-[C11-close] off_pause_close_us=4289976.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=57264 scan_move_us=13042.8 revoke_us=3866.0 pause_us=16908.8
-[C11-close] off_pause_close_us=4608519.0 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=57571 scan_move_us=14467.0 revoke_us=3587.4 pause_us=18054.4
-[C11-pause] roots=910 heap_in=891 moved=8 fixed=26 revoked=8 swept=0 batch=1 heap_used_K=57573 scan_move_us=22387.3 revoke_us=548.7 pause_us=22935.9
-[C11-close] off_pause_close_us=4429593.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=57848 scan_move_us=13956.1 revoke_us=3720.5 pause_us=17676.6
-[C11-close] off_pause_close_us=4283537.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=58343 scan_move_us=13480.9 revoke_us=3697.1 pause_us=17178.0
-[C11-close] off_pause_close_us=4545046.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=58900 scan_move_us=13257.6 revoke_us=3759.8 pause_us=17017.4
-[C11-close] off_pause_close_us=4228058.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=59422 scan_move_us=15219.8 revoke_us=3660.1 pause_us=18879.8
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=59635 scan_move_us=597981.4 revoke_us=4059.9 pause_us=602041.3
-[C11-close] off_pause_close_us=4421988.8 rc=0
-[C11-pause] roots=908 heap_in=889 moved=8 fixed=24 revoked=8 swept=0 batch=1 heap_used_K=59637 scan_move_us=22449.1 revoke_us=83.2 pause_us=22532.3
-[C11-close] off_pause_close_us=4256489.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=59862 scan_move_us=16224.1 revoke_us=3719.4 pause_us=19943.5
-[C11-close] off_pause_close_us=3938251.6 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=60231 scan_move_us=14685.1 revoke_us=4110.4 pause_us=18795.6
-[C11-close] off_pause_close_us=4121585.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=60572 scan_move_us=15519.3 revoke_us=3574.4 pause_us=19093.7
-[C11-close] off_pause_close_us=4879564.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=61185 scan_move_us=14343.7 revoke_us=3517.0 pause_us=17860.7
-[C11-close] off_pause_close_us=4277672.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=61593 scan_move_us=13882.5 revoke_us=8376.9 pause_us=22259.4
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=61702 scan_move_us=13965.5 revoke_us=3951.5 pause_us=17917.0
-[C11-close] off_pause_close_us=5354834.0 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=61829 scan_move_us=12372.5 revoke_us=4107.6 pause_us=16480.2
-[C11-close] off_pause_close_us=4649881.1 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=62297 scan_move_us=15737.9 revoke_us=3900.5 pause_us=19638.3
-[C11-close] off_pause_close_us=3961229.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=62643 scan_move_us=14220.5 revoke_us=3734.6 pause_us=17955.1
-[C11-close] off_pause_close_us=5004951.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=63314 scan_move_us=13821.6 revoke_us=3484.2 pause_us=17305.9
-[C11-close] off_pause_close_us=4558431.9 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=63764 scan_move_us=17180.8 revoke_us=3859.9 pause_us=21040.6
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=63768 scan_move_us=41556.4 revoke_us=864916.6 pause_us=906472.9
-[C11-close] off_pause_close_us=4579769.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=63800 scan_move_us=12606.9 revoke_us=3494.8 pause_us=16101.6
-[C11-close] off_pause_close_us=4674234.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=64355 scan_move_us=13150.4 revoke_us=3575.4 pause_us=16725.8
-[C11-close] off_pause_close_us=5321209.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=65104 scan_move_us=13679.4 revoke_us=3727.0 pause_us=17406.4
-[C11-close] off_pause_close_us=4604233.3 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=65615 scan_move_us=14393.0 revoke_us=4128.7 pause_us=18521.6
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=65831 scan_move_us=17729.1 revoke_us=422585.0 pause_us=440314.1
-444962448[C11-close] off_pause_close_us=4656310.2 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=65833 scan_move_us=21606.2 revoke_us=3510.3 pause_us=25116.5
-[C11-close] off_pause_close_us=5055010.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=66291 scan_move_us=13944.0 revoke_us=3695.1 pause_us=17639.1
-[C11-close] off_pause_close_us=4578623.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=66773 scan_move_us=13726.8 revoke_us=3633.8 pause_us=17360.6
-[C11-close] off_pause_close_us=5039838.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=67315 scan_move_us=12705.8 revoke_us=3775.2 pause_us=16481.1
-[C11-close] off_pause_close_us=5445748.4 rc=0
-[C11-pause] roots=919 heap_in=898 moved=8 fixed=31 revoked=8 swept=0 batch=1 heap_used_K=67893 scan_move_us=20453.4 revoke_us=3567.5 pause_us=24020.9
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=67896 scan_move_us=16560.1 revoke_us=1172454.2 pause_us=1189014.3
-[C11-close] off_pause_close_us=4720140.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=68026 scan_move_us=14803.7 revoke_us=3681.8 pause_us=18485.5
-[C11-close] off_pause_close_us=5065394.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=68621 scan_move_us=18882.3 revoke_us=4780.4 pause_us=23662.6
-[C11-close] off_pause_close_us=4932304.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=69217 scan_move_us=13704.0 revoke_us=8185.0 pause_us=21888.9
-[C11-close] off_pause_close_us=4837857.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=69754 scan_move_us=14540.5 revoke_us=3741.2 pause_us=18281.7
-8192[C11-close] off_pause_close_us=4530920.0 rc=0
-[C11-pause] roots=901 heap_in=885 moved=8 fixed=22 revoked=8 swept=0 batch=1 heap_used_K=69959 scan_move_us=15833.1 revoke_us=3548.1 pause_us=19381.2
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=69961 scan_move_us=17619.2 revoke_us=1501568.2 pause_us=1519187.4
-[C11-close] off_pause_close_us=5057790.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=70161 scan_move_us=19537.5 revoke_us=3774.0 pause_us=23311.5
-[C11-close] off_pause_close_us=5137873.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=70781 scan_move_us=13623.2 revoke_us=4245.8 pause_us=17869.0
-[C11-close] off_pause_close_us=5550904.2 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=71581 scan_move_us=13390.2 revoke_us=3506.2 pause_us=16896.4
-[C11-close] off_pause_close_us=5077962.3 rc=0
-[C11-pause] roots=939 heap_in=917 moved=8 fixed=42 revoked=8 swept=0 batch=1 heap_used_K=72020 scan_move_us=24713.1 revoke_us=3961.3 pause_us=28674.4
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=72024 scan_move_us=16854.5 revoke_us=1155515.6 pause_us=1172370.1
-34[C11-close] off_pause_close_us=5043453.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=72041 scan_move_us=13737.8 revoke_us=3466.4 pause_us=17204.1
-[C11-close] off_pause_close_us=5291097.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=72708 scan_move_us=13581.2 revoke_us=4032.6 pause_us=17613.7
-[C11-close] off_pause_close_us=4996862.8 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=73253 scan_move_us=15176.4 revoke_us=3829.1 pause_us=19005.4
-[C11-close] off_pause_close_us=5456724.1 rc=0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=73962 scan_move_us=13934.4 revoke_us=3939.5 pause_us=17873.9
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=74086 scan_move_us=17961.6 revoke_us=827793.7 pause_us=845755.3
-[C11-close] off_pause_close_us=5166681.4 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=74089 scan_move_us=14601.0 revoke_us=3945.9 pause_us=18546.9
-[C11-close] off_pause_close_us=5636719.4 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=74555 scan_move_us=19590.4 revoke_us=3772.8 pause_us=23363.2
-[C11-close] off_pause_close_us=5750585.6 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=75351 scan_move_us=13483.5 revoke_us=3975.2 pause_us=17458.7
-[C11-close] off_pause_close_us=5443701.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=76033 scan_move_us=13839.3 revoke_us=3433.8 pause_us=17273.1
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=76150 scan_move_us=23979.8 revoke_us=1407626.2 pause_us=1431606.0
-[C11-close] off_pause_close_us=4874388.0 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=76152 scan_move_us=13196.8 revoke_us=3326.1 pause_us=16523.0
-[C11-close] off_pause_close_us=5771560.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=76568 scan_move_us=14051.7 revoke_us=3878.6 pause_us=17930.3
-[C11-close] off_pause_close_us=6039747.5 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=77413 scan_move_us=13951.5 revoke_us=4254.2 pause_us=18205.7
-[C11-close] off_pause_close_us=5357145.0 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=78034 scan_move_us=19016.2 revoke_us=3372.9 pause_us=22389.1
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=78213 scan_move_us=17334.9 revoke_us=384277.1 pause_us=401612.1
-406224896[C11-close] off_pause_close_us=5219692.6 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=78216 scan_move_us=15290.9 revoke_us=3693.1 pause_us=18984.0
-[C11-close] off_pause_close_us=6290212.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=78829 scan_move_us=13752.6 revoke_us=3648.1 pause_us=17400.7
-[C11-close] off_pause_close_us=6139569.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=79592 scan_move_us=12697.8 revoke_us=3539.9 pause_us=16237.7
-[C11-close] off_pause_close_us=5980569.5 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=80273 scan_move_us=15027.1 revoke_us=3608.0 pause_us=18635.2
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=80276 scan_move_us=17127.4 revoke_us=854035.2 pause_us=871162.6
-[C11-close] off_pause_close_us=5409843.7 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=80389 scan_move_us=13864.3 revoke_us=3863.4 pause_us=17727.7
-[C11-close] off_pause_close_us=4971992.9 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=80847 scan_move_us=13617.2 revoke_us=3608.8 pause_us=17226.0
-[C11-close] off_pause_close_us=5570960.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=81504 scan_move_us=14132.3 revoke_us=4033.7 pause_us=18166.0
-[C11-close] off_pause_close_us=4934434.3 rc=0
-[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=81958 scan_move_us=13607.9 revoke_us=4011.2 pause_us=17619.0
-[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=82340 scan_move_us=13994.0 revoke_us=4154.3 pause_us=18148.2
-[BENCH]   gc_pause_ns=[C11-close] off_pause_close_us=6280000.9 rc=0
-[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=82343 scan_move_us=19996.5 revoke_us=85.9 pause_us=20082.4
+[C11-pause] roots=512 heap_in=504 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=301 scan_move_us=70130.6 revoke_us=14406.3 pause_us=84537.0
+[C11-close] off_pause_close_us=695879.4 rc=0
+[C11-pause] roots=510 heap_in=503 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=307 scan_move_us=7877.3 revoke_us=6719.9 pause_us=14597.2
+[C11-close] off_pause_close_us=558665.8 rc=0
+[C11-pause] roots=532 heap_in=520 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=313 scan_move_us=9932.5 revoke_us=6389.7 pause_us=16322.2
+[C11-close] off_pause_close_us=551244.9 rc=0
+[C11-pause] roots=546 heap_in=534 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=320 scan_move_us=14023.8 revoke_us=6666.7 pause_us=20690.4
+[C11-close] off_pause_close_us=616757.3 rc=0
+[C11-pause] roots=560 heap_in=548 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=330 scan_move_us=17077.0 revoke_us=6603.0 pause_us=23680.0
+[C11-close] off_pause_close_us=680723.5 rc=0
+[C11-pause] roots=571 heap_in=559 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=355 scan_move_us=137659.1 revoke_us=6858.1 pause_us=144517.2
+[C11-close] off_pause_close_us=660153.6 rc=0
+[C11-pause] roots=600 heap_in=584 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=401 scan_move_us=139335.9 revoke_us=4885.3 pause_us=144221.2
+[C11-close] off_pause_close_us=639832.5 rc=0
+[C11-pause] roots=603 heap_in=585 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=407 scan_move_us=137640.6 revoke_us=6936.6 pause_us=144577.2
+[C11-close] off_pause_close_us=679541.4 rc=0
+[C11-pause] roots=606 heap_in=591 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=438 scan_move_us=141116.6 revoke_us=5604.5 pause_us=146721.1
+[C11-close] off_pause_close_us=844491.0 rc=0
+[C11-pause] roots=626 heap_in=610 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=498 scan_move_us=141200.2 revoke_us=5297.0 pause_us=146497.3
+[C11-close] off_pause_close_us=865939.2 rc=0
+[C11-pause] roots=668 heap_in=652 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=560 scan_move_us=138993.0 revoke_us=5720.6 pause_us=144713.7
+[C11-close] off_pause_close_us=804475.6 rc=0
+[C11-pause] roots=688 heap_in=676 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=618 scan_move_us=140331.6 revoke_us=6200.1 pause_us=146531.7
+[C11-close] off_pause_close_us=712273.4 rc=0
+[C11-pause] roots=720 heap_in=707 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=643 scan_move_us=134553.5 revoke_us=5649.8 pause_us=140203.3
+[C11-close] off_pause_close_us=785597.4 rc=0
+[C11-pause] roots=759 heap_in=747 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=694 scan_move_us=138502.9 revoke_us=6387.9 pause_us=144890.8
+[C11-close] off_pause_close_us=966830.2 rc=0
+[C11-pause] roots=638 heap_in=625 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=782 scan_move_us=21152.7 revoke_us=8317.6 pause_us=29470.3
+[C11-close] off_pause_close_us=940268.8 rc=0
+[C11-pause] roots=680 heap_in=664 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=820 scan_move_us=21999.3 revoke_us=5952.2 pause_us=27951.5
+[C11-close] off_pause_close_us=830757.5 rc=0
+[C11-pause] roots=692 heap_in=681 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=848 scan_move_us=18436.2 revoke_us=5829.4 pause_us=24265.6
+[C11-close] off_pause_close_us=1013449.1 rc=0
+[C11-pause] roots=720 heap_in=705 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=937 scan_move_us=20790.2 revoke_us=6934.5 pause_us=27724.6
+[C11-close] off_pause_close_us=952171.2 rc=0
+[C11-pause] roots=734 heap_in=719 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=982 scan_move_us=22948.8 revoke_us=5932.1 pause_us=28880.9
+[C11-close] off_pause_close_us=969402.6 rc=0
+[C11-pause] roots=738 heap_in=726 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1023 scan_move_us=24488.7 revoke_us=5915.3 pause_us=30404.0
+[C11-close] off_pause_close_us=897156.7 rc=0
+[C11-pause] roots=736 heap_in=725 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1048 scan_move_us=25437.8 revoke_us=5922.9 pause_us=31360.7
+[C11-close] off_pause_close_us=871154.3 rc=0
+[C11-pause] roots=742 heap_in=730 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1073 scan_move_us=25737.5 revoke_us=6471.2 pause_us=32208.7
+[C11-close] off_pause_close_us=800915.5 rc=0
+[C11-pause] roots=786 heap_in=766 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1096 scan_move_us=28256.6 revoke_us=6132.3 pause_us=34388.9
+[C11-close] off_pause_close_us=1615924.0 rc=0
+[C11-pause] roots=816 heap_in=801 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1185 scan_move_us=27875.6 revoke_us=6360.0 pause_us=34235.7
+[C11-close] off_pause_close_us=1077878.4 rc=0
+[C11-pause] roots=831 heap_in=813 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1265 scan_move_us=28331.2 revoke_us=6165.3 pause_us=34496.5
+[C11-close] off_pause_close_us=1204223.7 rc=0
+[C11-pause] roots=822 heap_in=805 moved=8 fixed=15 revoked=8 swept=0 batch=1 heap_used_K=1345 scan_move_us=26269.0 revoke_us=6441.8 pause_us=32710.8
+[C11-close] off_pause_close_us=1159776.5 rc=0
+[C11-pause] roots=767 heap_in=760 moved=8 fixed=20 revoked=8 swept=0 batch=1 heap_used_K=1391 scan_move_us=10572.4 revoke_us=9064.0 pause_us=19636.3
+[C11-close] off_pause_close_us=967976.5 rc=0
+[C11-pause] roots=855 heap_in=833 moved=8 fixed=33 revoked=8 swept=0 batch=1 heap_used_K=1415 scan_move_us=19498.5 revoke_us=6358.4 pause_us=25856.8
+[C11-close] off_pause_close_us=1088821.5 rc=0
+[C11-pause] roots=925 heap_in=901 moved=8 fixed=40 revoked=8 swept=0 batch=1 heap_used_K=1449 scan_move_us=21390.1 revoke_us=6821.6 pause_us=28211.7
+[C11-close] off_pause_close_us=1078327.7 rc=0
+[C11-pause] roots=945 heap_in=923 moved=8 fixed=42 revoked=8 swept=0 batch=1 heap_used_K=1469 scan_move_us=28812.3 revoke_us=4131.5 pause_us=32943.7
+[C11-close] off_pause_close_us=1416815.5 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=1810 scan_move_us=13846.9 revoke_us=6453.6 pause_us=20300.4
+[C11-close] off_pause_close_us=1182786.0 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=1963 scan_move_us=13528.9 revoke_us=6465.8 pause_us=19994.7
+[C11-close] off_pause_close_us=1487554.0 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=2208 scan_move_us=14058.7 revoke_us=6742.9 pause_us=20801.6
+[C11-close] off_pause_close_us=1117501.1 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=2337 scan_move_us=14145.5 revoke_us=6965.3 pause_us=21110.7
+[C11-close] off_pause_close_us=1099050.2 rc=0
+[C11-pause] roots=890 heap_in=876 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=2471 scan_move_us=14337.6 revoke_us=6585.1 pause_us=20922.7
+[C11-close] off_pause_close_us=1448698.8 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=2710 scan_move_us=14344.5 revoke_us=6431.7 pause_us=20776.2
+[C11-close] off_pause_close_us=1091268.6 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=2815 scan_move_us=13782.6 revoke_us=6562.0 pause_us=20344.6
+[C11-close] off_pause_close_us=1344259.3 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=3022 scan_move_us=14867.2 revoke_us=7454.7 pause_us=22321.8
+[C11-close] off_pause_close_us=1455811.2 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=3168 scan_move_us=19734.9 revoke_us=12585.5 pause_us=32320.4
+[C11-close] off_pause_close_us=1480167.6 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=3391 scan_move_us=14668.8 revoke_us=7720.1 pause_us=22388.9
+[C11-close] off_pause_close_us=1493347.5 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=3627 scan_move_us=13541.3 revoke_us=7963.7 pause_us=21505.0
+[C11-close] off_pause_close_us=1252864.4 rc=0
+[C11-pause] roots=890 heap_in=876 moved=8 fixed=14 revoked=8 swept=0 batch=1 heap_used_K=3679 scan_move_us=14871.3 revoke_us=7969.5 pause_us=22840.8
+[C11-pause] roots=889 heap_in=875 moved=0 fixed=0 revoked=0 swept=0 batch=1 heap_used_K=3679 scan_move_us=18416.9 revoke_us=16.6 pause_us=18433.5
+[C11-close] off_pause_close_us=1569893.9 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=3852 scan_move_us=15252.3 revoke_us=7672.5 pause_us=22924.8
+[C11-close] off_pause_close_us=1426193.5 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4064 scan_move_us=14074.6 revoke_us=7565.5 pause_us=21640.1
+[C11-close] off_pause_close_us=1053268.5 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4166 scan_move_us=14073.9 revoke_us=7700.4 pause_us=21774.3
+[C11-close] off_pause_close_us=1345407.9 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4331 scan_move_us=13719.4 revoke_us=8400.6 pause_us=22119.9
+[C11-close] off_pause_close_us=1668924.7 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4604 scan_move_us=14304.0 revoke_us=8019.2 pause_us=22323.2
+[C11-close] off_pause_close_us=1321967.4 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4761 scan_move_us=14607.3 revoke_us=3937.5 pause_us=18544.9
+[C11-close] off_pause_close_us=1359758.5 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=4926 scan_move_us=12800.7 revoke_us=7808.8 pause_us=20609.5
+[C11-close] off_pause_close_us=1442208.5 rc=0
+[C11-pause] roots=889 heap_in=875 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=5110 scan_move_us=14410.5 revoke_us=3846.2 pause_us=18256.7
+[C11-close] off_pause_close_us=1350910.6 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=5252 scan_move_us=13523.8 revoke_us=3126.4 pause_us=16650.1
+[C11-close] off_pause_close_us=1613573.3 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=5505 scan_move_us=15528.7 revoke_us=3830.4 pause_us=19359.1
+[C11-close] off_pause_close_us=1556378.8 rc=0
+[C11-pause] roots=890 heap_in=876 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=5623 scan_move_us=21779.6 revoke_us=11525.1 pause_us=33304.6
+[C11-close] off_pause_close_us=1405928.8 rc=0
+[C11-pause] roots=889 heap_in=875 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=5756 scan_move_us=14394.9 revoke_us=8516.1 pause_us=22911.0
+[C11-pause] roots=890 heap_in=876 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=5757 scan_move_us=13388.3 revoke_us=16.8 pause_us=13405.2
+[C11-close] off_pause_close_us=1576662.1 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=5801 scan_move_us=14076.4 revoke_us=7764.5 pause_us=21840.9
+[C11-close] off_pause_close_us=1669385.0 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=6070 scan_move_us=13535.9 revoke_us=7719.3 pause_us=21255.2
+[C11-close] off_pause_close_us=1499051.4 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=6293 scan_move_us=14101.4 revoke_us=8540.4 pause_us=22641.7
+[C11-close] off_pause_close_us=1216755.4 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=6412 scan_move_us=12560.3 revoke_us=7663.8 pause_us=20224.1
+[C11-close] off_pause_close_us=1703616.3 rc=0
+[C11-pause] roots=890 heap_in=876 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=6697 scan_move_us=14784.4 revoke_us=3932.7 pause_us=18717.1
+[C11-close] off_pause_close_us=1343312.0 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=6858 scan_move_us=14611.9 revoke_us=3856.8 pause_us=18468.7
+[C11-close] off_pause_close_us=1415040.5 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=7032 scan_move_us=12698.3 revoke_us=3510.3 pause_us=16208.6
+[C11-close] off_pause_close_us=1424847.5 rc=0
+[C11-pause] roots=889 heap_in=875 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=7196 scan_move_us=14829.5 revoke_us=8114.4 pause_us=22943.9
+[C11-close] off_pause_close_us=1619519.2 rc=0
+[C11-pause] roots=889 heap_in=875 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=7458 scan_move_us=15050.7 revoke_us=7896.8 pause_us=22947.6
+[C11-close] off_pause_close_us=1769953.6 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=7725 scan_move_us=14000.1 revoke_us=3908.4 pause_us=17908.4
+[C11-close] off_pause_close_us=1791320.2 rc=0
+[C11-pause] roots=890 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=7834 scan_move_us=14622.1 revoke_us=3564.4 pause_us=18186.5
+[C11-pause] roots=889 heap_in=875 moved=0 fixed=0 revoked=0 swept=0 batch=1 heap_used_K=7834 scan_move_us=19559.7 revoke_us=16.4 pause_us=19576.1
+[C11-close] off_pause_close_us=1549720.0 rc=0
+[C11-pause] roots=886 heap_in=873 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=7935 scan_move_us=12466.6 revoke_us=4290.8 pause_us=16757.4
+[C11-close] off_pause_close_us=1643072.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=8092 scan_move_us=15266.3 revoke_us=7736.2 pause_us=23002.4
+[C11-close] off_pause_close_us=1559315.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=8300 scan_move_us=13112.0 revoke_us=3754.4 pause_us=16866.4
+[C11-close] off_pause_close_us=1663714.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=8541 scan_move_us=14158.3 revoke_us=3873.6 pause_us=18031.8
+[C11-close] off_pause_close_us=1305970.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=8649 scan_move_us=14503.5 revoke_us=7767.9 pause_us=22271.4
+[C11-close] off_pause_close_us=1612509.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=8845 scan_move_us=13510.6 revoke_us=3789.9 pause_us=17300.4
+[C11-close] off_pause_close_us=1519861.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9007 scan_move_us=13899.9 revoke_us=4000.0 pause_us=17899.9
+[C11-close] off_pause_close_us=1599981.9 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=9199 scan_move_us=14637.2 revoke_us=3859.7 pause_us=18496.9
+[C11-close] off_pause_close_us=1533993.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9386 scan_move_us=13099.0 revoke_us=4542.0 pause_us=17641.0
+[C11-close] off_pause_close_us=1631852.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9593 scan_move_us=12390.7 revoke_us=3571.5 pause_us=15962.2
+[C11-close] off_pause_close_us=1574184.5 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=9793 scan_move_us=17882.5 revoke_us=8114.2 pause_us=25996.7
+[C11-close] off_pause_close_us=1410930.7 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=9911 scan_move_us=15655.8 revoke_us=7610.8 pause_us=23266.6
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=9912 scan_move_us=11917.7 revoke_us=15.0 pause_us=11932.7
+[C11-close] off_pause_close_us=1959832.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=9994 scan_move_us=12500.7 revoke_us=7555.3 pause_us=20056.0
+[C11-close] off_pause_close_us=1419877.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=10139 scan_move_us=12629.5 revoke_us=4135.0 pause_us=16764.5
+[C11-close] off_pause_close_us=1566285.2 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=10323 scan_move_us=15400.5 revoke_us=4009.2 pause_us=19409.7
+[C11-close] off_pause_close_us=1765557.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=10568 scan_move_us=15134.6 revoke_us=3452.5 pause_us=18587.2
+[C11-close] off_pause_close_us=2294538.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=10909 scan_move_us=14841.5 revoke_us=4743.9 pause_us=19585.4
+[C11-close] off_pause_close_us=1667424.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=11100 scan_move_us=13735.3 revoke_us=3681.3 pause_us=17416.7
+[C11-close] off_pause_close_us=1612243.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=11290 scan_move_us=13913.9 revoke_us=3930.5 pause_us=17844.4
+[C11-close] off_pause_close_us=1579014.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=11464 scan_move_us=14227.6 revoke_us=3781.2 pause_us=18008.8
+[C11-close] off_pause_close_us=1692273.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=11666 scan_move_us=13141.2 revoke_us=3606.2 pause_us=16747.5
+[C11-close] off_pause_close_us=1910236.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=11949 scan_move_us=14482.5 revoke_us=3578.8 pause_us=18061.3
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=11988 scan_move_us=14580.4 revoke_us=3551.7 pause_us=18132.1
+[C11-close] off_pause_close_us=1660441.8 rc=0
+[C11-pause] roots=889 heap_in=876 moved=0 fixed=0 revoked=0 swept=0 batch=1 heap_used_K=11989 scan_move_us=19615.1 revoke_us=21.8 pause_us=19636.9
+[C11-close] off_pause_close_us=1955321.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=12192 scan_move_us=12948.5 revoke_us=3660.9 pause_us=16609.4
+[C11-close] off_pause_close_us=1862277.1 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=12447 scan_move_us=14920.4 revoke_us=3991.1 pause_us=18911.5
+[C11-close] off_pause_close_us=1588824.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=12604 scan_move_us=13805.7 revoke_us=4380.6 pause_us=18186.3
+[C11-close] off_pause_close_us=1909915.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=12867 scan_move_us=14099.9 revoke_us=3945.9 pause_us=18045.8
+[C11-close] off_pause_close_us=1937567.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=13131 scan_move_us=13993.7 revoke_us=3859.0 pause_us=17852.7
+[C11-close] off_pause_close_us=1840532.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=13348 scan_move_us=13891.9 revoke_us=3563.3 pause_us=17455.2
+[C11-close] off_pause_close_us=1951109.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=13599 scan_move_us=15764.8 revoke_us=3616.1 pause_us=19380.9
+[C11-close] off_pause_close_us=1525663.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=13707 scan_move_us=13104.9 revoke_us=3481.3 pause_us=16586.2
+[C11-close] off_pause_close_us=1865343.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=13930 scan_move_us=14364.3 revoke_us=3686.1 pause_us=18050.4
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=14060 scan_move_us=11844.0 revoke_us=16.0 pause_us=11860.0
+[C11-close] off_pause_close_us=2090856.5 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=14063 scan_move_us=14133.5 revoke_us=3739.7 pause_us=17873.2
+[C11-close] off_pause_close_us=1717703.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=14158 scan_move_us=12776.9 revoke_us=3740.5 pause_us=16517.4
+[C11-close] off_pause_close_us=1676545.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=14315 scan_move_us=14060.5 revoke_us=3997.4 pause_us=18057.9
+[C11-close] off_pause_close_us=2301039.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=14608 scan_move_us=13955.9 revoke_us=3680.2 pause_us=17636.1
+[C11-close] off_pause_close_us=1715560.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=14782 scan_move_us=13384.8 revoke_us=3547.7 pause_us=16932.5
+[C11-close] off_pause_close_us=2247091.6 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=15149 scan_move_us=14632.0 revoke_us=3915.8 pause_us=18547.9
+[C11-close] off_pause_close_us=1814843.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=15348 scan_move_us=13603.9 revoke_us=3560.6 pause_us=17164.5
+[C11-close] off_pause_close_us=1774532.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=15577 scan_move_us=13717.1 revoke_us=3703.0 pause_us=17420.1
+[C11-close] off_pause_close_us=1990350.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=15831 scan_move_us=13522.9 revoke_us=3532.6 pause_us=17055.5
+[C11-close] off_pause_close_us=2082153.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=16106 scan_move_us=13969.1 revoke_us=3735.3 pause_us=17704.4
+[C11-close] off_pause_close_us=1745898.6 rc=0
+[C11-pause] roots=915 heap_in=896 moved=8 fixed=26 revoked=8 swept=0 batch=1 heap_used_K=16144 scan_move_us=18568.5 revoke_us=3528.6 pause_us=22097.0
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=16144 scan_move_us=18515.5 revoke_us=22.4 pause_us=18537.8
+[C11-close] off_pause_close_us=1826622.0 rc=0
+[C11-pause] roots=904 heap_in=887 moved=8 fixed=21 revoked=8 swept=0 batch=1 heap_used_K=16147 scan_move_us=15312.8 revoke_us=3663.7 pause_us=18976.6
+[C11-close] off_pause_close_us=1789987.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=16266 scan_move_us=12789.1 revoke_us=4204.9 pause_us=16994.0
+[C11-close] off_pause_close_us=1954273.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=16538 scan_move_us=13850.8 revoke_us=4203.7 pause_us=18054.4
+[C11-close] off_pause_close_us=1938322.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=16701 scan_move_us=22454.0 revoke_us=5325.3 pause_us=27779.3
+[C11-close] off_pause_close_us=2188966.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=16992 scan_move_us=14327.3 revoke_us=8208.2 pause_us=22535.6
+[C11-close] off_pause_close_us=1898206.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=17184 scan_move_us=14267.8 revoke_us=8073.8 pause_us=22341.7
+[C11-close] off_pause_close_us=2625601.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=17622 scan_move_us=13874.3 revoke_us=8377.2 pause_us=22251.6
+[C11-close] off_pause_close_us=1900232.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=17828 scan_move_us=13283.6 revoke_us=3668.8 pause_us=16952.4
+[C11-close] off_pause_close_us=2381299.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=18169 scan_move_us=14014.1 revoke_us=3611.0 pause_us=17625.1
+[C11-close] off_pause_close_us=1941122.1 rc=0
+[C11-pause] roots=896 heap_in=880 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=18217 scan_move_us=16783.1 revoke_us=3847.7 pause_us=20630.8
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=18217 scan_move_us=15112.5 revoke_us=22.8 pause_us=15135.3
+[BENCH] round [C11-close] off_pause_close_us=2175700.9 rc=0
+ alloc[C11-pause] roots=906 heap_in=889 moved=8 fixed=26 revoked=8 swept=0 batch=1 heap_used_K=18237 scan_move_us=17178.5 revoke_us=3856.1 pause_us=21034.6
+[C11-close] off_pause_close_us=2175373.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=18489 scan_move_us=14440.6 revoke_us=4159.3 pause_us=18599.9
+[C11-close] off_pause_close_us=1928490.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=18663 scan_move_us=13349.1 revoke_us=4628.9 pause_us=17978.0
+[C11-close] off_pause_close_us=2499706.4 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=19025 scan_move_us=13964.5 revoke_us=4157.8 pause_us=18122.3
+[C11-close] off_pause_close_us=2229740.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=19288 scan_move_us=14771.7 revoke_us=3648.1 pause_us=18419.8
+[C11-close] off_pause_close_us=1927770.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=19453 scan_move_us=14331.2 revoke_us=4364.0 pause_us=18695.2
+[C11-close] off_pause_close_us=2411249.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=19826 scan_move_us=14250.4 revoke_us=3898.0 pause_us=18148.4
+[C11-close] off_pause_close_us=1771168.8 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=19949 scan_move_us=13534.3 revoke_us=3626.3 pause_us=17160.6
+[C11-close] off_pause_close_us=1873615.3 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=20105 scan_move_us=14439.0 revoke_us=3786.8 pause_us=18225.8
+[C11-close] off_pause_close_us=2947692.4 rc=0
+8[C11-pause] roots=906 heap_in=889 moved=8 fixed=27 revoked=8 swept=0 batch=1 heap_used_K=20306 scan_move_us=19334.7 revoke_us=3498.8 pause_us=22833.4
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=20306 scan_move_us=460689.7 revoke_us=16.4 pause_us=460706.1
+[C11-close] off_pause_close_us=1685428.8 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=20309 scan_move_us=15481.0 revoke_us=3504.1 pause_us=18985.1
+[C11-close] off_pause_close_us=2156890.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=20447 scan_move_us=12827.6 revoke_us=3667.5 pause_us=16495.1
+[C11-close] off_pause_close_us=2409832.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=20800 scan_move_us=14780.0 revoke_us=4201.0 pause_us=18981.0
+[C11-close] off_pause_close_us=1959258.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=20970 scan_move_us=12576.9 revoke_us=3796.8 pause_us=16373.7
+[C11-close] off_pause_close_us=2447598.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=21316 scan_move_us=13371.8 revoke_us=3723.8 pause_us=17095.6
+[C11-close] off_pause_close_us=1950088.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=21479 scan_move_us=15116.5 revoke_us=4028.1 pause_us=19144.6
+[C11-close] off_pause_close_us=2748643.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=21887 scan_move_us=16054.6 revoke_us=3995.0 pause_us=20049.6
+[C11-close] off_pause_close_us=2881499.2 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=22254 scan_move_us=14502.9 revoke_us=3599.7 pause_us=18102.6
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=22376 scan_move_us=12196.9 revoke_us=17.0 pause_us=12213.8
+[C11-close] off_pause_close_us=2668497.9 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=22378 scan_move_us=14205.8 revoke_us=4042.8 pause_us=18248.6
+[C11-close] off_pause_close_us=2495760.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=22487 scan_move_us=12727.1 revoke_us=3727.0 pause_us=16454.1
+[C11-close] off_pause_close_us=2204200.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=22731 scan_move_us=14166.2 revoke_us=3803.2 pause_us=17969.4
+[C11-close] off_pause_close_us=2550715.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=23075 scan_move_us=15109.3 revoke_us=4087.4 pause_us=19196.7
+[C11-close] off_pause_close_us=2509415.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=23427 scan_move_us=14997.1 revoke_us=3493.0 pause_us=18490.1
+[C11-close] off_pause_close_us=2518451.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=23771 scan_move_us=13918.7 revoke_us=3629.5 pause_us=17548.2
+[C11-close] off_pause_close_us=2769437.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=24161 scan_move_us=14105.1 revoke_us=3901.6 pause_us=18006.7
+[C11-close] off_pause_close_us=3010985.9 rc=0
+0[C11-pause] roots=897 heap_in=881 moved=8 fixed=21 revoked=8 swept=0 batch=1 heap_used_K=24445 scan_move_us=16905.3 revoke_us=3606.2 pause_us=20511.6
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=24446 scan_move_us=14305.2 revoke_us=17.1 pause_us=14322.3
+[C11-close] off_pause_close_us=2669809.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=24475 scan_move_us=12393.0 revoke_us=3776.6 pause_us=16169.6
+[C11-close] off_pause_close_us=2360211.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=24719 scan_move_us=15180.0 revoke_us=3670.0 pause_us=18850.0
+[C11-close] off_pause_close_us=2818504.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=25118 scan_move_us=13947.7 revoke_us=4022.3 pause_us=17970.0
+[C11-close] off_pause_close_us=2657172.7 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=25505 scan_move_us=15115.7 revoke_us=3516.7 pause_us=18632.4
+[C11-close] off_pause_close_us=2658813.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=25755 scan_move_us=13221.9 revoke_us=3911.9 pause_us=17133.8
+[C11-close] off_pause_close_us=2609552.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=26111 scan_move_us=14344.0 revoke_us=3671.2 pause_us=18015.2
+[C11-close] off_pause_close_us=2631996.6 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=26440 scan_move_us=14581.3 revoke_us=3933.9 pause_us=18515.2
+11[C11-close] off_pause_close_us=2545107.4 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=26515 scan_move_us=13389.4 revoke_us=4252.7 pause_us=17642.1
+[C11-pause] roots=889 heap_in=876 moved=0 fixed=0 revoked=0 swept=0 batch=1 heap_used_K=26516 scan_move_us=17800.4 revoke_us=15.8 pause_us=17816.2
+[C11-close] off_pause_close_us=2748029.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=26642 scan_move_us=13752.8 revoke_us=4050.2 pause_us=17803.0
+[C11-close] off_pause_close_us=2515985.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=26924 scan_move_us=14360.9 revoke_us=3735.7 pause_us=18096.7
+[C11-close] off_pause_close_us=2431098.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=27194 scan_move_us=13523.7 revoke_us=4076.1 pause_us=17599.8
+[C11-close] off_pause_close_us=2391916.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=27482 scan_move_us=14073.2 revoke_us=3768.1 pause_us=17841.2
+[C11-close] off_pause_close_us=2724989.1 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=27829 scan_move_us=14179.5 revoke_us=4025.5 pause_us=18204.9
+[C11-close] off_pause_close_us=2887616.4 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=28242 scan_move_us=14540.9 revoke_us=4145.7 pause_us=18686.6
+[C11-close] off_pause_close_us=2781269.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=28574 scan_move_us=15500.4 revoke_us=3637.6 pause_us=19138.0
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=28583 scan_move_us=17982.4 revoke_us=17.0 pause_us=17999.4
+[C11-close] off_pause_close_us=3153530.0 rc=0
+1[C11-pause] roots=912 heap_in=892 moved=8 fixed=24 revoked=8 swept=0 batch=1 heap_used_K=28585 scan_move_us=20271.9 revoke_us=3597.3 pause_us=23869.2
+[C11-close] off_pause_close_us=3215877.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=28871 scan_move_us=14348.1 revoke_us=3784.4 pause_us=18132.5
+[C11-close] off_pause_close_us=3031627.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=29355 scan_move_us=13406.2 revoke_us=4002.4 pause_us=17408.5
+[C11-close] off_pause_close_us=2909432.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=29746 scan_move_us=13804.7 revoke_us=3931.1 pause_us=17735.7
+[C11-close] off_pause_close_us=2649842.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=30034 scan_move_us=14569.6 revoke_us=3970.0 pause_us=18539.7
+[C11-close] off_pause_close_us=2859909.0 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=30395 scan_move_us=14173.9 revoke_us=3509.3 pause_us=17683.2
+[C11-close] off_pause_close_us=2616170.9 rc=0
+[C11-pause] roots=920 heap_in=900 moved=8 fixed=27 revoked=8 swept=0 batch=1 heap_used_K=30647 scan_move_us=18983.5 revoke_us=3919.0 pause_us=22902.5
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=30648 scan_move_us=13998.3 revoke_us=16.0 pause_us=14014.4
+[C11-close] off_pause_close_us=2917550.6 rc=0
+[C11-pause] roots=916 heap_in=895 moved=8 fixed=28 revoked=8 swept=0 batch=1 heap_used_K=30650 scan_move_us=18585.1 revoke_us=3619.1 pause_us=22204.2
+[C11-close] off_pause_close_us=2067529.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=30663 scan_move_us=18279.2 revoke_us=4974.0 pause_us=23253.2
+[C11-close] off_pause_close_us=3247115.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=31089 scan_move_us=13884.4 revoke_us=3741.3 pause_us=17625.7
+[C11-close] off_pause_close_us=2861686.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=31472 scan_move_us=13910.1 revoke_us=3656.0 pause_us=17566.1
+[C11-close] off_pause_close_us=2925549.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=31838 scan_move_us=13357.0 revoke_us=3927.3 pause_us=17284.3
+[C11-close] off_pause_close_us=3018639.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=32211 scan_move_us=14786.2 revoke_us=3730.9 pause_us=18517.2
+[C11-close] off_pause_close_us=3299261.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=32710 scan_move_us=13143.9 revoke_us=3713.8 pause_us=16857.6
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=32715 scan_move_us=13597.3 revoke_us=17.3 pause_us=13614.6
+[C11-close] off_pause_close_us=2989620.6 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=32718 scan_move_us=14314.8 revoke_us=3701.2 pause_us=18016.0
+[C11-close] off_pause_close_us=2959900.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=32800 scan_move_us=15772.4 revoke_us=4116.4 pause_us=19888.9
+[C11-close] off_pause_close_us=2659790.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=33082 scan_move_us=14628.2 revoke_us=3622.7 pause_us=18250.9
+[C11-close] off_pause_close_us=3746323.2 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=33713 scan_move_us=13699.6 revoke_us=3824.7 pause_us=17524.3
+[C11-close] off_pause_close_us=3239582.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=34170 scan_move_us=14291.0 revoke_us=3782.0 pause_us=18073.0
+[C11-close] off_pause_close_us=2509312.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=34370 scan_move_us=13885.9 revoke_us=3572.5 pause_us=17458.4
+[C11-close] off_pause_close_us=3056874.1 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=34765 scan_move_us=14933.9 revoke_us=3723.0 pause_us=18656.9
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=34783 scan_move_us=12841.1 revoke_us=15.2 pause_us=12856.3
+[C11-close] off_pause_close_us=3101545.7 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=34786 scan_move_us=13534.9 revoke_us=3285.1 pause_us=16820.1
+[C11-close] off_pause_close_us=3547516.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=35077 scan_move_us=14141.3 revoke_us=3966.4 pause_us=18107.6
+[C11-close] off_pause_close_us=2646807.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=35314 scan_move_us=13738.0 revoke_us=4141.4 pause_us=17879.3
+[C11-close] off_pause_close_us=3174843.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=35742 scan_move_us=14292.7 revoke_us=3714.0 pause_us=18006.7
+[C11-close] off_pause_close_us=3054463.1 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=36076 scan_move_us=15286.2 revoke_us=3897.9 pause_us=19184.1
+[C11-close] off_pause_close_us=3025456.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=36434 scan_move_us=14396.2 revoke_us=4688.7 pause_us=19084.9
+[C11-close] off_pause_close_us=3264759.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=36841 scan_move_us=14400.3 revoke_us=3589.6 pause_us=17989.9
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=36850 scan_move_us=14199.9 revoke_us=18.4 pause_us=14218.3
+[C11-close] off_pause_close_us=3509811.2 rc=0
+[C11-pause] roots=898 heap_in=882 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=36853 scan_move_us=14748.4 revoke_us=3701.0 pause_us=18449.5
+[C11-close] off_pause_close_us=3008362.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=37123 scan_move_us=15168.9 revoke_us=3781.4 pause_us=18950.3
+[C11-close] off_pause_close_us=2959604.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=37410 scan_move_us=14360.0 revoke_us=3780.7 pause_us=18140.7
+[C11-close] off_pause_close_us=3888505.7 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=38002 scan_move_us=14258.1 revoke_us=4603.4 pause_us=18861.5
+[C11-close] off_pause_close_us=3672775.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=38465 scan_move_us=19657.4 revoke_us=5805.4 pause_us=25462.8
+[C11-close] off_pause_close_us=3029125.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=38789 scan_move_us=14109.8 revoke_us=3826.8 pause_us=17936.6
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=38915 scan_move_us=13827.2 revoke_us=15.8 pause_us=13843.1
+[C11-close] off_pause_close_us=3699818.8 rc=0
+[C11-pause] roots=905 heap_in=887 moved=8 fixed=20 revoked=8 swept=0 batch=1 heap_used_K=38917 scan_move_us=17011.4 revoke_us=3644.5 pause_us=20655.8
+[C11-close] off_pause_close_us=2887616.5 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=39069 scan_move_us=15421.2 revoke_us=3883.4 pause_us=19304.5
+[C11-close] off_pause_close_us=3669347.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=39581 scan_move_us=15061.5 revoke_us=3804.4 pause_us=18865.9
+[C11-close] off_pause_close_us=3510793.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=40091 scan_move_us=16666.0 revoke_us=3771.7 pause_us=20437.7
+[C11-close] off_pause_close_us=2853338.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=40311 scan_move_us=17603.8 revoke_us=4035.9 pause_us=21639.8
+[C11-close] off_pause_close_us=3836017.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=40869 scan_move_us=16920.9 revoke_us=3945.7 pause_us=20866.6
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=40980 scan_move_us=15075.6 revoke_us=16.8 pause_us=15092.4
+[C11-close] off_pause_close_us=3725809.7 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=40982 scan_move_us=14477.5 revoke_us=3734.1 pause_us=18211.6
+[C11-close] off_pause_close_us=3379444.3 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=41277 scan_move_us=14502.7 revoke_us=4667.3 pause_us=19169.9
+[C11-close] off_pause_close_us=3777823.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=41817 scan_move_us=13387.3 revoke_us=4151.8 pause_us=17539.1
+[C11-close] off_pause_close_us=3255543.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=42081 scan_move_us=14211.2 revoke_us=3588.4 pause_us=17799.5
+[C11-close] off_pause_close_us=3427500.8 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=42491 scan_move_us=14512.4 revoke_us=3871.2 pause_us=18383.7
+[C11-close] off_pause_close_us=3643525.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=42955 scan_move_us=14205.1 revoke_us=3708.1 pause_us=17913.2
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=43045 scan_move_us=14885.8 revoke_us=19.9 pause_us=14905.6
+[C11-close] off_pause_close_us=3907784.3 rc=0
+[C11-pause] roots=908 heap_in=889 moved=8 fixed=24 revoked=8 swept=0 batch=1 heap_used_K=43047 scan_move_us=16140.8 revoke_us=3632.6 pause_us=19773.4
+[C11-close] off_pause_close_us=3917430.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=43513 scan_move_us=15480.5 revoke_us=3617.9 pause_us=19098.4
+[C11-close] off_pause_close_us=3663952.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=44011 scan_move_us=14883.9 revoke_us=3459.4 pause_us=18343.3
+[C11-close] off_pause_close_us=3622250.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=44472 scan_move_us=14495.0 revoke_us=3802.0 pause_us=18297.0
+[C11-close] off_pause_close_us=3796288.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=44849 scan_move_us=16502.6 revoke_us=4051.5 pause_us=20554.1
+[C11-close] off_pause_close_us=3384554.6 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=45108 scan_move_us=17334.1 revoke_us=3984.2 pause_us=21318.3
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=45109 scan_move_us=14918.8 revoke_us=20.6 pause_us=14939.3
+[C11-close] off_pause_close_us=4243576.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=45271 scan_move_us=13277.7 revoke_us=4652.0 pause_us=17929.6
+[C11-close] off_pause_close_us=3439935.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=45623 scan_move_us=13325.5 revoke_us=4458.3 pause_us=17783.7
+[C11-close] off_pause_close_us=3862077.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=46093 scan_move_us=14738.4 revoke_us=3839.9 pause_us=18578.3
+[C11-close] off_pause_close_us=4062101.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=46649 scan_move_us=14272.3 revoke_us=3899.5 pause_us=18171.8
+[C11-close] off_pause_close_us=3969932.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=47061 scan_move_us=15140.4 revoke_us=3935.9 pause_us=19076.3
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=47173 scan_move_us=16995.8 revoke_us=16.2 pause_us=17012.0
+8192[C11-close] off_pause_close_us=4402262.6 rc=0
+[C11-pause] roots=913 heap_in=893 moved=8 fixed=29 revoked=8 swept=0 batch=1 heap_used_K=47175 scan_move_us=16051.5 revoke_us=3743.4 pause_us=19794.9
+[C11-close] off_pause_close_us=3731691.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=47494 scan_move_us=13583.6 revoke_us=3915.7 pause_us=17499.2
+[C11-close] off_pause_close_us=3930220.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=47965 scan_move_us=20063.0 revoke_us=3745.8 pause_us=23808.8
+[C11-close] off_pause_close_us=4152631.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=48505 scan_move_us=14763.8 revoke_us=3851.3 pause_us=18615.1
+[C11-close] off_pause_close_us=4086972.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=48930 scan_move_us=14717.7 revoke_us=5378.5 pause_us=20096.2
+[C11-close] off_pause_close_us=3644836.9 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=49236 scan_move_us=15757.8 revoke_us=3813.1 pause_us=19570.8
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=49237 scan_move_us=14802.2 revoke_us=23.8 pause_us=14826.0
+[C11-close] off_pause_close_us=3825511.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=49246 scan_move_us=12882.0 revoke_us=3506.9 pause_us=16388.9
+[C11-close] off_pause_close_us=4222463.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=49791 scan_move_us=13827.8 revoke_us=4437.8 pause_us=18265.6
+[C11-close] off_pause_close_us=3824045.4 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=50200 scan_move_us=15654.6 revoke_us=4041.5 pause_us=19696.1
+[C11-close] off_pause_close_us=4269179.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=50677 scan_move_us=14123.8 revoke_us=3795.9 pause_us=17919.7
+[C11-close] off_pause_close_us=3801885.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=51086 scan_move_us=13743.1 revoke_us=4837.2 pause_us=18580.4
+[C11-close] off_pause_close_us=3746707.2 rc=0
+[C11-pause] roots=916 heap_in=895 moved=8 fixed=28 revoked=8 swept=0 batch=1 heap_used_K=51301 scan_move_us=26409.2 revoke_us=3700.0 pause_us=30109.1
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=51302 scan_move_us=14393.5 revoke_us=15.2 pause_us=14408.6
+[C11-close] off_pause_close_us=4228646.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=51517 scan_move_us=20537.2 revoke_us=3378.2 pause_us=23915.4
+[C11-close] off_pause_close_us=4132504.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=52053 scan_move_us=13249.7 revoke_us=3478.0 pause_us=16727.8
+[C11-close] off_pause_close_us=4567483.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=52570 scan_move_us=13618.2 revoke_us=4367.9 pause_us=17986.1
+[C11-close] off_pause_close_us=3959891.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=53027 scan_move_us=14313.7 revoke_us=3577.5 pause_us=17891.2
+[C11-close] off_pause_close_us=3993358.7 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=53364 scan_move_us=14944.3 revoke_us=3886.4 pause_us=18830.7
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=53365 scan_move_us=13836.2 revoke_us=16.4 pause_us=13852.6
+[C11-close] off_pause_close_us=4715116.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=53625 scan_move_us=14422.3 revoke_us=4012.7 pause_us=18435.0
+[C11-close] off_pause_close_us=4388199.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=54202 scan_move_us=12966.4 revoke_us=3883.4 pause_us=16849.8
+[C11-close] off_pause_close_us=3972681.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=54597 scan_move_us=14044.2 revoke_us=3928.3 pause_us=17972.5
+[C11-close] off_pause_close_us=4716366.5 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=55289 scan_move_us=15164.0 revoke_us=3912.8 pause_us=19076.8
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=55426 scan_move_us=15793.2 revoke_us=17.2 pause_us=15810.4
+[C11-close] off_pause_close_us=4520777.0 rc=0
+8192[C11-pause] roots=913 heap_in=893 moved=8 fixed=23 revoked=8 swept=0 batch=1 heap_used_K=55429 scan_move_us=19658.5 revoke_us=3896.5 pause_us=23555.0
+[C11-close] off_pause_close_us=4679701.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=55855 scan_move_us=14951.7 revoke_us=4108.9 pause_us=19060.7
+[C11-close] off_pause_close_us=3447667.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=56076 scan_move_us=14450.4 revoke_us=3895.2 pause_us=18345.6
+[C11-close] off_pause_close_us=3772420.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=56426 scan_move_us=14621.6 revoke_us=3508.1 pause_us=18129.7
+[C11-close] off_pause_close_us=3824680.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=56798 scan_move_us=13218.8 revoke_us=3606.2 pause_us=16824.9
+[C11-close] off_pause_close_us=4511370.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=57372 scan_move_us=20805.6 revoke_us=3871.5 pause_us=24677.1
+[C11-close] off_pause_close_us=4179460.1 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=57493 scan_move_us=15145.8 revoke_us=4044.9 pause_us=19190.7
+[C11-pause] roots=916 heap_in=897 moved=0 fixed=15 revoked=0 swept=0 batch=1 heap_used_K=57493 scan_move_us=24889.7 revoke_us=15.8 pause_us=24905.5
+[C11-close] off_pause_close_us=4331282.7 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=57674 scan_move_us=14500.9 revoke_us=4380.2 pause_us=18881.2
+[C11-close] off_pause_close_us=4209251.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=58025 scan_move_us=13946.6 revoke_us=3804.0 pause_us=17750.6
+[C11-close] off_pause_close_us=4709390.1 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=58638 scan_move_us=14131.5 revoke_us=3994.8 pause_us=18126.3
+[C11-close] off_pause_close_us=4249536.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=59054 scan_move_us=13557.0 revoke_us=3703.9 pause_us=17260.9
+[C11-close] off_pause_close_us=4289645.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=59501 scan_move_us=13197.6 revoke_us=4255.2 pause_us=17452.7
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=59556 scan_move_us=14599.9 revoke_us=16.1 pause_us=14616.0
+[C11-close] off_pause_close_us=4602093.6 rc=0
+[C11-pause] roots=911 heap_in=891 moved=8 fixed=25 revoked=8 swept=0 batch=1 heap_used_K=59558 scan_move_us=20116.8 revoke_us=3694.2 pause_us=23811.0
+[C11-close] off_pause_close_us=4107672.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=59812 scan_move_us=14528.4 revoke_us=4135.2 pause_us=18663.6
+[C11-close] off_pause_close_us=4853037.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=60402 scan_move_us=16381.8 revoke_us=3780.3 pause_us=20162.1
+[C11-close] off_pause_close_us=5049750.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=61064 scan_move_us=14369.9 revoke_us=3900.7 pause_us=18270.6
+[C11-close] off_pause_close_us=4835487.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=61592 scan_move_us=22210.9 revoke_us=13564.7 pause_us=35775.6
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=61618 scan_move_us=11044.9 revoke_us=20.0 pause_us=11064.8
+[C11-close] off_pause_close_us=4676560.3 rc=0
+[C11-pause] roots=898 heap_in=882 moved=8 fixed=24 revoked=8 swept=0 batch=1 heap_used_K=61622 scan_move_us=16163.7 revoke_us=3811.8 pause_us=19975.5
+[C11-close] off_pause_close_us=4273406.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=61914 scan_move_us=14570.1 revoke_us=3820.4 pause_us=18390.5
+[C11-close] off_pause_close_us=5194479.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=62573 scan_move_us=15468.2 revoke_us=4087.5 pause_us=19555.7
+[C11-close] off_pause_close_us=4734895.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=63120 scan_move_us=14224.0 revoke_us=3925.2 pause_us=18149.2
+[C11-close] off_pause_close_us=4921954.7 rc=0
+8192[C11-pause] roots=895 heap_in=880 moved=8 fixed=21 revoked=8 swept=0 batch=1 heap_used_K=63680 scan_move_us=16845.2 revoke_us=4245.7 pause_us=21091.0
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=63682 scan_move_us=14868.1 revoke_us=14.6 pause_us=14882.8
+[C11-close] off_pause_close_us=4973390.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=63727 scan_move_us=13247.3 revoke_us=3835.8 pause_us=17083.2
+[C11-close] off_pause_close_us=4684526.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=64256 scan_move_us=16573.4 revoke_us=4422.0 pause_us=20995.4
+[C11-close] off_pause_close_us=5679093.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=64960 scan_move_us=13231.7 revoke_us=4746.0 pause_us=17977.7
+[C11-close] off_pause_close_us=4660129.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=65477 scan_move_us=13542.7 revoke_us=3722.5 pause_us=17265.2
+[C11-close] off_pause_close_us=4979651.0 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=65745 scan_move_us=15528.2 revoke_us=3850.7 pause_us=19378.9
+[C11-pause] roots=910 heap_in=892 moved=0 fixed=11 revoked=0 swept=0 batch=1 heap_used_K=65745 scan_move_us=20186.2 revoke_us=16.2 pause_us=20202.4
+[C11-close] off_pause_close_us=4886557.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=65982 scan_move_us=13913.0 revoke_us=3919.5 pause_us=17832.5
+[C11-close] off_pause_close_us=5086188.7 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=66611 scan_move_us=13900.6 revoke_us=3851.7 pause_us=17752.3
+[C11-close] off_pause_close_us=5069809.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=67235 scan_move_us=18971.9 revoke_us=3964.7 pause_us=22936.6
+[C11-close] off_pause_close_us=5621564.2 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=67805 scan_move_us=21651.2 revoke_us=4052.6 pause_us=25703.8
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=67806 scan_move_us=13772.0 revoke_us=16.1 pause_us=13788.1
+[C11-close] off_pause_close_us=4547068.3 rc=0
+[C11-pause] roots=916 heap_in=896 moved=8 fixed=31 revoked=8 swept=0 batch=1 heap_used_K=67809 scan_move_us=17783.2 revoke_us=3785.8 pause_us=21569.0
+[C11-close] off_pause_close_us=5192597.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=68346 scan_move_us=14584.8 revoke_us=3798.0 pause_us=18382.9
+[C11-close] off_pause_close_us=5249470.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=68980 scan_move_us=15772.9 revoke_us=3719.7 pause_us=19492.6
+[C11-close] off_pause_close_us=5129682.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=69579 scan_move_us=19290.9 revoke_us=3907.0 pause_us=23197.9
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=69866 scan_move_us=16889.1 revoke_us=15.6 pause_us=16904.7
+[C11-close] off_pause_close_us=5949650.0 rc=0
+[C11-pause] roots=918 heap_in=898 moved=8 fixed=31 revoked=8 swept=0 batch=1 heap_used_K=69868 scan_move_us=26533.8 revoke_us=3410.8 pause_us=29944.6
+[C11-close] off_pause_close_us=5663929.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=70405 scan_move_us=13817.8 revoke_us=3812.5 pause_us=17630.3
+[C11-close] off_pause_close_us=4856853.4 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=70915 scan_move_us=14582.8 revoke_us=4099.0 pause_us=18681.7
+[C11-close] off_pause_close_us=5118051.3 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=71489 scan_move_us=15136.3 revoke_us=3880.3 pause_us=19016.6
+[BENCH]   verify tag=[C11-close] off_pause_close_us=5549514.2 rc=0
+8192[C11-pause] roots=908 heap_in=889 moved=8 fixed=25 revoked=8 swept=0 batch=1 heap_used_K=71928 scan_move_us=26302.1 revoke_us=3594.4 pause_us=29896.4
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=71929 scan_move_us=14296.8 revoke_us=16.9 pause_us=14313.6
+[C11-close] off_pause_close_us=5139857.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=72075 scan_move_us=14046.3 revoke_us=3715.5 pause_us=17761.8
+[C11-close] off_pause_close_us=5004117.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=72571 scan_move_us=14342.8 revoke_us=5813.3 pause_us=20156.1
+[C11-close] off_pause_close_us=5776531.8 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=73248 scan_move_us=16532.8 revoke_us=4272.9 pause_us=20805.6
+[C11-close] off_pause_close_us=4893653.7 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=73676 scan_move_us=14777.6 revoke_us=3620.8 pause_us=18398.4
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=73990 scan_move_us=16317.9 revoke_us=18.3 pause_us=16336.2
+[C11-close] off_pause_close_us=5975975.5 rc=0
+[C11-pause] roots=922 heap_in=901 moved=8 fixed=35 revoked=8 swept=0 batch=1 heap_used_K=73992 scan_move_us=21037.3 revoke_us=3887.7 pause_us=24925.1
+[C11-close] off_pause_close_us=5507939.7 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=74464 scan_move_us=16342.8 revoke_us=4206.9 pause_us=20549.7
+[C11-close] off_pause_close_us=6115237.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=75204 scan_move_us=14027.1 revoke_us=3610.8 pause_us=17637.9
+[C11-close] off_pause_close_us=5464789.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=75816 scan_move_us=13977.5 revoke_us=4233.1 pause_us=18210.5
+[C11-close] off_pause_close_us=5337271.9 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=76052 scan_move_us=20614.6 revoke_us=3673.2 pause_us=24287.8
+[C11-pause] roots=934 heap_in=912 moved=0 fixed=26 revoked=0 swept=0 batch=1 heap_used_K=76053 scan_move_us=25341.2 revoke_us=23.6 pause_us=25364.7
+[C11-close] off_pause_close_us=5551221.5 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=76364 scan_move_us=15285.5 revoke_us=4144.9 pause_us=19430.5
+[C11-close] off_pause_close_us=6266835.9 rc=0
+[C11-pause] roots=889 heap_in=876 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=77112 scan_move_us=14686.4 revoke_us=4177.5 pause_us=18863.9
+[C11-close] off_pause_close_us=5215740.2 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=77605 scan_move_us=14691.6 revoke_us=5017.1 pause_us=19708.7
+[C11-close] off_pause_close_us=6190939.0 rc=0
+36[C11-pause] roots=904 heap_in=888 moved=8 fixed=29 revoked=8 swept=0 batch=1 heap_used_K=78113 scan_move_us=17541.4 revoke_us=3672.0 pause_us=21213.3
+[C11-pause] roots=890 heap_in=877 moved=0 fixed=1 revoked=0 swept=0 batch=1 heap_used_K=78113 scan_move_us=13629.5 revoke_us=14.3 pause_us=13643.8
+[C11-close] off_pause_close_us=5737269.9 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=78395 scan_move_us=13684.4 revoke_us=4224.3 pause_us=17908.7
+[C11-close] off_pause_close_us=5916270.9 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=79034 scan_move_us=15005.6 revoke_us=3416.1 pause_us=18421.8
+[C11-close] off_pause_close_us=6097001.6 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=79741 scan_move_us=14862.4 revoke_us=3874.9 pause_us=18737.4
+37[C11-close] off_pause_close_us=6140359.8 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=18 revoked=8 swept=0 batch=1 heap_used_K=80174 scan_move_us=17524.1 revoke_us=3716.0 pause_us=21240.2
+[BENCH]   gc_pause_ns=[C11-pause] roots=924 heap_in=904 moved=0 fixed=19 revoked=0 swept=0 batch=1 heap_used_K=80174 scan_move_us=22364.9 revoke_us=15.9 pause_us=22380.9
+[C11-close] off_pause_close_us=5398045.0 rc=0
+[C11-pause] roots=886 heap_in=874 moved=8 fixed=17 revoked=8 swept=0 batch=1 heap_used_K=80371 scan_move_us=14783.0 revoke_us=3672.2 pause_us=18455.2
+[C11-close] off_pause_close_us=5949033.1 rc=0
+[C11-pause] roots=890 heap_in=877 moved=8 fixed=16 revoked=8 swept=0 batch=1 heap_used_K=81087 scan_move_us=14676.4 revoke_us=3973.7 pause_us=18650.1
+[C11-close] off_pause_close_us=5537384.2 rc=0

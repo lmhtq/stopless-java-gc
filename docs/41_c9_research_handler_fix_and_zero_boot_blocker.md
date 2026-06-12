@@ -1826,3 +1826,29 @@ Paper: new §5.5(sound) + Fig 4 (sound_concurrent.pdf); abstract/intro/
 conclusion upgraded from "feasibility verified" to "implemented + measured".
 This was the original Phase-2 thesis: Cornucopia Reloaded's load barrier
 transplanted to a moving collector, end to end.
+
+## BF. Round-5 review: soundness hole found via trace arithmetic; FIX killed the tail too (2026-06-12, patch 0187)
+
+Round-5 codex cross-referenced the trace (345 pauses vs 305 closes, diff=40 =
+the benchmark's System.gc calls) and proved the first sound-mode cut had a
+hole: System.gc cycles arriving while a close was pending relocated objects
+whose marks could not publish until the NEXT open -> unsound window. (It
+also caught: stats quoted from a hidden heap>2MiB filter; stale "next step"
+text in 4 places; missing trial logs.)
+
+FIX: request COALESCING — doit() forces limit=0 when a close is pending, so
+no relocation can outrun its epoch; assert guards the invariant. Re-measured:
+- mixed-trigger IntegrityGC (16 System.gc rounds racing the background
+  collector, the exact hazard): 3/3 trials, 48/48 rounds verified.
+- ConcatTest 2/2; STW regression green.
+- heap-growth re-run (0.29->79.2 MiB, 334 cycles = 296 closes + 38 coalesced
+  skips, accounting exact): FULL-trace pause median 18.5 ms, p90 25.7, p99
+  146.5, max 461 ms; close 0.70->5.54 s off-pause.
+- SURPRISE: the 1.5 s pause tail VANISHED. It was epoch-opens blocking
+  in-kernel behind the still-running close (revoker lock), NOT my LCLG
+  page-table hypothesis — hypothesis retracted in the paper; final 100
+  cycles (largest heap) show p90 24.3 ms, none >100 ms.
+
+Paper §5.5 rewritten with the coalescing rule + the review-caught-it story +
+full-trace stats (no filter), fig regenerated, stale text fixed, trial logs
+exported (paper/data/c11_sound_trials.log).

@@ -184,8 +184,8 @@ def fig_sound_concurrent():
     ax1.set_xlabel("heap used (MiB)")
     ax1.set_ylabel("mutator pause (ms)")
     ax1.set_title("(a) in-pause: move + epoch-open", loc="left")
-    ax1.axhline(18.6, color=GRAY, lw=0.7, ls="--")
-    ax1.annotate("median 18.6 ms", xy=(50, 21), fontsize=8, color=GRAY)
+    ax1.axhline(18.5, color=GRAY, lw=0.7, ls="--")
+    ax1.annotate("median 18.5 ms", xy=(50, 21), fontsize=8, color=GRAY)
 
     cx = [c[0] for c in closes]; cy = [c[1] for c in closes]
     ax2.plot(cx, cy, "s-", color=VERMILION, ms=2.0, lw=0.9)
@@ -197,10 +197,11 @@ def fig_sound_concurrent():
     fig.savefig(os.path.join(FIGS, "sound_concurrent.pdf"))
     plt.close(fig)
     import statistics as st
-    steady = [p for h, p in rows if h > 2.0]
-    print(f"fig3: n={len(rows)} closes={len(closes)} "
-          f"median={st.median(steady):.1f}ms p90={sorted(steady)[int(len(steady)*0.9)]:.1f} "
-          f"max={max(steady):.0f} close {cy[0]:.2f}->{cy[-1]:.2f}s")
+    allp = [p for _, p in rows]
+    print(f"fig3: n={len(rows)} closes={len(closes)} FULL-trace "
+          f"median={st.median(allp):.1f}ms p90={sorted(allp)[int(len(allp)*0.9)]:.1f} "
+          f"p99={sorted(allp)[int(len(allp)*0.99)]:.1f} max={max(allp):.0f} "
+          f"close {cy[0]:.2f}->{cy[-1]:.2f}s")
 
 
 if __name__ == "__main__":

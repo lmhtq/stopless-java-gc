@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..f028c028aa1 100644
+index 069115be038..28d887aed39 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 @@ -6,12 +6,32 @@
@@ -35,7 +35,7 @@ index 069115be038..f028c028aa1 100644
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,52 +44,515 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +44,529 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -351,6 +351,16 @@ index 069115be038..f028c028aa1 100644
 +    // size — so a bounded per-cycle move limit yields a bounded pause.
 +    const jlong t0 = os::javaTimeNanos();
 +
++    // Phase-2 soundness guard: if the previous epoch's close is still
++    // pending (mutator-initiated System.gc racing the collector thread's
++    // off-pause close), relocate NOTHING this cycle — its marks could not be
++    // published before mutators resume. The request coalesces with the next
++    // collector cycle. (Root fixups via the forward table still run.)
++    if (::getenv("STOPLESS_REVOKE_CONCURRENT") != nullptr &&
++        g_stopless_close_pending) {
++      limit = 0;
++    }
++
 +    ResourceMark rm;
 +    GrowableArray<oop> moved_from(64);
 +    StoplessMoveRootsClosure cl(_heap, &moved_from, limit, verbose, kfilter, no_fixup);
@@ -394,13 +404,17 @@ index 069115be038..f028c028aa1 100644
 +    int revoked = 0;
 +    bool swept = false;
 +    if (!no_revoke && conc_revoke) {
++      // SOUNDNESS: marks publish at epoch OPEN, and an open while an epoch
++      // is already open is a no-op for the load side. So a cycle that
++      // relocates while a close is pending would resume mutators with
++      // UNPUBLISHED marks — exactly the unsound window. doit() therefore
++      // SKIPS relocation when a close is pending (see the limit=0 guard at
++      // the top); this branch only runs when the epoch is closed, and every
++      // relocation's marks are published before mutators resume.
++      assert(!g_stopless_close_pending || moved_from.length() == 0,
++             "relocated with close pending: unsound");
 +      for (int i = 0; i < moved_from.length(); i++) {
 +        _heap->mark_for_revoke((void*)(oopDesc*)moved_from.at(i));
-+      }
-+      if (g_stopless_close_pending) {
-+        fprintf(stderr, "[Stopless] WARN: epoch still open at next collect; "
-+                "this cycle's %d marks publish at the NEXT open\n",
-+                moved_from.length());
 +      }
 +      if (moved_from.length() > 0) {
 +        stopless_revoke_open();
