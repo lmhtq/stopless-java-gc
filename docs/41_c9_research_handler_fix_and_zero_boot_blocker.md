@@ -1532,9 +1532,9 @@ Data (ConcatTest, concurrent collector, Morello purecap under QEMU):
 TWO HEADLINE FINDINGS:
 
 1. THE MOVE PAUSE IS TINY AND HEAP-SIZE-INDEPENDENT (the paper's core claim).
-   scan+move+fixup = ~30 µs, essentially FLAT across moved-object count
+   scan+move+fixup = ~25-43 ms (UNIT FIX: earlier text said µs in error), essentially FLAT across moved-object count
    (1 vs 4 vs 8) AND across heap growth (used grows ~34% within a run while
-   scan_move stays ~30 µs). It is dominated by the ROOT scan
+   scan_move stays ~30 ms). It is dominated by the ROOT scan
    (Threads::oops_do + OopStorageSet + CLDG), which scales with the number of
    roots, not heap size — exactly the design's premise. This is the
    measurable evidence that the moving-GC pause is bounded and

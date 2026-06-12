@@ -4,9 +4,24 @@ LaTeX sources for the two arXiv preprints.
 
 | File | Status | Purpose |
 |---|---|---|
-| `phase_i.tex` | Workshop draft (~70% prose, results placeholder) | Port of ZGC to CHERI/Morello |
-| `phase_ii.tex` | Section scaffolding only | CHERI-native ZGC barrier |
-| `refs.bib` | Live bibliography | Shared between both papers |
+| `stopless/` | **Full draft with real measured results (10pp, compiles)** | THE paper: capability revocation as the read barrier of a moving GC (what was actually built) |
+| `phase_i.tex` | SUPERSEDED pre-pivot draft (kept for history) | Old plan: port ZGC to CHERI/Morello |
+| `phase_ii.tex` | SUPERSEDED scaffolding (kept for history) | Old plan: CHERI-native ZGC barrier |
+| `refs.bib` | Legacy bibliography (4 fabricated entries fixed 2026-06-12) | superseded by `stopless/refs.bib` (every entry verified) |
+| `data/` | Raw measurement datasets | parsed by `stopless/plots.py` |
+
+## stopless/ (the live paper)
+
+```bash
+cd paper/stopless
+python3 plots.py   # regenerate figs/*.pdf from ../data
+make               # latexmk via the texlive/texlive docker image
+```
+
+All numbers in §5 come from `paper/data/*.txt`; every refs.bib entry was
+verified against the publisher page / arXiv / project site on 2026-06-12
+(four entries inherited from the legacy refs.bib had fabricated authors or
+wrong venues — since corrected in both files).
 
 ## Building
 

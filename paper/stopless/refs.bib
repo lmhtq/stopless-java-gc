@@ -1,0 +1,215 @@
+% Bibliography for the StoplessGC paper.
+% EVERY entry below was verified against the publisher page / arXiv /
+% project site on 2026-06-12. Do not add entries without verifying.
+
+% ----- CHERI ISA & Morello -----
+
+@techreport{cheri-isa-v9,
+  title  = {Capability Hardware Enhanced {RISC} Instructions: {CHERI}
+            Instruction-Set Architecture (Version 9)},
+  author = {Watson, Robert N. M. and Neumann, Peter G. and Woodruff,
+            Jonathan and Roe, Michael and Almatary, Hesham and Anderson,
+            Jonathan and Baldwin, John and Barnes, Graeme and Chisnall,
+            David and Clarke, Jessica and others},
+  institution = {University of Cambridge, Computer Laboratory},
+  number = {UCAM-CL-TR-987},
+  year   = {2023},
+}
+
+@article{morello-platform,
+  author  = {Grisenthwaite, Richard and Barnes, Graeme and Watson, Robert
+             N. M. and Moore, Simon W. and Sewell, Peter and Woodruff,
+             Jonathan},
+  title   = {The {Arm Morello} Evaluation Platform---Validating
+             {CHERI}-Based Security in a High-Performance System},
+  journal = {IEEE Micro},
+  volume  = {43},
+  number  = {3},
+  pages   = {50--57},
+  year    = {2023},
+  doi     = {10.1109/MM.2023.3264676},
+}
+
+@misc{cheribsd,
+  title  = {{CheriBSD}: A Capability-Adapted Version of {FreeBSD}},
+  author = {{University of Cambridge and SRI International}},
+  year   = {2026},
+  note   = {\url{https://www.cheribsd.org}},
+}
+
+% ----- CHERI temporal safety / revocation -----
+
+@inproceedings{cherivoke,
+  author    = {Xia, Hongyan and Woodruff, Jonathan and Ainsworth, Sam
+               and Filardo, Nathaniel W. and Roe, Michael and Richardson,
+               Alexander and Rugg, Peter and Neumann, Peter G. and
+               Moore, Simon W. and Watson, Robert N. M. and Jones, Timothy M.},
+  title     = {{CHERIvoke}: Characterising Pointer Revocation Using
+               {CHERI} Capabilities for Temporal Memory Safety},
+  booktitle = {Proceedings of the 52nd Annual IEEE/ACM International
+               Symposium on Microarchitecture (MICRO)},
+  year      = {2019},
+  doi       = {10.1145/3352460.3358288},
+}
+
+@inproceedings{cornucopia,
+  author    = {Filardo, Nathaniel Wesley and Gutstein, Brett F. and Woodruff,
+               Jonathan and Ainsworth, Sam and Paul-Trifu, Lucian and Davis,
+               Brooks and Xia, Hongyan and Napierala, Edward Tomasz and
+               Richardson, Alexander and Baldwin, John and Chisnall, David
+               and Clarke, Jessica and Gudka, Khilan and Joannou, Alexandre
+               and Markettos, A. Theodore and Mazzinghi, Alfredo and Norton,
+               Robert M. and Roe, Michael and Sewell, Peter and Son, Stacey
+               and Jones, Timothy M. and Moore, Simon W. and Neumann, Peter G.
+               and Watson, Robert N. M.},
+  title     = {Cornucopia: Temporal Safety for {CHERI} Heaps},
+  booktitle = {IEEE Symposium on Security and Privacy (S\&P)},
+  year      = {2020},
+  doi       = {10.1109/SP40000.2020.00098},
+}
+
+@inproceedings{cornucopia-reloaded,
+  author    = {Filardo, Nathaniel Wesley and Gutstein, Brett F. and
+               Woodruff, Jonathan and Clarke, Jessica and Rugg, Peter and
+               Davis, Brooks and Johnston, Mark and Norton, Robert and
+               Chisnall, David and Moore, Simon W. and Neumann, Peter G. and
+               Watson, Robert N. M.},
+  title     = {Cornucopia Reloaded: Load Barriers for {CHERI} Heap
+               Temporal Safety},
+  booktitle = {Proceedings of the 29th ACM International Conference on
+               Architectural Support for Programming Languages and
+               Operating Systems (ASPLOS), Volume 2},
+  year      = {2024},
+  doi       = {10.1145/3620665.3640416},
+}
+
+@inproceedings{cheri-allocators,
+  author    = {Bramley, Jacob and Jacob, Dejice and Lascu, Andrei and
+               Singer, Jeremy and Tratt, Laurence},
+  title     = {Picking a {CHERI} Allocator: Security and Performance
+               Considerations},
+  booktitle = {Proceedings of the 2023 ACM SIGPLAN International Symposium
+               on Memory Management (ISMM)},
+  year      = {2023},
+  doi       = {10.1145/3591195.3595278},
+}
+
+% ----- Java / OpenJDK GC -----
+
+@article{zgc-toplas,
+  author    = {Yang, Albert Mingkun and Wrigstad, Tobias},
+  title     = {Deep Dive into {ZGC}: A Modern Garbage Collector in {OpenJDK}},
+  journal   = {ACM Transactions on Programming Languages and Systems},
+  volume    = {44},
+  number    = {4},
+  pages     = {22:1--22:34},
+  year      = {2022},
+  doi       = {10.1145/3538532},
+}
+
+@misc{genzgc,
+  title  = {{JEP} 439: Generational {ZGC}},
+  author = {{OpenJDK Project}},
+  year   = {2023},
+  note   = {\url{https://openjdk.org/jeps/439}},
+}
+
+@inproceedings{shenandoah,
+  author    = {Flood, Christine H. and Kennke, Roman and Dinn, Andrew
+               and Haley, Andrew and Westrelin, Roland},
+  title     = {Shenandoah: An Open-Source Concurrent Compacting Garbage
+               Collector for {OpenJDK}},
+  booktitle = {Proceedings of the 13th International Conference on
+               Principles and Practices of Programming on the Java Platform:
+               Virtual Machines, Languages, and Tools (PPPJ)},
+  year      = {2016},
+  doi       = {10.1145/2972206.2972210},
+}
+
+@inproceedings{g1,
+  author    = {Detlefs, David and Flood, Christine and Heller, Steve
+               and Printezis, Tony},
+  title     = {Garbage-First Garbage Collection},
+  booktitle = {Proceedings of the 4th International Symposium on
+               Memory Management (ISMM)},
+  year      = {2004},
+  doi       = {10.1145/1029873.1029879},
+}
+
+@inproceedings{c4,
+  author    = {Tene, Gil and Iyengar, Balaji and Wolf, Michael},
+  title     = {{C4}: The Continuously Concurrent Compacting Collector},
+  booktitle = {Proceedings of the International Symposium on Memory
+               Management (ISMM)},
+  year      = {2011},
+  doi       = {10.1145/1993478.1993491},
+}
+
+@inproceedings{pauseless,
+  author    = {Click, Cliff and Tene, Gil and Wolf, Michael},
+  title     = {The Pauseless {GC} Algorithm},
+  booktitle = {Proceedings of the 1st ACM/USENIX International Conference
+               on Virtual Execution Environments (VEE)},
+  year      = {2005},
+  doi       = {10.1145/1064979.1064988},
+}
+
+@inproceedings{pizlo-stopless,
+  author    = {Pizlo, Filip and Frampton, Daniel and Petrank, Erez and
+               Steensgaard, Bjarne},
+  title     = {Stopless: A Real-Time Garbage Collector for Multiprocessors},
+  booktitle = {Proceedings of the 6th International Symposium on Memory
+               Management (ISMM)},
+  year      = {2007},
+  doi       = {10.1145/1296907.1296927},
+}
+
+% ----- Read-barrier classics -----
+
+@article{baker78,
+  author  = {Baker, Henry G.},
+  title   = {List Processing in Real Time on a Serial Computer},
+  journal = {Communications of the ACM},
+  volume  = {21},
+  number  = {4},
+  pages   = {280--294},
+  year    = {1978},
+  doi     = {10.1145/359460.359470},
+}
+
+@inproceedings{appel-ellis-li,
+  author    = {Appel, Andrew W. and Ellis, John R. and Li, Kai},
+  title     = {Real-Time Concurrent Collection on Stock Multiprocessors},
+  booktitle = {Proceedings of the ACM SIGPLAN Conference on Programming
+               Language Design and Implementation (PLDI)},
+  year      = {1988},
+  doi       = {10.1145/53990.54005},
+}
+
+@inproceedings{brooks84,
+  author    = {Brooks, Rodney A.},
+  title     = {Trading Data Space for Reduced Time and Code Space in
+               Real-Time Garbage Collection on Stock Hardware},
+  booktitle = {Proceedings of the ACM Symposium on LISP and Functional
+               Programming (LFP)},
+  year      = {1984},
+  doi       = {10.1145/800055.802042},
+}
+
+% ----- Java on CHERI / Morello -----
+
+@misc{mojo-jvm,
+  title  = {{MOJO}: Porting {OpenJDK}~17 and its Garbage Collectors to
+            {CheriBSD} on {Morello}},
+  author = {{THG} and {University of Manchester}},
+  year   = {2024},
+  note   = {Project site: \url{https://www.mojo-jvm.org}. Ported
+            collectors: Epsilon, Serial, G1},
+}
+
+@article{cheri-interpreter,
+  author  = {Lowther, Duncan and Jacob, Dejice and Singer, Jeremy},
+  title   = {{CHERI} Performance Enhancement for a Bytecode Interpreter},
+  journal = {arXiv preprint arXiv:2308.05076},
+  year    = {2023},
+}
