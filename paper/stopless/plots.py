@@ -99,7 +99,7 @@ def fig_heap_independence():
     ax1.set_ylabel("relocation pause (ms)")
     ax1.set_ylim(0, 30)
     ax1.set_title("(a) scan + relocate + heal: flat", loc="left")
-    ax1.annotate("+6% over a 46$\\times$ heap",
+    ax1.annotate("+7% over a 46$\\times$ heap",
                  xy=(x[-1], steady[-1]["scan_ms"]), xytext=(58, 22),
                  fontsize=8, color=GRAY,
                  arrowprops=dict(arrowstyle="-", color=GRAY, lw=0.7))
