@@ -1438,3 +1438,42 @@ RESULTS:
 - Whole-heap concurrent (MOVE_LIMIT=200): the cap fault (rc=162) is GONE
   (mvchk=0); a separate boot-layer NPE (rc=1, no cap corruption) remains under
   aggressive early moves — the next item.
+
+## AU. Concurrent collector: stable under light load; aggressive-move boot gap characterized (2026-06-12, patch 0175 cont.)
+
+With the native-trans slow path fixed (§AT), the concurrent collector is
+solid under light load but has a remaining correctness gap under aggressive
+moves, now characterized:
+
+- ConcatTest, CONCURRENT_MS=30, MOVE_LIMIT=8: 8/8 rc=0 (~50 collects each).
+- ConcatTest/StoplessBench, MOVE_LIMIT=20/50/100/200: fail consistently
+  (0/3) — NOT a cap fault (mvchk=0), but a Java-level NULL during BOOT:
+  System.arraycopy gets a NULL array arg (jvm.cpp:288), or the module system
+  throws LayerInstantiationException. The failure point varies run-to-run but
+  is ALWAYS during VM boot / module-layer instantiation (System.initPhase2),
+  never in steady application code.
+- StoplessBench (allocation-heavy) is flaky even at MOVE_LIMIT=8 (1/3) — more
+  objects moved per unit time raises the chance of hitting the gap, so it is
+  about move VOLUME against the boot window, not a hard per-cycle limit.
+
+Interpretation: moving boot-layer / module-system objects WHILE they are being
+constructed corrupts a reference to NULL (not stale — genuinely zero). The
+forward table is clean (mvchk=0), so this is not the revoke-corruption class;
+it is a root/oop-map COVERAGE gap (a live oop the collector doesn't fix up, or
+an in-flight reference not yet published as a root) specific to the dense,
+identity-heavy module-bootstrap phase. Leading hypotheses: (a) template-
+interpreter oop-map imprecision at the safepoint poll bci for some bytecodes
+during aggressive moves; (b) an in-construction reference held only in a
+register not covered by the poll oop map.
+
+Two paths forward (next session):
+ 1. Defer the collector past boot (real GCs don't collect during early VM
+    init) — but the QEMU test apps are boot-dominated (~15-22s boot of a
+    ~20s run), so this leaves little app phase to demonstrate concurrency.
+ 2. Fix the coverage gap directly (the stronger result): instrument the
+    collector to log every moved object's klass + the faulting NULL site,
+    correlate which object type, and tighten root/oop-map coverage.
+
+STATUS: STW matrix all green; concurrent collector demonstrably works (the
+Stopless mechanism — concurrent move + revoke + lazy heal — runs end-to-end
+under light load). The aggressive-move boot gap is the next correctness item.
