@@ -1583,3 +1583,38 @@ pause is tiny and heap-size-independent; the concurrent barrier is cheap; the
 revocation sweep is the single cost to amortize (batch sweeps / per-page
 load-barrier revocation, Cornucopia-Reloaded-style) — which is precisely the
 Phase-2 direction in the original two-phase plan.
+
+## AY. ★★★ THE CORE FIGURE: move pause flat as heap grows 46x at constant roots (2026-06-12, patch 0179)
+
+Added a per-cycle root counter (StoplessMoveRootsClosure::_visited) to the
+[C11-pause] line. Ran StoplessBench, whose allocation loop grows the live heap
+continuously while the root set stabilizes — a clean controlled experiment.
+Raw data: paper/data/c11_heap_independence_stoplessbench.txt (77 cycles).
+
+Post-warmup, roots CONSTANT at ~894:
+
+  heap_used   scan_move (pause)   revoke (full sweep)
+   3.6 MB       13.7 ms             0.83 s
+  23.7 MB       13.3 ms             1.48 s
+  58.4 MB       13.5 ms             2.54 s
+   107 MB       14.1 ms             4.06 s
+   167 MB       14.6 ms             5.95 s
+
+THE RESULT, unambiguous:
+- The MOVING-GC PAUSE (scan + move + fixup) is FLAT — ~13.5 -> 14.6 ms (+6%)
+  while the heap grows 46x (3.6 MB -> 167 MB) at constant roots. The pause is
+  bound to the ROOT set, NOT the heap. This is the paper's central claim,
+  demonstrated on a real OpenJDK on Morello purecap.
+- The naive GLOBAL REVOKE scales LINEARLY with heap (0.83 s -> 5.95 s, ~7x for
+  46x heap; the cheri_revoke sweep must scan all live memory for stale caps).
+  This is exactly the heap-scaling cost that motivates incremental / per-page
+  load-barrier revocation (Cornucopia Reloaded) — the original plan's Phase 2.
+
+So the two-phase thesis is now measured end to end: Phase-1 CHERI-native moving
+GC delivers a heap-size-INDEPENDENT mutator pause; the remaining heap-LINEAR
+cost is concentrated entirely in the revocation sweep, which Phase-2 amortizes.
+(Absolute numbers are QEMU-emulated — inflated — but flat-vs-linear is the
+architecture-true structure; the paper presents the SHAPE.)
+
+C-11 status: the core figure + the microbench triad (§AW/§AX) are done. This is
+the empirical heart of the paper.
