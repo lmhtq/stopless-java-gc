@@ -1871,3 +1871,17 @@ trace arithmetic closes). Remaining items, all fixed:
   across the trace (per-close max 6.27 s)".
 Re-verified on the fail-safe build: STW green; mixed-trigger IG 16/16 with 16
 coalesced cycles; CT pass. Reviewer's stated bar for Weak Accept met.
+
+## BH. Round-7: fallback made truly fail-safe + fault-injection coverage (2026-06-12, patch 0189)
+
+Round-7 verified everything except one last hole: the synchronous fallback
+itself. Fixed:
+- stopless_revoke_now(): bounded wait loop no longer returns 0 when the epoch
+  failed to clear (rc now reflects epoch state).
+- StoplessHeap::revoke_sweep() returns int; the open-failure fallback checks
+  it and calls fatal() inside the safepoint if the sync sweep also fails —
+  mutators are never resumed with marked-but-unrevoked old copies.
+- Fault injection (STOPLESS_FAULT_OPEN/CLOSE=N in revoke.c) exercises both
+  failure paths: open-fail x2 -> 2 sync fallbacks, 16/16 verified, rc=0;
+  close-fail x2 -> 2 retries (pending preserved, coalescing held), 16/16,
+  rc=0. Logs archived: paper/data/trials/trial_fault_{open,close}.out.gz.

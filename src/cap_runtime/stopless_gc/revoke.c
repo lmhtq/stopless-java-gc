@@ -151,7 +151,9 @@ stopless_revoke_now(void)
                 (unsigned long long)target);
         if (rc != 0) return rc;
     }
-    return 0;
+    /* FAIL-SAFE: the wait loop is bounded; report failure if the epoch
+       never cleared instead of unconditionally claiming success. */
+    return cheri_revoke_epoch_clears(g_cri->epochs.dequeue, target) ? 0 : -1;
 }
 
 /* Phase-2 split protocol. See revoke.h. Quiet by default
@@ -165,9 +167,28 @@ rv_verbose(void)
     return g_rv_verbose;
 }
 
+/* Fault injection for fail-safe-path testing: STOPLESS_FAULT_OPEN=N /
+   STOPLESS_FAULT_CLOSE=N make the first N calls fail without touching the
+   kernel, exercising the JVM-side fallback / retry paths. */
+static int
+fault_budget(const char *env, int *counter)
+{
+    if (*counter == -2) {
+        const char *v = getenv(env);
+        *counter = (v != NULL) ? (int)strtol(v, NULL, 10) : 0;
+    }
+    if (*counter > 0) { (*counter)--; return 1; }
+    return 0;
+}
+static int g_fault_open = -2, g_fault_close = -2;
+
 int
 stopless_revoke_open(void)
 {
+    if (fault_budget("STOPLESS_FAULT_OPEN", &g_fault_open)) {
+        fprintf(stderr, "[stopless] FAULT-INJECT: revoke_open forced failure\n");
+        return -1;
+    }
     if (ensure_cri() != 0) return -1;
     atomic_thread_fence(memory_order_acq_rel);
     cheri_revoke_epoch_t e0 = g_cri->epochs.enqueue;
@@ -187,6 +208,10 @@ stopless_revoke_open(void)
 int
 stopless_revoke_close(void)
 {
+    if (fault_budget("STOPLESS_FAULT_CLOSE", &g_fault_close)) {
+        fprintf(stderr, "[stopless] FAULT-INJECT: revoke_close forced failure\n");
+        return -1;
+    }
     if (ensure_cri() != 0) return -1;
     atomic_thread_fence(memory_order_acq_rel);
     cheri_revoke_epoch_t target = g_cri->epochs.enqueue;
