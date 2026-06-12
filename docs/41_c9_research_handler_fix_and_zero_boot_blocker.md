@@ -1618,3 +1618,44 @@ architecture-true structure; the paper presents the SHAPE.)
 
 C-11 status: the core figure + the microbench triad (§AW/§AX) are done. This is
 the empirical heart of the paper.
+
+## AZ. ★★ Phase-2 BATCHED REVOCATION prototype + acmp-barrier cost (2026-06-12, patch 0180)
+
+Two measurements that round out C-11:
+
+(1) BATCHED REVOCATION (the Phase-2 teaser). cheri_revoke is a per-sweep,
+heap-linear cost INDEPENDENT of how many objects are marked, and the shadow
+bitmap ACCUMULATES marks across cycles. So STOPLESS_REVOKE_BATCH=N marks every
+cycle but fires the sweep only every N cycles. The address-mode forward table
+chains across cycles (a 2-generations-stale ref heals in two faults), so this
+stays correct.
+
+  batch  sweeps/cycles   avg pause/cycle   vs batch=1
+    1      62/62 (every)   ~842,000 us       1.0x
+    8      23/189          ~149,000 us       5.6x lower
+   32       4/152          ~ 71,000 us      11.9x lower
+  IntegrityGC = [IG] ALL-OK at every batch (correctness preserved).
+
+So batching amortizes the dominant cost ~12x at batch=32 while staying correct
+on the integrity test. At high batch the per-cycle pause floors at the ~13 ms
+scan+move (heap-independent) plus the amortized revoke. This is the measured
+Phase-2 direction: the heap-LINEAR revoke cost amortizes toward the
+heap-INDEPENDENT move pause as the batch grows. (Caveat, honestly stated: the
+batch window delays revocation, so a not-yet-fixed reference can read an OLD
+copy until the sweep — correct only if the object isn't mutated via the new
+copy in the window. Full correctness for mutated objects is the Cornucopia-
+Reloaded per-page load-barrier, the real Phase-2; batching is the amortization
+half of it. The dataset: paper/data/c11_batched_revoke.txt.)
+
+(2) ACMP BARRIER COST. Added a slow-path counter (stopless_acmp_slowpath).
+ConcatTest (heavy invokedynamic / MethodHandle, identity-sensitive):
+  heal_faults=903  acmp_slowpath=218
+The if_acmpeq/ne FAST path (gctag x2 + and + cbnz, ~4 extra instructions on
+every reference comparison) handles the overwhelming majority; the SLOW path
+(forward-table normalize, two lookups) is taken only 218 times over the whole
+run. So the identity barrier is essentially free on the fast path and its
+expensive path is rare — the acmp barrier is not a meaningful overhead.
+
+C-11 COMPLETE: heap-independence figure (§AY), microbench triad (§AW/§AX),
+batched-revoke amortization + acmp cost (this §AZ). The empirical core of the
+paper is done.

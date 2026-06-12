@@ -777,8 +777,13 @@ stopless_acmp_normalize(void *c)
            ((uintptr_t)cheri_address_get(c) - base);
 }
 
+/* C-11: count acmp-barrier SLOW-path calls (untagged operand -> forward-table
+   normalize). The fast path (equal-addr or both-tagged) never calls this; this
+   counter quantifies how often the expensive identity path is taken. */
+unsigned long long stopless_acmp_slowpath = 0;
 intptr_t
 stopless_acmp_eq(void *a, void *b)
 {
+    stopless_acmp_slowpath++;
     return stopless_acmp_normalize(a) == stopless_acmp_normalize(b);
 }

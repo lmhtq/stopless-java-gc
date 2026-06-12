@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..b6397aec258 100644
+index 069115be038..db2fe1eb6a3 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 @@ -6,12 +6,32 @@
@@ -35,7 +35,7 @@ index 069115be038..b6397aec258 100644
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,52 +44,438 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +44,468 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -48,6 +48,7 @@ index 069115be038..b6397aec258 100644
 +extern "C" void  forward_table_maybe_grow(void);
 +extern "C" unsigned long long stopless_handler_faults;
 +extern "C" unsigned long long stopless_handler_heal_ns;
++extern "C" unsigned long long stopless_acmp_slowpath;
 +static void stopless_start_collector(StoplessHeap* h, int interval_ms);
 +// C-9: shared forwarding table in cap_runtime (the SIGPROT handler reads it).
 +extern "C" void  forward_table_init(void);
@@ -351,26 +352,54 @@ index 069115be038..b6397aec258 100644
 +
 +    const jlong t1 = os::javaTimeNanos();   // end of scan+move+fixup
 +
++    // C-11 / Phase-2 prototype: BATCHED REVOCATION. The cheri_revoke sweep is
++    // a per-sweep (heap-linear) cost INDEPENDENT of how many objects are
++    // marked, and the shadow bitmap ACCUMULATES marks across cycles. So we can
++    // mark every cycle's old copies but fire the sweep only every N cycles,
++    // amortizing the dominant cost ~Nx. STOPLESS_REVOKE_BATCH=N (default 1 =
++    // sweep every cycle). The forward table's address-mode entries persist and
++    // chain across cycles, so a stale ref to a 2-generations-old copy heals in
++    // two faults after the batched sweep.
++    // CONSISTENCY NOTE: between a move and the batched sweep the OLD copy stays
++    // valid (not yet revoked); a not-yet-fixed reference reads it. This is
++    // correct as long as the object is not mutated via the NEW copy in that
++    // window (snapshot-style). Full correctness for mutated objects needs the
++    // Phase-2 per-page load-barrier revocation (Cornucopia Reloaded); this
++    // prototype demonstrates the PAUSE amortization.
++    static long s_cycle = 0;            // VMThread-serialized
++    static long s_marked_pending = 0;
++    long batch = 1;
++    { const char* b = ::getenv("STOPLESS_REVOKE_BATCH");
++      if (b != nullptr) { batch = strtol(b, nullptr, 10); if (batch < 1) batch = 1; } }
++
 +    int revoked = 0;
++    bool swept = false;
 +    if (!no_revoke) {
 +      for (int i = 0; i < moved_from.length(); i++) {
 +        _heap->mark_for_revoke((void*)(oopDesc*)moved_from.at(i));
 +      }
-+      if (moved_from.length() > 0) { _heap->revoke_sweep(); }
-+      revoked = moved_from.length();
++      s_marked_pending += moved_from.length();
++      s_cycle++;
++      if (s_marked_pending > 0 && (s_cycle % batch == 0)) {
++        _heap->revoke_sweep();
++        revoked = (int)s_marked_pending;
++        s_marked_pending = 0;
++        swept = true;
++      }
 +    }
 +
-+    const jlong t2 = os::javaTimeNanos();   // end of revoke
++    const jlong t2 = os::javaTimeNanos();   // end of revoke (0 on non-sweep cycles)
 +
 +    const double us_move   = (t1 - t0) / 1000.0;
 +    const double us_revoke = (t2 - t1) / 1000.0;
 +    const double us_total  = (t2 - t0) / 1000.0;
 +    // Machine-readable line for the plotter (src/measurement): one per cycle.
 +    fprintf(stderr, "[C11-pause] roots=%zu heap_in=%zu moved=%zu fixed=%zu "
-+            "revoked=%d heap_used_K=%zu scan_move_us=%.1f revoke_us=%.1f "
-+            "pause_us=%.1f\n",
++            "revoked=%d swept=%d batch=%ld heap_used_K=%zu scan_move_us=%.1f "
++            "revoke_us=%.1f pause_us=%.1f\n",
 +            cl._visited, cl._visited - cl._nonheap, cl._moved, cl._fixed,
-+            revoked, _heap->used() / K, us_move, us_revoke, us_total);
++            revoked, swept ? 1 : 0, batch, _heap->used() / K,
++            us_move, us_revoke, us_total);
 +    fprintf(stderr, "[Stopless] C-9 STW collect: moved=%zu fixed_roots=%zu "
 +            "skipped=%zu nonheap_roots=%zu revoked=%d (limit=%zu)\n",
 +            cl._moved, cl._fixed, cl._skipped, cl._nonheap, revoked, limit);
@@ -488,8 +517,9 @@ index 069115be038..b6397aec258 100644
 +  if (::getenv("C11_HEAL_TIME") != nullptr) {
 +    unsigned long long n = stopless_handler_faults;
 +    unsigned long long ns = stopless_handler_heal_ns;
-+    fprintf(stderr, "[C11-heal] heal_faults=%llu total_ns=%llu avg_ns=%.1f\n",
-+            n, ns, n ? (double)ns / (double)n : 0.0);
++    fprintf(stderr, "[C11-heal] heal_faults=%llu total_ns=%llu avg_ns=%.1f "
++            "acmp_slowpath=%llu\n",
++            n, ns, n ? (double)ns / (double)n : 0.0, stopless_acmp_slowpath);
 +    fflush(stderr);
 +  }
 +#endif
