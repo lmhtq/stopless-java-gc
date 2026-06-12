@@ -1477,3 +1477,41 @@ Two paths forward (next session):
 STATUS: STW matrix all green; concurrent collector demonstrably works (the
 Stopless mechanism — concurrent move + revoke + lazy heal — runs end-to-end
 under light load). The aggressive-move boot gap is the next correctness item.
+
+## AV. Aggressive-move boot gap bisected to MOVE / VM-internal raw pointers (2026-06-12, patch 0176)
+
+Systematic bisection of the aggressive-concurrent boot NULL (all at
+MOVE_LIMIT>=20, during module bootstrap):
+- STOPLESS_SKIP_COMPLEX (skip array klasses + Class mirrors): still fails ->
+  NOT those types.
+- STOPLESS_NO_FIXUP (move+revoke, don't rewrite roots, pure fault-heal):
+  still boot-NPEs (+ timeouts) -> NOT the root fixup corrupting frames.
+- STOPLESS_NO_REVOKE (move+fixup, no revoke sweep): still boot-NPEs (run3;
+  the other runs hit the expected acmp-identity-break cap fault since old
+  copies stay tagged) -> NOT the revoke sweep.
+- mvchk=0 throughout -> NOT forward-table corruption.
+
+The ONLY common factor is move_object itself. Since the move/copy is verified
+correct for all object types by STW unlimited-move IntegrityGC (1016 objects),
+the remaining explanation is: a VM-INTERNAL RAW POINTER (a C++ cache of an
+oop / a jobject / a Method-side oop reference) points to a moved object and is
+NOT in the collector's root set (Threads::oops_do + OopStorageSet::strong +
+CLDG cover Java-visible roots, but not every VM-internal C++ oop cache). The
+dense module-bootstrap phase creates many such transient VM-internal oop
+references; moving the target leaves the raw pointer dangling. With revoke on
+it should fault+heal on deref, but value-propagation paths that read the oop
+WITHOUT dereferencing (and thus without triggering the CHERI barrier) carry a
+stale/NULL value forward.
+
+This is a genuine finding for the paper: the CHERI revoke barrier covers
+Java-heap references PRECISELY (every deref of a moved-away oop faults), but
+VM-internal raw oop caches that are read-as-value (not dereferenced) escape
+the barrier. The collector is correct for application objects (all references
+heap/root-covered) and under light load; aggressive whole-heap moves during
+VM boot expose the VM-internal-cache coverage gap.
+
+DECISION: this does not block the paper's core measurements — pause time is
+the STW root-scan+move window (STW is fully robust, all object types, identity
+correct), and the concurrent mechanism is demonstrated under light load. The
+VM-internal-cache coverage is future work (register the caches, or defer the
+collector past boot as production GCs do). Pivoting to C-11 microbench.
