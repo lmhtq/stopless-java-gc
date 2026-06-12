@@ -51,8 +51,8 @@ collector's read barrier. Our collector, StoplessGC, relocates objects,
 revokes the capabilities to the old copies, and lets the hardware trap
 each surviving stale reference; a signal handler forwards the faulting
 register through a forwarding table and resumes the load. No check is
-executed on the hot path of reference loads---the barrier is the MMU's
-tag check, which purecap code pays anyway.
+executed on the hot path of reference loads---the barrier is the capability tag check the load--store unit
+performs on every purecap access anyway.
 
 We implement StoplessGC in the OpenJDK~17 template interpreter on Arm
 Morello (pure-capability CheriBSD) and measure it under QEMU system
@@ -157,8 +157,9 @@ This paper makes the following contributions:
 
 We are explicit about scope (\S\ref{sec:limits}). What is built and
 measured is the \emph{relocation and barrier substrate} of a moving
-collector: relocation, revocation, healing, and identity, validated by
-whole-heap-relocation integrity tests. It is not yet a complete
+collector: relocation, revocation, healing, and identity, validated by integrity tests that relocate every directly
+root-referenced object (1{,}016 in the largest configuration) and
+verify structure and identity afterwards. It is not yet a complete
 collector---there is no liveness analysis (relocation candidates come
 from the root scan), no reclamation of dead objects, and no address
 reuse (\S\ref{sec:design:fwd})---and the evaluation runs under QEMU
@@ -359,7 +360,10 @@ that resolves a stale reference to $A$ by one table hop would derive a
 capabilities that exist at sweep time, it does not poison the address
 range---and the mutator would silently read the stale intermediate
 copy, with no second fault to save it. The lookup therefore follows the
-integer chain to the final address before deriving a capability. We
+integer chain to the final address before deriving a capability (the
+chain is acyclic because addresses are never reused; a depth guard
+exists for table-corruption paranoia and \emph{fail-stops} rather than
+returning a partial hop, since a partial hop is a silent stale read). We
 state this explicitly because we initially got it wrong: the intuitive
 ``one fault per generation'' model only holds if the first heal races
 between the two sweeps. It is the second instance of the same design
@@ -410,26 +414,28 @@ relocated are in it. Three mechanics matter:
 \subsection{The identity barrier}
 \label{sec:design:acmp}
 
-Reference equality (\texttt{if\_acmpeq/ne}, \texttt{==}) is the one
-operation that observes addresses without dereferencing, so the
-hardware barrier never fires: comparing a stale capability to a healed
+Reference equality (\texttt{if\_acmpeq/ne}, \texttt{==}) observes
+addresses without dereferencing, so the hardware barrier never fires: comparing a stale capability to a healed
 one yields \emph{false} for the same object. ZGC solves this in the
 load barrier (references are healed before comparison); we must solve
 it at the comparison. The interpreter's compare becomes three-tier:
 (1)~equal addresses $\Rightarrow$ equal (no relocation can make two
 objects share an address); (2)~both capabilities tagged $\Rightarrow$
-plain comparison is correct (neither is stale, because revocation
-untags); (3)~otherwise, call a runtime that normalises both operands
-through the forwarding table and compares the results. The fast paths
+plain comparison is correct---\emph{on kernels built with}
+\texttt{CHERI\_CAPREVOKE\_CLEARTAGS} (ours is), where revocation
+clears tags; CheriBSD's alternative representation strips permissions
+and leaves the tag set, and would require the fast path to also test
+permissions; (3)~otherwise, call a runtime that normalises both
+operands through the forwarding table and compares the results. The fast paths
 add two \texttt{gctag} instructions and a branch to one bytecode; the
 slow path is rare (\S\ref{sec:eval:acmp}).
 
 \subsection{Batched revocation}
 \label{sec:design:batch}
 
-The revocation sweep visits all mapped memory regardless of how many
-objects are marked: revoking one object costs the same as revoking a
-thousand. The shadow bitmap accumulates marks, and forwarding entries
+The revocation sweep's dominant cost---scanning all mapped memory for
+capabilities---is approximately independent of how many objects are
+marked. The shadow bitmap accumulates marks, and forwarding entries
 already persist and chain across cycles. So the collector can relocate
 every cycle but sweep every $N$th cycle, amortising the dominant cost
 by up to $N$. The trade-off is a longer window in which old copies
@@ -497,10 +503,11 @@ cost the most time:
 The collection cycle itself runs as a safepoint \texttt{VM\_Operation};
 an optional concurrent thread triggers cycles on a timer and is stable
 under light load (\S\ref{sec:limits}). Relocation volume per cycle is
-capped by a tunable move limit; integrity tests also run with the limit
-effectively removed (every reachable root referent relocated,
-1{,}016~objects in our largest configuration) to validate whole-heap
-movement with correct reference identity.
+capped by a tunable move limit; integrity tests also run with the limit effectively removed (every
+\emph{directly root-referenced} object relocated, 1{,}016 in our
+largest configuration---transitively reachable objects stay in place,
+as there is no marking traversal) and verify structure and reference
+identity afterwards.
 
 % =====================================================================
 \section{Evaluation}
@@ -514,10 +521,10 @@ All measurements run on purecap CheriBSD~15.0-CURRENT
 system-mode emulation of Morello, with the OpenJDK~17 template
 interpreter (\texttt{-Xint}), compressed oops and compressed class
 pointers disabled, and the concurrent collector triggering cycles every
-50\,ms with a per-cycle move limit of 8 objects unless stated. Phase
-timings are taken inside the safepoint operation with the VM's
-nanosecond clock, so the reported windows are exactly the mutator
-pause; barrier-side counters (heal faults, heal time, identity
+50\,ms with a per-cycle move limit of 8 objects unless stated. Phase timings are taken inside the safepoint operation with the VM's
+nanosecond clock; they cover the operation's execution and exclude
+safepoint synchronisation and resume, so true end-to-end pauses are
+slightly larger; barrier-side counters (heal faults, heal time, identity
 slow-path executions) are accumulated in the signal handler with a
 monotonic clock and reported at VM exit.
 
@@ -555,10 +562,13 @@ contrast in shape.}
 Figure~\ref{fig:flat} is the central result. \textsf{StoplessBench}
 grows its live heap continuously while its root-set size stabilises,
 isolating heap size as the variable. Over a $46\times$ heap range at a
-constant 894 roots, the relocation pause moves from 13.7\,ms to
-14.6\,ms ($+6\%$, within cycle-to-cycle noise), because the pause does
-work proportional to roots scanned plus objects moved---never to heap
-size. Part of this flatness is by construction---the workload holds roots
+constant 894 roots, the relocation pause moves from 13.7\,ms to 14.6\,ms comparing
+endpoints ($+6\%$; individual cycles range 11.7--21.6\,ms with no
+trend in heap size), because the pause does work proportional to root slots scanned plus
+\emph{bytes copied}---never to heap size. (The experiment holds both
+fixed: 8 small objects per cycle. A root holding a giant array would
+grow the copy term; the bound is roots + relocated bytes, not roots
+alone.) Part of this flatness is by construction---the workload holds roots
 and per-cycle relocation volume fixed---and that is the point of the
 experiment: it is a negative control showing the pause contains
 \emph{no hidden heap-proportional term}. There is no marking phase, no
@@ -590,19 +600,22 @@ mechanism & cost & scales with & frequency \\
 \midrule
 relocation pause & 13--15\,ms & roots + moved objects & per cycle \\
 revocation sweep & 0.83--5.95\,s & mapped memory & per cycle (or batch) \\
-heal trap & 7--9\,\textmu s & --- & per \emph{used} stale ref \\
+heal (handler body) & 18--22\,\textmu s & --- & per \emph{used} stale ref \\
 identity slow path & 2 table lookups & --- & 218 / run (\textsf{ConcatTest}) \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:triad} summarises. Healing a trapped stale reference
----signal delivery, register-file scan, forwarding lookup, capability
-rebuild, return-and-retry---averages 8.7\,\textmu s over 805 heals in
-\textsf{IntegrityGC} and 7.0\,\textmu s over 903 heals in
-\textsf{ConcatTest}; signal delivery dominates under emulation.
-Aggregate heal time is $\sim$7\,ms per run---three orders of magnitude
-below a single sweep---supporting the design's bet that lazy,
+Table~\ref{tab:triad} summarises. The in-handler heal work---register-file scan, transitive forwarding
+lookup, capability rebuild, register patch---averages 22.2\,\textmu s
+over 871 heals in \textsf{IntegrityGC} and 17.9\,\textmu s over 417
+heals in \textsf{ConcatTest} (these runs include the transitive chase;
+pre-fix one-hop lookups measured 7--9\,\textmu s). (The timer brackets the handler body
+only: kernel signal delivery and \texttt{sigreturn} are outside it,
+so the full trap round trip is strictly larger---a measurement to
+redo with hardware performance counters on a board.)
+Aggregate heal time is 7--19\,ms per run---one-and-a-half to two
+orders of magnitude below a single sweep---supporting the design's bet that lazy,
 per-used-reference healing is cheap. The mutator's load fast path, to
 restate, contains no added instructions at all.
 
@@ -636,17 +649,17 @@ integrity tests do not mutate relocated objects inside the batch
 window, and closing that window in general requires the per-page
 load-barrier integration.
 
-\subsection{The identity barrier is nearly free}
+\subsection{The identity barrier's slow path is rare}
 \label{sec:eval:acmp}
 
 Over a full \textsf{ConcatTest} run---chosen because
 \texttt{java.lang.invoke} bootstrap is dense with identity-keyed
-caching---the identity barrier's slow path executed 218 times, against
-903 heal faults and on the order of $10^6$ executed branches of the
-fast path. Two extra tag-check instructions on a taken
-\texttt{if\_acmp} bytecode, with table lookups only when an untagged
-capability actually reaches a comparison, leaves reference equality
-effectively unburdened.
+caching---the identity barrier's slow path executed 153 times, against
+417 heal faults (\textsf{IntegrityGC}: 571 slow-path executions, 871
+heals; raw logs in the data directory). The fast-path cost is two tag-check instructions and a branch by
+construction; we report slow-path \emph{counts} only and have not
+measured fast-path throughput impact (interpreter dispatch dominates
+under \texttt{-Xint}; a JIT-relative measurement is future work).
 
 % =====================================================================
 \section{Discussion and limitations}
@@ -697,10 +710,13 @@ CHERI-specific question is the reuse invariant---when has every stale
 capability into a region provably been healed or destroyed---for which
 the revocation epoch counter itself looks like the right primitive.
 
-\paragraph{Memory overhead.} Old copies occupy arena space until swept,
-so batching trades pause time for float, bounded by (moved bytes per
-cycle)\,$\times$\,$N$; the forwarding table is three machine words per
-relocated object per generation.
+\paragraph{Memory overhead.} The prototype never reclaims: the bump
+arena retains old copies indefinitely (revocation invalidates
+capabilities; it does not free memory), and forwarding entries (three
+machine words per relocation) accumulate. In a completed design with
+reclamation, batching would add float bounded by relocated bytes per
+window; today the float is unbounded by construction, which is part of
+the ``not yet a collector'' boundary.
 
 % =====================================================================
 \section{Related work}

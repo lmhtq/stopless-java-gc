@@ -1700,3 +1700,42 @@ fixed (sweep IS in-pause today); batching improves mean not worst case.
 
 Rejected/deferred: reproducibility complaints (reviewer had no source/data
 access — user said skip).
+
+## BB. External review round 2 (codex/gpt-5.5, WITH source access) — triage & fixes (2026-06-12, patch 0182)
+
+Verdict was Strong Reject with 4 fatal / 8 major; triage against facts:
+
+ACCEPTED & FIXED (code):
+- FT_CHASE_MAX=128 partial-hop return = reintroduced silent stale read.
+  FIXED: chase is unbounded over the acyclic chain; the (now 4096) guard is
+  corruption-paranoia only and FAIL-STOPS (NULL -> unforwarded-fault dump)
+  instead of returning an intermediate hop. Matrix re-verified green.
+
+ACCEPTED & FIXED (paper):
+- acmp both-tagged fast path assumes tag-clearing revocation. FACT-CHECKED:
+  our kernel config GENERIC-MORELLO(-PURECAP) sets CHERI_CAPREVOKE_CLEARTAGS
+  (sys/arm64/conf/GENERIC-MORELLO:32), so the fast path is correct HERE; the
+  perms-clear default build would need a perms test too. Paper now scopes it.
+- pause bound is O(root slots + bytes copied), not O(roots); experiment holds
+  both fixed -> stated.
+- "whole-heap relocation" -> "every directly root-referenced object" (no
+  marking traversal; transitively-reachable objects stay).
+- heal timer brackets the handler body only (signal delivery/sigreturn
+  excluded); "signal delivery dominates" claim removed.
+- POST-FIX heal numbers re-measured & replaced (chase made heals costlier):
+  IG 871 heals avg 22.2us, CT 417 heals avg 17.9us; acmp slow 571/153.
+  Raw logs exported to paper/data/heal_{ig,ct}.out (evidence-dir gap fixed).
+- "identity barrier nearly free" -> "slow path is rare", counts only.
+- memory-overhead paragraph corrected: prototype never reclaims (float
+  unbounded by construction; part of not-yet-a-collector boundary).
+- minor: LSU not MMU; sweep cost "approximately independent"; pause excludes
+  safepoint sync; 11.7-21.6ms range disclosed.
+
+REJECTED (with reasons):
+- "paper doesn't disclose batching identity-unsoundness" — reviewer read a
+  stale main.tex line; §3.5/§5.4 DO disclose both modes + nondeterministic
+  failures (added in 0181 before the review ran; its line refs predate that).
+  Fig-3 caption tightened anyway.
+- STW batching re-measurement attempted: IntegrityGC runs only 1 System.gc
+  cycle (arg not plumbed), so no clean STW batching data this round; paper
+  keeps "mechanism potential, not deployable" framing which is accurate.

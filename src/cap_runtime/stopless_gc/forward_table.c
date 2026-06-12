@@ -236,17 +236,28 @@ ft_find(uintptr_t from_addr, uintptr_t *na, size_t *nl)
    the expected "second fault that heals A'->A''" never happens unless the
    first heal raced between the two sweeps. (Found via external review of
    the paper's incorrect one-fault-per-generation claim, 2026-06-12.)
-   Depth-bounded: the table maps distinct from-addresses and the arena never
-   re-issues addresses (bump alloc, no reuse), so chains are acyclic;
-   FT_CHASE_MAX is paranoia against table corruption. */
-#define FT_CHASE_MAX 128
+   Chains are acyclic (the table maps distinct from-addresses and the bump
+   arena never re-issues addresses), so the chase terminates at the first
+   address with no further mapping. FT_CHASE_MAX guards against table
+   corruption only -- and on exceeding it we FAIL-STOP (return NULL ->
+   unforwarded-fault diagnostics) rather than return an intermediate hop:
+   handing back a fresh cap to a non-final copy is a SILENT stale read,
+   strictly worse than a crash (external review round 2). */
+#define FT_CHASE_MAX 4096
 void *
 forward_table_lookup(uintptr_t from_addr)
 {
     uintptr_t na; size_t nl;
     if (!ft_find(from_addr, &na, &nl)) return NULL;
-    for (int depth = 0; depth < FT_CHASE_MAX; depth++) {
+    for (int depth = 0; ; depth++) {
         uintptr_t nna; size_t nnl;
+        if (depth >= FT_CHASE_MAX) {
+            fprintf(stderr, "[ft-chase] FAIL depth>%d from=%#lx at=%#lx "
+                    "(table corrupt?) -> fail-stop\n",
+                    FT_CHASE_MAX, (unsigned long)from_addr, (unsigned long)na);
+            fflush(stderr);
+            return NULL;               /* fail-stop, never a partial hop */
+        }
         if (!ft_find(na, &nna, &nnl)) break;
         if (nna == na) break;          /* self-map paranoia */
         na = nna; nl = nnl;
