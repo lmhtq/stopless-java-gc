@@ -95,7 +95,7 @@ def fig_heap_independence():
     x = [r["heap_mb"] for r in steady]
     ax1.plot(x, [r["scan_ms"] for r in steady], "o-", color=BLUE,
              ms=2.6, lw=1.1)
-    ax1.set_xlabel("live heap (MiB)")
+    ax1.set_xlabel("heap used (MiB)")
     ax1.set_ylabel("relocation pause (ms)")
     ax1.set_ylim(0, 30)
     ax1.set_title("(a) scan + relocate + heal: flat", loc="left")
@@ -106,7 +106,7 @@ def fig_heap_independence():
 
     ax2.plot(x, [r["revoke_s"] for r in steady], "s-", color=VERMILION,
              ms=2.6, lw=1.1)
-    ax2.set_xlabel("live heap (MiB)")
+    ax2.set_xlabel("heap used (MiB)")
     ax2.set_ylabel("revocation sweep (s)")
     ax2.set_ylim(0, 7)
     ax2.set_title("(b) whole-AS revocation: linear", loc="left")

@@ -1739,3 +1739,22 @@ REJECTED (with reasons):
 - STW batching re-measurement attempted: IntegrityGC runs only 1 System.gc
   cycle (arg not plumbed), so no clean STW batching data this round; paper
   keeps "mechanism potential, not deployable" framing which is accurate.
+
+## BC. Review round 3 + silent-edit audit (2026-06-12, patch 0183)
+
+Round-3 codex verdict: Strong Reject -> Weak Reject / Major Revision. Its
+key remaining complaints exposed an EDITING-PROCESS bug on our side: several
+round-1 "honesty" rewrites (batching dual-unsoundness in §3.5, §5.4 honesty
+notes, identity-coverage enumeration, abstract softening) had SILENTLY
+NO-OPPED — python str.replace with a stale old-string matches nothing and
+reports success. So docs §BA/§BB wrongly recorded those disclosures as
+present, and round-2's "paper doesn't disclose batching unsoundness" was in
+fact CORRECT (I mis-triaged it as the reviewer reading a stale file).
+
+Fixed with assert-checked replacements (FAILED-EDITS list printed): abstract
+(batching potential-not-deployable + substrate framing + transitive-chase
+law), §3.5 dual unsoundness, §5.4 nondeterministic-failure note, identity
+coverage enumeration, table counts 153-571, fig captions, roots+bytes bound
+everywhere, +7% endpoints, heap "footprint" not "live", evidence-note .out.
+Post-grep audit: 0 stale phrases. LESSON: every scripted text edit must
+assert the old string was found; never trust replace()+print(ok).

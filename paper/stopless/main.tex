@@ -4,8 +4,8 @@
 % Build: make (uses the texlive/texlive docker image).
 % Figures: python3 plots.py (regenerates figs/*.pdf from ../data).
 %
-% EVIDENCE DISCIPLINE: every number in §6 comes from paper/data/*.txt in
-% this repository; every literature claim was verified against the cited
+% EVIDENCE DISCIPLINE: every number in §5 comes from files in
+% paper/data/ (pause/batching traces *.txt, heal/acmp logs *.out); every literature claim was verified against the cited
 % publication on 2026-06-12 (see refs.bib header).
 
 \documentclass[acmsmall,nonacm,screen]{acmart}
@@ -56,18 +56,24 @@ performs on every purecap access anyway.
 
 We implement StoplessGC in the OpenJDK~17 template interpreter on Arm
 Morello (pure-capability CheriBSD) and measure it under QEMU system
-emulation. The relocation pause is bounded by the root-set size and is
-independent of heap size: with the root set held constant, the pause
-varies by 6\% while the live heap grows $46\times$. The dominant cost is
+emulation. The relocation pause is bounded by root-slot count plus relocated
+bytes and is independent of heap size: with the root set held constant, the pause
+varies by 7\% while the heap footprint grows $46\times$ (the prototype never reclaims, so this is allocated, not live, memory). The dominant cost is
 the whole-address-space revocation sweep, which is linear in memory
-size; because the sweep cost is independent of how many objects it
-revokes, batching relocations across collection cycles amortises the
-mean cycle pause by $11.9\times$ without breaking our integrity tests.
-We also report the design points that capability hardware forces on a
-moving collector---most notably that forwarding metadata must not be
-stored as capabilities, since the revocation sweep destroys the
-collector's own state---and a taxonomy of the pure-capability porting
-hazards we hit in HotSpot.
+size; because the sweep's cost is approximately independent of how much
+it revokes, batching relocations across collection cycles amortises the
+mean cycle pause by $11.9\times$---though we show the batch window is
+unsound for general programs (stale-but-still-tagged capabilities break
+reference identity), so this is the mechanism's amortisation potential,
+not a deployable configuration. What we build and measure is the
+relocation and barrier substrate of a moving collector (liveness,
+reclamation, and address reuse are future work, and we are explicit
+about that boundary). We also report the design laws capability
+hardware forces on such a collector---forwarding metadata must be
+integers re-derived from revocation-exempt roots, and lookups must
+chase forwarding chains transitively, because freshly derived
+capabilities to stale intermediate copies are valid---and a taxonomy of
+the pure-capability porting hazards we hit in HotSpot.
 \end{abstract}
 
 \begin{document}
@@ -146,12 +152,13 @@ This paper makes the following contributions:
   $\sim$2.6\,kLOC of new runtime plus interpreter patches, with a
   taxonomy of the purecap porting hazards that cost us the most time.
 \item \textbf{Measurement} (\S\ref{sec:eval}): with the root set held
-  constant, the relocation pause varies 6\% while the live heap grows
-  $46\times$ ($3.6\to163$\,MiB)---the pause is bound to roots, not heap.
+  constant, the relocation pause varies 7\% while the live heap grows
+  $46\times$ ($3.6\to163$\,MiB)---the pause is bound to root slots
+  plus relocated bytes, not heap size.
   The revocation sweep is linear in memory size and dominates total
   cost; batching amortises the mean cycle pause $11.9\times$ at batch
-  size 32. Healing a trapped reference costs $\sim$9\,\textmu s under
-  emulation, and the identity barrier's slow path executes only
+  size 32. Healing a trapped reference costs $\sim$20\,\textmu s of in-handler
+  work under emulation, and the identity barrier's slow path executes only
   hundreds of times per run.
 \end{itemize}
 
@@ -430,6 +437,19 @@ operands through the forwarding table and compares the results. The fast paths
 add two \texttt{gctag} instructions and a branch to one bytecode; the
 slow path is rare (\S\ref{sec:eval:acmp}).
 
+The same hazard recurs wherever the runtime observes reference
+\emph{values} without dereferencing, and the bytecode comparison is
+only the most frequent case. Reference CAS
+(\texttt{Unsafe}/\texttt{VarHandle}/\texttt{AtomicReference})
+compares capability bit patterns and can fail spuriously against a
+healed value; JNI \texttt{IsSameObject} and VM-internal address-keyed
+tables are analogous. (Identity hash codes are safe: HotSpot stores
+them in the header on first use, and relocation copies the header.) Our
+implementation covers the interpreter comparison bytecodes and the VM
+paths our workloads exercise; we make no completeness claim, and a
+production system would need an audit of every value-mode use of
+references.
+
 \subsection{Batched revocation}
 \label{sec:design:batch}
 
@@ -438,15 +458,24 @@ capabilities---is approximately independent of how many objects are
 marked. The shadow bitmap accumulates marks, and forwarding entries
 already persist and chain across cycles. So the collector can relocate
 every cycle but sweep every $N$th cycle, amortising the dominant cost
-by up to $N$. The trade-off is a longer window in which old copies
-remain dereferenceable: a not-yet-healed reference can read a stale
-copy after the object has moved, which is correct only while relocation
-is stop-the-world or objects are immutable in the window. A production
-design would close the window with Morello's per-page capability-load
-generation barrier, exactly as Cornucopia
-Reloaded~\cite{cornucopia-reloaded} does for free--reuse windows; we
-measure the amortisation (\S\ref{sec:eval:batch}) and leave the
-load-barrier integration as future work.
+by up to $N$. The trade-off is a window in which old copies remain live, and it is
+unsound for general programs in two distinct ways. First,
+\emph{mutation}: a not-yet-healed reference can read (or write) the
+old copy while healed references use the new one, and the copies
+diverge. Second, and more insidiously, \emph{identity}: until the
+sweep runs, stale capabilities are still \emph{tagged}, so the
+identity barrier's both-tagged fast path (\S\ref{sec:design:acmp})
+trusts them and judges the old and new copies of the same object
+unequal. Identity-sensitive code running inside the
+window---HotSpot's \texttt{java.lang.invoke} bootstrap is dense with
+identity-keyed caches---fails nondeterministically depending on where
+collection cycles land, and we observe exactly that in practice
+(\S\ref{sec:eval:batch}). Batching as implemented is therefore a
+measurement of the amortisation mechanism, not a deployable
+configuration; a sound design must keep the window closed to mutators,
+for which Morello's per-page capability-load generation barrier---used
+by Cornucopia Reloaded~\cite{cornucopia-reloaded} for exactly this
+window problem in free--reuse---is the natural instrument.
 
 % =====================================================================
 \section{Implementation}
@@ -535,8 +564,8 @@ make no absolute-latency claims. The claims we do make are structural:
 size), and those relationships are properties of the algorithm and the
 revocation mechanism, not of the emulator. Workloads are purpose-built:
 an allocation-heavy benchmark whose live set grows continuously
-(\textsf{StoplessBench}), a linked-structure integrity test that
-relocates every object and then verifies structure and reference
+(\textsf{StoplessBench}), a linked-structure integrity test that relocates every directly
+root-referenced object and then verifies structure and reference
 identity (\textsf{IntegrityGC}), and a string-concatenation workload
 that exercises \texttt{invokedynamic}, \texttt{MethodHandle}
 bootstraps, and identity-keyed caches (\textsf{ConcatTest}). They are
@@ -550,7 +579,7 @@ library coverage beyond any current purecap JVM, including ours.
 \centering
 \includegraphics[width=\linewidth]{figs/heap_independence.pdf}
 \caption{\textsf{StoplessBench}, root set constant at 894 after warm-up,
-live heap growing $3.6\to163$\,MiB ($46\times$); 40 collection cycles,
+heap footprint growing $3.6\to163$\,MiB ($46\times$); 40 collection cycles,
 8 objects relocated per cycle. (a)~The mutator-visible relocation phase
 (root scan + copy + root fixup) stays at 13--15\,ms. (b)~The
 \texttt{cheri\_revoke} sweep grows linearly with mapped memory,
@@ -560,10 +589,10 @@ contrast in shape.}
 \end{figure}
 
 Figure~\ref{fig:flat} is the central result. \textsf{StoplessBench}
-grows its live heap continuously while its root-set size stabilises,
+grows its allocated footprint continuously while its root-set size stabilises,
 isolating heap size as the variable. Over a $46\times$ heap range at a
 constant 894 roots, the relocation pause moves from 13.7\,ms to 14.6\,ms comparing
-endpoints ($+6\%$; individual cycles range 11.7--21.6\,ms with no
+endpoints ($+7\%$; individual cycles range 11.7--21.6\,ms with no
 trend in heap size), because the pause does work proportional to root slots scanned plus
 \emph{bytes copied}---never to heap size. (The experiment holds both
 fixed: 8 small objects per cycle. A root holding a giant array would
@@ -598,10 +627,10 @@ collector.}
 \toprule
 mechanism & cost & scales with & frequency \\
 \midrule
-relocation pause & 13--15\,ms & roots + moved objects & per cycle \\
+relocation pause & 13--15\,ms & root slots + relocated bytes & per cycle \\
 revocation sweep & 0.83--5.95\,s & mapped memory & per cycle (or batch) \\
 heal (handler body) & 18--22\,\textmu s & --- & per \emph{used} stale ref \\
-identity slow path & 2 table lookups & --- & 218 / run (\textsf{ConcatTest}) \\
+identity slow path & 2 table lookups & --- & 153--571 / run \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -629,8 +658,8 @@ restate, contains no added instructions at all.
 collector. (a)~Per-cycle pause, log scale: with batching most cycles
 pause only for relocation ($\sim$15--25\,ms); the sweep cost
 concentrates in every $N$th cycle. (b)~Mean pause per cycle falls from
-0.84\,s to 0.07\,s ($11.9\times$) at batch size 32. The integrity test
-passes at every batch size.}
+0.84\,s to 0.07\,s ($11.9\times$) at batch size 32. (Data from runs
+that completed; batch ${>}1$ is not a sound configuration---see text.)}
 \label{fig:batch}
 \end{figure}
 
@@ -639,8 +668,18 @@ $N$th cycle divides its amortised cost by $N$ while relocation
 continues every cycle. Figure~\ref{fig:batch}: mean pause per cycle
 falls $0.843 \to 0.149 \to 0.071$\,s for batch sizes 1, 8, 32---a
 $11.9\times$ reduction, tracking the sweep-count reduction
-(62/23/4 sweeps over the respective runs)---and the structure-and-identity
-verification passes at every batch size. The per-cycle trace shows the
+(62/23/4 sweeps over the respective runs). The shown runs completed and
+passed their structure-and-identity verification, but the window
+unsoundness of \S\ref{sec:design:batch} is real, not hypothetical:
+across repeated trials, batch ${>}1$ under the concurrent collector
+fails nondeterministically when cycles overlap identity-sensitive VM
+bootstrap (the both-tagged fast path judges old and new copies unequal;
+the typical symptom is an \texttt{IllegalAccessError} out of
+\texttt{java.lang.invoke}), and fails more often than it completes.
+The $11.9\times$ figure is therefore the measured amortisation
+potential a sound window-closing design (per-page load barrier) would
+inherit, not a configuration that runs general programs today. The
+per-cycle trace shows the
 expected shape: a floor at the heap-independent relocation pause, with
 the sweep concentrated in periodic spikes whose amplitude is unchanged
 (the sweep is no more expensive for being batched---that is the point).
@@ -769,7 +808,7 @@ Capability revocation was built to make dangling pointers trap. A
 moving garbage collector needs exactly that trap---plus a forwarding
 table on the other side of it. StoplessGC demonstrates the
 combination end to end in OpenJDK on Morello: relocation pauses bound
-by roots rather than heap ($+6\%$ pause across a $46\times$ heap),
+by roots rather than heap ($+7\%$ pause across a $46\times$ heap),
 lazy per-use healing measured in microseconds, an identity barrier
 that almost never takes its slow path, and a sweep cost that batches
 away $11.9\times$ because revoking $n$ objects costs the same as
