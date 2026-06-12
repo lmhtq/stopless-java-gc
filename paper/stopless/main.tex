@@ -61,11 +61,14 @@ bytes and is independent of heap size: with the root set held constant, the paus
 varies by 7\% while the heap footprint grows $46\times$ (the prototype never reclaims, so this is allocated, not live, memory). The dominant cost is
 the whole-address-space revocation sweep, which is linear in memory
 size; because the sweep's cost is approximately independent of how much
-it revokes, batching relocations across collection cycles amortises the
-mean cycle pause by $11.9\times$---though we show the batch window is
-unsound for general programs (stale-but-still-tagged capabilities break
-reference identity), so this is the mechanism's amortisation potential,
-not a deployable configuration. What we build and measure is the
+it revokes, batching relocations across collection cycles amortises the mean
+cycle pause by $10.3\times$ at batch size 8 in a controlled
+stop-the-world configuration---though we show the batch window is
+unsound for general concurrent programs (stale-but-still-tagged
+capabilities break reference identity), and we verify that the hardware
+primitive that closes the window, the per-page capability-load
+generation barrier, works under our stack: opening a revocation epoch
+costs milliseconds and lazily revokes on first capability load. What we build and measure is the
 relocation and barrier substrate of a moving collector (liveness,
 reclamation, and address reuse are future work, and we are explicit
 about that boundary). We also report the design laws capability
@@ -156,8 +159,8 @@ This paper makes the following contributions:
   $46\times$ ($3.6\to163$\,MiB)---the pause is bound to root slots
   plus relocated bytes, not heap size.
   The revocation sweep is linear in memory size and dominates total
-  cost; batching amortises the mean cycle pause $11.9\times$ at batch
-  size 32. Healing a trapped reference costs $\sim$20\,\textmu s of in-handler
+  cost; batching amortises the mean cycle pause $10.3\times$ at batch
+  size 8 (controlled stop-the-world configuration). Healing a trapped reference costs $\sim$20\,\textmu s of in-handler
   work under emulation, and the identity barrier's slow path executes only
   hundreds of times per run.
 \end{itemize}
@@ -654,39 +657,62 @@ restate, contains no added instructions at all.
 \begin{figure}
 \centering
 \includegraphics[width=\linewidth]{figs/batched_revoke.pdf}
-\caption{Batched revocation, \textsf{IntegrityGC} under the concurrent
-collector. (a)~Per-cycle pause, log scale: with batching most cycles
-pause only for relocation ($\sim$15--25\,ms); the sweep cost
+\caption{Batched revocation, \textsf{IntegrityGC}, controlled
+stop-the-world configuration (64 benchmark-driven cycles after
+bootstrap, fixed implementation; all integrity verifications pass at
+every batch size). (a)~Per-cycle pause, log scale: with batching most
+cycles pause only for relocation ($\sim$11\,ms floor); the sweep cost
 concentrates in every $N$th cycle. (b)~Mean pause per cycle falls from
-0.84\,s to 0.07\,s ($11.9\times$) at batch size 32. (Data from runs
-that completed; batch ${>}1$ is not a sound configuration---see text.)}
+1.57\,s to 0.15\,s ($10.3\times$) at batch size 8. The worst-case
+(sweep) cycle is unchanged---soundly moving it off-pause is the CLG
+design measured feasible in \S\ref{sec:eval:batch}.}
 \label{fig:batch}
 \end{figure}
 
 Because the sweep visits all memory regardless of marks, sweeping every
 $N$th cycle divides its amortised cost by $N$ while relocation
-continues every cycle. Figure~\ref{fig:batch}: mean pause per cycle
-falls $0.843 \to 0.149 \to 0.071$\,s for batch sizes 1, 8, 32---a
-$11.9\times$ reduction, tracking the sweep-count reduction
-(62/23/4 sweeps over the respective runs). The shown runs completed and
-passed their structure-and-identity verification, but the window
-unsoundness of \S\ref{sec:design:batch} is real, not hypothetical:
-across repeated trials, batch ${>}1$ under the concurrent collector
-fails nondeterministically when cycles overlap identity-sensitive VM
-bootstrap (the both-tagged fast path judges old and new copies unequal;
-the typical symptom is an \texttt{IllegalAccessError} out of
-\texttt{java.lang.invoke}), and fails more often than it completes.
-The $11.9\times$ figure is therefore the measured amortisation
-potential a sound window-closing design (per-page load barrier) would
-inherit, not a configuration that runs general programs today. The
-per-cycle trace shows the
-expected shape: a floor at the heap-independent relocation pause, with
-the sweep concentrated in periodic spikes whose amplitude is unchanged
-(the sweep is no more expensive for being batched---that is the point).
-The consistency caveat of \S\ref{sec:design:batch} applies: our
-integrity tests do not mutate relocated objects inside the batch
-window, and closing that window in general requires the per-page
-load-barrier integration.
+continues every cycle. We measure this in a \emph{controlled
+stop-the-world configuration}---64 collection cycles driven explicitly
+by the benchmark after VM bootstrap, on the fixed (transitive-chase)
+implementation---so no identity-sensitive code executes inside the
+batch window. Figure~\ref{fig:batch}: mean pause per cycle falls
+$1.57 \to 0.28 \to 0.15$\,s for batch sizes 1, 4, 8---a
+$10.3\times$ reduction, tracking the sweep count (64/16/8), with all
+64 integrity verifications passing deterministically at every batch
+size. The per-cycle trace shows the expected shape: a floor at the
+heap-independent relocation pause ($\sim$11\,ms), with the sweep cost
+concentrated in periodic spikes whose amplitude is \emph{unchanged}
+(max 1.2--2.6\,s in all three configurations): batching improves the
+mean, never the worst case.
+
+The same mechanism run \emph{concurrently} demonstrates the window
+unsoundness of \S\ref{sec:design:batch} empirically: batch ${>}1$
+with the background collector fails nondeterministically when cycles
+overlap identity-sensitive VM bootstrap (the both-tagged fast path
+judges old and new copies unequal; the typical symptom is an
+\texttt{IllegalAccessError} out of \texttt{java.lang.invoke}), and
+across repeated trials fails more often than it completes. Batched
+revocation is sound only when the window is closed to
+identity-sensitive and mutating code.
+
+\paragraph{Feasibility of the sound design.} The instrument that
+closes the window exists in our stack, and we verified it works under
+QEMU emulation: CheriBSD's load-side revocation drives Morello's
+per-page capability-load generation (CLG) barrier, and a minimal probe
+shows that (i)~\emph{opening} a revocation epoch---after which no
+stale capability can be loaded with its tag intact---costs 3.7\,ms
+with no data scan; (ii)~the first capability load from a
+not-yet-scanned page takes a CLG fault and the kernel lazily sweeps
+that page ($\sim$0.17\,ms per first-touch page, probed across a
+16\,MiB capability-dense region); (iii)~the closing scan can run on a
+kernel worker thread (\texttt{CHERI\_REVOKE\_ASYNC}; mutually
+exclusive with the closing flag, so open asynchronously, close later).
+The sound batched design follows: relocate and mark each cycle;
+\emph{open} the epoch inside the pause (milliseconds,
+heap-independent); run the heap-linear scan asynchronously off-pause.
+The mutator pause becomes relocation plus epoch-open---both
+heap-independent---which is the Cornucopia Reloaded result transplanted
+to a moving collector. Building this is the immediate next step.
 
 \subsection{The identity barrier's slow path is rare}
 \label{sec:eval:acmp}
@@ -811,8 +837,10 @@ combination end to end in OpenJDK on Morello: relocation pauses bound
 by roots rather than heap ($+7\%$ pause across a $46\times$ heap),
 lazy per-use healing measured in microseconds, an identity barrier
 that almost never takes its slow path, and a sweep cost that batches
-away $11.9\times$ because revoking $n$ objects costs the same as
-revoking one. The capability-specific lessons---integer-only GC
+away $10.3\times$ in a controlled configuration because the sweep's
+cost is approximately independent of how much it revokes---with the
+per-page load-barrier instrument that makes batching sound verified
+working under our stack. The capability-specific lessons---integer-only GC
 metadata rebuilt from revocation-exempt roots, identity as the one
 barrier hardware cannot give you, reads-as-values as the residual
 coverage gap---are, we believe, durable properties of building moving

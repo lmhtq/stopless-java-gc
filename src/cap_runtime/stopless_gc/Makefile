@@ -26,7 +26,7 @@ CFLAGS += -std=c11
 OBJS = revoke.o forward_table.o handler.o allocator.o
 LIB  = libstopless_gc.a
 
-TESTS = test_basic test_multi test_alloc test_alloc_concurrent test_concurrent_move
+TESTS = test_basic test_multi test_alloc test_alloc_concurrent test_concurrent_move test_clg_probe
 
 .PHONY: all clean
 
@@ -55,3 +55,6 @@ test_concurrent_move: tests/test_concurrent_move.c $(LIB)
 
 clean:
 	rm -f *.o $(LIB) $(TESTS)
+
+test_clg_probe: tests/test_clg_probe.c $(LIB)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $< -L. -lstopless_gc -lcheri_caprevoke

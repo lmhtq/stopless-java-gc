@@ -122,13 +122,13 @@ def fig_heap_independence():
 
 # ---------------------------------------------------------------- figure 2
 def fig_batched():
-    runs = parse_batched(os.path.join(DATA, "c11_batched_revoke.txt"))
+    runs = parse_batched(os.path.join(DATA, "c11_stw_batched_revoke.txt"))
 
     fig, (ax1, ax2) = plt.subplots(
         1, 2, figsize=(5.4, 2.1), gridspec_kw={"width_ratios": [1.6, 1]})
 
-    colors = {1: VERMILION, 8: SKY, 32: BLUE}
-    for b in (1, 8, 32):
+    colors = {1: VERMILION, 4: SKY, 8: BLUE}
+    for b in (1, 4, 8):
         ys = [r["pause_s"] for r in runs[b]]
         ax1.plot(range(len(ys)), ys, lw=0.9, color=colors[b],
                  label=f"batch = {b}", alpha=0.95)
@@ -138,7 +138,7 @@ def fig_batched():
     ax1.set_title("(a) per-cycle pause", loc="left")
     ax1.legend(frameon=False, loc="center right")
 
-    batches = [1, 8, 32]
+    batches = [1, 4, 8]
     avgs = [sum(r["pause_s"] for r in runs[b]) / len(runs[b]) for b in batches]
     bars = ax2.bar([str(b) for b in batches], avgs,
                    color=[colors[b] for b in batches], width=0.62)

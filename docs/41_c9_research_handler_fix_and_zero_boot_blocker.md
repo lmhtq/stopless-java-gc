@@ -1758,3 +1758,40 @@ coverage enumeration, table counts 153-571, fig captions, roots+bytes bound
 everywhere, +7% endpoints, heap "footprint" not "live", evidence-note .out.
 Post-grep audit: 0 stale phrases. LESSON: every scripted text edit must
 assert the old string was found; never trust replace()+print(ok).
+
+## BD. ★★ STW batching clean data + CLG load-side barrier VERIFIED under QEMU (2026-06-12, patch 0184)
+
+(1) CLEAN BATCHING DATASET (paper/data/c11_stw_batched_revoke.txt): the
+"IntegrityGC 100" arg confusion was mine — args are [N] [rounds] [alen];
+`IntegrityGC 16 64 4` = 64 System.gc-driven STW cycles after bootstrap, on
+the FIXED (transitive-chase) implementation, no identity-sensitive code in
+the window. Results, deterministic 64/64 verified at every batch size:
+  batch 1/4/8 -> mean pause 1.567/0.277/0.152 s (10.3x), sweeps 64/16/8,
+  max ~1.2-2.6 s unchanged (batching improves the MEAN never the worst),
+  min ~11 ms = pure relocation floor.
+Paper §5.4 + Fig 3 now use this dataset; tainted concurrent data demoted to
+the unsoundness demonstration.
+
+(2) ★ CLG FEASIBILITY PROBE GREEN (tests/test_clg_probe.c): load-side
+revocation (Morello per-page capability-load generation barrier) WORKS under
+QEMU + our CheriBSD:
+  - opening pass (no LAST_PASS): 3.7 ms, NO data scan, epoch advances;
+  - after open, 64 probe loads spread over a 16MiB cap-dense region ALL came
+    back untagged (~0.17 ms per first-touch page = the lazy CLG page sweep);
+    the full sync sweep takes ~650 ms, so these pages were NOT pre-scanned —
+    the loads themselves triggered lazy revocation. THE BARRIER IS REAL.
+  - LAST_PASS close: 650 ms (the heap-linear part, backgroundable);
+  - CHERI_REVOKE_ASYNC: worker-thread scan; EINVAL with LAST_PASS
+    (kern_cheri_revoke.c:372 — mutually exclusive); stats copyout EFAULT to
+    debug. Correct shape: open(ASYNC) ... later LAST_PASS.
+SOUND PHASE-2 DESIGN NOW CONCRETE: per cycle = relocate + mark + OPEN epoch
+inside the pause (ms, heap-independent); heap-linear scan runs async
+off-pause; stale caps cannot be loaded tagged after open => identity AND
+mutation windows closed. Mutator pause = relocation + epoch-open. This is
+Cornucopia Reloaded transplanted to a moving collector — the paper's §5.4
+"Feasibility" paragraph states the probe numbers.
+
+(3) Editing-process hazard recurred: a span-replace with end-marker matching
+an EARLIER section duplicated 270 lines of the paper (caught by section-count
+audit; fixed by line-surgery + assert). Rule reinforced: structural grep
+audit after every scripted edit.
