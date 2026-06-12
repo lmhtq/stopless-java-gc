@@ -1,0 +1,11 @@
+setup: 1048576 cap slots across 4096 pages, all -> obj
+Q1 opening pass: rc=-1 errno=14 t=2.9 ms epochs enq=1 deq=0
+  [open] pages_scan_ro=0 rw=0 faulted_ro=0 rw=0 CLG_fault_visits=0 caps_found=0 caps_cleared=0
+Q2 probe loads (64 spread): tagged=0 untagged=64 t=11.2 ms
+close (LAST_PASS): rc=-1 t=628.9 ms epochs enq=2 deq=2
+  [close] pages_scan_ro=0 rw=0 faulted_ro=0 rw=0 CLG_fault_visits=0 caps_found=0 caps_cleared=0
+post-close probe: tagged=0 (expect 0)
+Q4 ASYNC|LAST: rc=-1 errno=22 t=0.1 ms (call-return latency)
+Q4 stale cap observed dead after -1.0 ms of load-polling (-1 = still alive)
+epochs final: enq=2 deq=2
+CLG-PROBE-DONE
