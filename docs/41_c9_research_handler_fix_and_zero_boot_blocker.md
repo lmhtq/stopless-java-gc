@@ -1411,3 +1411,30 @@ RESULTS:
       was ported.
   (b) rc=1: boot-layer NPE (no cap fault at all) — identity/ordering issue
       under early aggressive moves, to be re-examined after (a).
+
+## AT. ★★ NATIVE-TRANS SLOW PATH cap-ported — concurrent collector now STABLE under light load (2026-06-12, patch 0175)
+
+The §AS blocker is FIXED. The native->Java SLOW transition (taken only when a
+safepoint/handshake is pending on native return — STW never produces it, so it
+was never cap-ported) made two hand-rolled libjvm calls via integer `blr`:
+JavaThread::check_special_condition_for_native_trans and
+SharedRuntime::reguard_yellow_pages. Integer `blr Xn` to a C64 libjvm function
+enters A64 mode -> the C64 prologue decodes as A64 garbage and faults. The
+"out-of-bounds CSP" in the dump was a side-effect/misread of that wrong-mode
+execution (setting address bit0 alone does NOT switch PSTATE.C64 — the dump
+then showed an odd PC with C64=0, i.e. a misaligned A64 fetch).
+
+Fix: route both through call_VM_leaf, which calls via the cap trampoline
+(C64-correct) and — unlike call_VM — does NOT forward a pending exception (the
+exact reason these sites avoided call_VM). 
+
+RESULTS:
+- STW matrix (6 tests + unlimited-move IntegrityGC): ALL GREEN, no regression.
+- Light concurrent (STOPLESS_CONCURRENT_MS=30, MOVE_LIMIT=8): 8/8 runs rc=0,
+  ~50 background collects each, [CT] 3 DONE. The concurrent collector is now
+  STABLE — mutator pause is just the root-fixup window while ~50 whole-cycle
+  moves+revokes run in the background. This is the "Stopless" architecture
+  working end-to-end.
+- Whole-heap concurrent (MOVE_LIMIT=200): the cap fault (rc=162) is GONE
+  (mvchk=0); a separate boot-layer NPE (rc=1, no cap corruption) remains under
+  aggressive early moves — the next item.

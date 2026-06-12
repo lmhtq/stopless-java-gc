@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
-index e20cffd5767..e3e82d80a0f 100644
+index e20cffd5767..0c547ad05a6 100644
 --- a/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
 +++ b/src/hotspot/cpu/aarch64/templateInterpreterGenerator_aarch64.cpp
 @@ -435,7 +435,13 @@ address TemplateInterpreterGenerator::generate_return_entry_for(TosState state,
@@ -650,7 +650,31 @@ index e20cffd5767..e3e82d80a0f 100644
  
    __ verify_sve_vector_length();
  
-@@ -1370,7 +1728,13 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+@@ -1348,9 +1706,23 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+     // clearing _last_native_pc down below. So we do a runtime call by
+     // hand.
+     //
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-10: this hand-rolled runtime call is the native->Java SLOW transition,
++    // taken ONLY when a safepoint/handshake is pending on native return —
++    // which a normal STW run never produces, so it was never cap-ported. The
++    // integer `blr` to a C64 libjvm function enters A64 mode (odd-PC / wrong-
++    // mode decode -> fault). Route it through call_VM_leaf, which calls via
++    // the cap trampoline (C64-correct) and, unlike call_VM, does NOT forward a
++    // pending exception (the very reason this site avoids call_VM). The
++    // concurrent collector makes this path frequent.
++    __ call_VM_leaf(CAST_FROM_FN_PTR(address,
++                        JavaThread::check_special_condition_for_native_trans),
++                    rthread);
++#else
+     __ mov(c_rarg0, rthread);
+     __ mov(rscratch2, CAST_FROM_FN_PTR(address, JavaThread::check_special_condition_for_native_trans));
+     __ blr(rscratch2);
++#endif
+     __ get_method(rmethod);
+     __ reinit_heapbase();
+     __ bind(Continue);
+@@ -1370,7 +1742,13 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
    }
  
    // reset handle block
@@ -664,7 +688,7 @@ index e20cffd5767..e3e82d80a0f 100644
    __ str(zr, Address(t, JNIHandleBlock::top_offset_in_bytes()));
  
    // If result is an oop unbox and store it in frame where gc will see it
-@@ -1382,9 +1746,18 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+@@ -1382,9 +1760,18 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
      __ cmp(t, result_handler);
      __ br(Assembler::NE, no_oop);
      // Unbox oop result, e.g. JNIHandles::resolve result.
@@ -683,7 +707,23 @@ index e20cffd5767..e3e82d80a0f 100644
      // keep stack depth as expected by pushing oop which will eventually be discarded
      __ push(ltos);
      __ bind(no_oop);
-@@ -1413,8 +1786,14 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+@@ -1398,9 +1785,15 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+     __ br(Assembler::NE, no_reguard);
+ 
+     __ push_call_clobbered_registers();
++#ifdef __CHERI_PURE_CAPABILITY__
++    // C-10: same C64-interwork fix — route via the cap trampoline (call_VM_leaf).
++    __ call_VM_leaf(CAST_FROM_FN_PTR(address, SharedRuntime::reguard_yellow_pages),
++                    rthread);
++#else
+     __ mov(c_rarg0, rthread);
+     __ mov(rscratch2, CAST_FROM_FN_PTR(address, SharedRuntime::reguard_yellow_pages));
+     __ blr(rscratch2);
++#endif
+     __ pop_call_clobbered_registers();
+ 
+     __ bind(no_reguard);
+@@ -1413,8 +1806,14 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
  
    // restore bcp to have legal interpreter frame, i.e., bci == 0 <=>
    // rbcp == code_base()
@@ -698,7 +738,7 @@ index e20cffd5767..e3e82d80a0f 100644
    // handle exceptions (exception handling will handle unlocking!)
    {
      Label L;
-@@ -1477,12 +1856,20 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
+@@ -1477,12 +1876,20 @@ address TemplateInterpreterGenerator::generate_native_entry(bool synchronized) {
    __ pop(ltos);
    __ pop(dtos);
  
@@ -719,7 +759,7 @@ index e20cffd5767..e3e82d80a0f 100644
    // remove frame anchor
    __ leave();
  
-@@ -1509,6 +1896,8 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1509,6 +1916,8 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
  
    // rscratch1: sender sp
    address entry_point = __ pc();
@@ -728,7 +768,7 @@ index e20cffd5767..e3e82d80a0f 100644
  
    const Address constMethod(rmethod, Method::const_offset());
    const Address access_flags(rmethod, Method::access_flags_offset());
-@@ -1518,7 +1907,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1518,7 +1927,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
  
    // get parameter size (always needed)
    // need to load the const method first
@@ -744,7 +784,7 @@ index e20cffd5767..e3e82d80a0f 100644
    __ load_unsigned_short(r2, size_of_parameters);
  
    // r2: size of parameters
-@@ -1530,8 +1927,18 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1530,8 +1947,18 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
    generate_stack_overflow_check();
  
    // compute beginning of parameters (rlocals)
@@ -763,7 +803,7 @@ index e20cffd5767..e3e82d80a0f 100644
  
    __ mov(rscratch1, esp);
  
-@@ -1555,7 +1962,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1555,7 +1982,15 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
  
    // Padding between locals and fixed part of activation frame to ensure
    // SP is always 16-byte aligned.
@@ -779,7 +819,7 @@ index e20cffd5767..e3e82d80a0f 100644
  
    // And the base dispatch table
    __ get_dispatch();
-@@ -1656,6 +2071,32 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
+@@ -1656,6 +2091,32 @@ address TemplateInterpreterGenerator::generate_normal_entry(bool synchronized) {
      generate_counter_overflow(continue_after_compile);
    }
  
@@ -812,7 +852,7 @@ index e20cffd5767..e3e82d80a0f 100644
    return entry_point;
  }
  
-@@ -1698,6 +2139,21 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1698,6 +2159,21 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
               c_rarg1);
  
    // Calculate stack limit
@@ -834,7 +874,7 @@ index e20cffd5767..e3e82d80a0f 100644
    __ ldr(rscratch1, Address(rmethod, Method::const_offset()));
    __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
    __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 4);
-@@ -1705,6 +2161,7 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1705,6 +2181,7 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
           Address(rfp, frame::interpreter_frame_initial_sp_offset * wordSize));
    __ sub(rscratch1, rscratch2, rscratch1, ext::uxtx, 3);
    __ andr(sp, rscratch1, -16);
@@ -842,7 +882,7 @@ index e20cffd5767..e3e82d80a0f 100644
  
    // r0: exception handler entry point
    // r3: preserved exception oop
-@@ -1755,7 +2212,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1755,7 +2232,11 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
      // Compute size of arguments for saving when returning to
      // deoptimized caller
      __ get_method(r0);
@@ -854,7 +894,7 @@ index e20cffd5767..e3e82d80a0f 100644
      __ load_unsigned_short(r0, Address(r0, in_bytes(ConstMethod::
                                                      size_of_parameters_offset())));
      __ lsl(r0, r0, Interpreter::logStackElementSize);
-@@ -1790,7 +2251,13 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1790,7 +2271,13 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
                         /* notify_jvmdi */ false);
  
    // Restore the last_sp and null it out
@@ -868,7 +908,7 @@ index e20cffd5767..e3e82d80a0f 100644
    __ str(zr, Address(rfp, frame::interpreter_frame_last_sp_offset * wordSize));
  
    __ restore_bcp();
-@@ -1831,6 +2298,18 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1831,6 +2318,18 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
  #endif // INCLUDE_JVMTI
  
    // Restore machine SP
@@ -887,7 +927,7 @@ index e20cffd5767..e3e82d80a0f 100644
    __ ldr(rscratch1, Address(rmethod, Method::const_offset()));
    __ ldrh(rscratch1, Address(rscratch1, ConstMethod::max_stack_offset()));
    __ add(rscratch1, rscratch1, frame::interpreter_frame_monitor_size() + 4);
-@@ -1838,6 +2317,7 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1838,6 +2337,7 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
           Address(rfp, frame::interpreter_frame_initial_sp_offset * wordSize));
    __ sub(rscratch1, rscratch2, rscratch1, ext::uxtw, 3);
    __ andr(sp, rscratch1, -16);
@@ -895,7 +935,7 @@ index e20cffd5767..e3e82d80a0f 100644
  
    __ dispatch_next(vtos);
    // end of PopFrame support
-@@ -1846,7 +2326,14 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1846,7 +2346,14 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
  
    // preserve exception over this code sequence
    __ pop_ptr(r0);
@@ -910,7 +950,7 @@ index e20cffd5767..e3e82d80a0f 100644
    // remove the activation (without doing throws on illegalMonitorExceptions)
    __ remove_activation(vtos, false, true, false);
    // restore exception
-@@ -1860,12 +2347,29 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
+@@ -1860,12 +2367,29 @@ void TemplateInterpreterGenerator::generate_throw_exception() {
    // lr: return address/pc that threw exception
    // esp: expression stack of caller
    // rfp: fp of caller
