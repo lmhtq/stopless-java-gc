@@ -1,5 +1,5 @@
 diff --git a/src/hotspot/share/gc/stopless/stoplessHeap.cpp b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
-index 069115be038..83ad4c949a0 100644
+index 069115be038..750a2fe5b0e 100644
 --- a/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 @@ -6,12 +6,32 @@
@@ -35,7 +35,7 @@ index 069115be038..83ad4c949a0 100644
  #include "utilities/ostream.hpp"
  
  StoplessHeap* StoplessHeap::heap() {
-@@ -24,52 +44,378 @@ StoplessHeap* StoplessHeap::heap() {
+@@ -24,52 +44,385 @@ StoplessHeap* StoplessHeap::heap() {
  StoplessHeap::StoplessHeap()
    : _soft_ref_policy(),
      _barrier_set(nullptr),
@@ -49,6 +49,7 @@ index 069115be038..83ad4c949a0 100644
 +static void stopless_start_collector(StoplessHeap* h, int interval_ms);
 +// C-9: shared forwarding table in cap_runtime (the SIGPROT handler reads it).
 +extern "C" void  forward_table_init(void);
++extern "C" void  forward_table_set_arena_base(void*);
 +extern "C" void* forward_table_cas_insert(uintptr_t from_addr, void* new_cap);
 +extern "C" void* forward_table_lookup(uintptr_t from_addr);
 +
@@ -79,6 +80,12 @@ index 069115be038..83ad4c949a0 100644
 +  // Allocate the real CHERI-backed arena via cap_runtime. Aborts the
 +  // VM (vm_exit_during_initialization) on mmap/shadow failure.
 +  _arena = new StoplessArena(max_byte_size);
++
++  // C-10: hand the forward table the arena base cap (PERM_SW_VMEM,
++  // revocation-immune) so lookups rebuild TIGHT-BOUNDS oop caps from stored
++  // addresses+lengths instead of storing revocable heap caps (which the
++  // kernel revoke sweep tag-clears when a forwarded object moves again).
++  forward_table_set_arena_base(_arena->base());
  
    // Install our (NOP) barrier set so BarrierSet::barrier_set() returns
 -  // something non-null. Real read/write barriers are no-ops in C-1

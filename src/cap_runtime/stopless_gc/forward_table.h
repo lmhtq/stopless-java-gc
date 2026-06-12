@@ -32,6 +32,14 @@ void forward_table_insert(uintptr_t from_addr, void *new_cap);
 /* Grow the table if load is high. Collector-only, at a safepoint. */
 void forward_table_maybe_grow(void);
 
+/* Diagnostic: report a missing arena base (address-mode storage cannot be
+   tag-corrupted). */
+size_t forward_table_audit(void);
+
+/* C-10: set the arena base cap (PERM_SW_VMEM, revoke-immune) used to rebuild
+   tight-bounds oop caps at lookup time. Must run before the first collect. */
+void forward_table_set_arena_base(void *base);
+
 /* C-9/C-10: multi-writer insert-or-get. Returns the authoritative cap for
    from_addr — new_cap if this caller won the race, else the cap installed
    by whoever won. The single linearization point for concurrent moves. */

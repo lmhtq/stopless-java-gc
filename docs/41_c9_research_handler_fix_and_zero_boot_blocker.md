@@ -1374,3 +1374,32 @@ unlimited-move IntegrityGC) ALL GREEN; concurrent collector works under light
 load. The concurrent whole-heap blocker is now FULLY ROOT-CAUSED with a
 designed fix; only the ft_derive regression stands between here and robust
 concurrent whole-heap moves.
+
+## AS. ★★ TIGHT-BOUNDS ADDRESS-MODE forward table LANDS (2026-06-12, patch 0174)
+
+The §AR regression is solved — the hypothesis was right: the first
+address-mode attempt rebuilt ARENA-WIDE-bounds caps, which broke every
+base-keyed consumer (acmp identity normalize keys lookups on
+cheri_base(cap)==object start; with base==arena base the lookup missed,
+normalize returned the STALE address, identity broke, and MethodHandles'
+identity-keyed caching produced NULL receivers).
+
+Fix: the table now stores {from_addr, new_addr, new_len} (all integers,
+revocation-immune) and ft_derive rebuilds the cap with the allocator's exact
+derivation: bounds_set(address_set(arena_base, addr), len) & ~SW_VMEM —
+TIGHT bounds, same as the original allocation.
+
+RESULTS:
+- STW matrix: ALL GREEN again (6 tests + unlimited-move IntegrityGC ALL-OK).
+- Concurrent whole-heap torture: C9_MOVE_CHECK = 0 across all runs — the
+  revoke-clears-table corruption is GONE for good.
+- Remaining (separate) concurrent races, ~23-31 collects into boot:
+  (a) rc=162: all-ones cap (0xffff...ffff) as the THREAD argument of
+      check_special_condition_for_native_trans during the slow native->Java
+      transition of Unsafe.compareAndSetReference — i.e. the CAS-on-moved-
+      object + safepoint-pending interleaving corrupts c0 before/at the
+      transition call. NOT the forward table (mvchk=0): suspect the native
+      entry's result save/restore vs the transition call's argument setup,
+      or the LDAXR/STLXR heal-retry window.
+  (b) rc=1: boot-layer NPE (no cap fault at all) — identity/ordering issue
+      under early aggressive moves, to be re-examined after (a).
