@@ -5,3 +5,4 @@ main.fdb_latexmk
 main.fls
 main.log
 main.out
+# (arxiv-submission.tar.gz is a build artifact; regenerate via SUBMISSION.md)

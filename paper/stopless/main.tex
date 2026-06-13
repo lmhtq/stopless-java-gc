@@ -449,8 +449,8 @@ slow path is rare (\S\ref{sec:eval:acmp}).
 
 The same hazard recurs wherever the runtime observes reference
 \emph{values} without dereferencing, and the bytecode comparison is
-only the most frequent case. Reference CAS
-(\texttt{Unsafe}/\texttt{VarHandle}/\texttt{AtomicReference})
+only the most frequent case. Reference CAS (\texttt{Unsafe},
+\texttt{VarHandle}, \texttt{AtomicReference})
 compares capability bit patterns and can fail spuriously against a
 healed value; JNI \texttt{IsSameObject} and VM-internal address-keyed
 tables are analogous. (Identity hash codes are safe: HotSpot stores
@@ -917,6 +917,12 @@ concurrent copy, liveness and reuse, JIT) has known designs waiting on
 the same substrate.
 
 % =====================================================================
+\paragraph{Artifact availability.} The collector, the
+capability-runtime library, the OpenJDK patches, the benchmarks, and
+the raw measurement logs behind every figure are available at
+\url{https://github.com/[anon]/stopless-java-gc} (a permanent archive
+will be deposited on acceptance).
+
 \paragraph{AI contribution statement.}
 The design, implementation, debugging, measurement, and manuscript of
 this work were produced by Claude (Anthropic)---Opus~4.8 and Fable~5
