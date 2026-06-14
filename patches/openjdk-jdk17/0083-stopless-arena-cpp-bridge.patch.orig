@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Wed, 27 May 2026 19:30:00 +0800
 Subject: [PATCH] Phase C-3b: StoplessArena C++ wrapper over cap_runtime
 
@@ -17,7 +17,7 @@ index 0000000..0000009
 +++ b/src/hotspot/share/gc/stopless/stoplessArena.hpp
 @@ -0,0 +1,65 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-3 — see docs/c3/design.md.
 + *
@@ -88,7 +88,7 @@ index 0000000..0000010
 +++ b/src/hotspot/share/gc/stopless/stoplessArena.cpp
 @@ -0,0 +1,96 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-3 — see docs/c3/design.md.
 + */
