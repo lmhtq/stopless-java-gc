@@ -25,10 +25,13 @@ Every line of code, every debugging step, the entire measurement campaign, and
 the paper were produced by **Anthropic's Claude models** (the Opus 4.6/4.7/4.8
 line over the project, Fable 5 in the concurrent-collector and Phase-2 work),
 running via **Claude Code**, across many hundreds of build–test–debug
-iterations on a CHERI/Morello stack. A human, **bluecat**, was the
-*bootstrapper*: he supplied the research spark, the Morello/CheriBSD build and
-test hardware, high-level steering, and an adversarial second-model review loop
-— but wrote none of the code or prose.
+iterations on a CHERI/Morello stack. A human, **bluecat**, ran the research as
+*bootstrapper*: the cross-domain spark, the Morello/CheriBSD build-and-test
+hardware, every go/no-go decision, and an adversarial second-model review loop
+that twice caught real soundness bugs from the prose alone — but not a line of
+the code or a sentence of the prose. The code, the design, and the writing are
+the model's; the research direction, the method, and the judgment were the
+human's.
 
 The point of publishing this is to show, concretely and auditably, what current
 models can do on a real systems-research problem: novel hardware no prior GC

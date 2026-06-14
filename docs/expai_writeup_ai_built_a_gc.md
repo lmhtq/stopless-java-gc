@@ -20,12 +20,14 @@ ran the measurement campaign, and produced a paper that then survived **eight
 rounds of adversarial peer review** (by a second, different model) — ending at a
 "strong accept."
 
-Every line of code and every sentence of the paper is the model's. My role was
-narrow and I want to be honest about it: I supplied the *spark* (what if a CHERI
-capability fault *is* a GC read barrier?), the build-and-test hardware,
-occasional one-word steering ("continue", "do the microbenchmarks", "now make it
-sound"), and an adversarial-review loop. I wrote none of the code or prose. The
-whole point is that I didn't have to.
+Every line of code and every sentence of the paper is the model's. My role was a
+different layer, and I want to be precise about it: I supplied the *spark* (what
+if a CHERI capability fault *is* a GC read barrier?), the build-and-test
+hardware, the go/no-go calls along the way ("now make it sound", "that result is
+too clean, distrust it", "ship it"), and an adversarial-review loop that twice
+caught real bugs. I wrote none of the code or prose — and that's the point. The
+research wasn't in the typing; it was in the question, the method, and the
+judgment.
 
 **The artifact is public and auditable.** The code, the OpenJDK patches, the
 benchmarks, the raw measurement logs behind every figure, the paper, and — most
