@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Thu, 28 May 2026 21:25:00 +0800
 Subject: [PATCH] Phase C-6 fixes #17b-#24: cap-aware emits across interpreter prologue
 

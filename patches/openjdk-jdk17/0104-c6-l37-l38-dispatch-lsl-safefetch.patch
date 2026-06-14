@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Fri, 29 May 2026 13:05:00 +0800
 Subject: [PATCH] Phase C-6 L37/L38: dispatch x16 via lsl+uxtw(0); SafeFetch SIGPROT redirect
 

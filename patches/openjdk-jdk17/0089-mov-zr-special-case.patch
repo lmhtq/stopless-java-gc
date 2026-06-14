@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Thu, 28 May 2026 13:00:00 +0800
 Subject: [PATCH] Phase C-6 fix #7: mov(Rd, zr) special case for patch 0088
 

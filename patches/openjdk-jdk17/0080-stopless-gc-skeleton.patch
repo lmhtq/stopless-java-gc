@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Wed, 27 May 2026 21:30:00 +0800
 Subject: [PATCH] Phase C-1: StoplessGC HotSpot skeleton
 
@@ -26,7 +26,7 @@ index 00000000000..d35e3ed156c
 +++ b/src/hotspot/share/gc/stopless/stoplessArguments.cpp
 @@ -0,0 +1,32 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-1 skeleton — see docs/c1/design.md.
 + */
@@ -64,7 +64,7 @@ index 00000000000..7a5df383ecd
 +++ b/src/hotspot/share/gc/stopless/stoplessArguments.hpp
 @@ -0,0 +1,25 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-1 skeleton — see docs/c1/design.md.
 + */
@@ -95,7 +95,7 @@ index 00000000000..40260a2cbfd
 +++ b/src/hotspot/share/gc/stopless/stoplessBarrierSet.cpp
 @@ -0,0 +1,27 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-1 skeleton — see docs/c1/design.md.
 + */
@@ -128,7 +128,7 @@ index 00000000000..e22144cfd01
 +++ b/src/hotspot/share/gc/stopless/stoplessBarrierSet.hpp
 @@ -0,0 +1,53 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-1 skeleton — see docs/c1/design.md.
 + *
@@ -187,7 +187,7 @@ index 00000000000..069115be038
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.cpp
 @@ -0,0 +1,75 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-1 skeleton — see docs/c1/design.md.
 + */
@@ -268,7 +268,7 @@ index 00000000000..324b638739c
 +++ b/src/hotspot/share/gc/stopless/stoplessHeap.hpp
 @@ -0,0 +1,94 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-1 skeleton — see docs/c1/design.md.
 + */
@@ -368,7 +368,7 @@ index 00000000000..55fb02cecc4
 +++ b/src/hotspot/share/gc/stopless/stopless_globals.hpp
 @@ -0,0 +1,25 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-1 skeleton — see docs/c1/design.md.
 + */
@@ -399,7 +399,7 @@ index 00000000000..484f9b5e06c
 +++ b/src/hotspot/share/gc/stopless/vmStructs_stopless.hpp
 @@ -0,0 +1,17 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-1 skeleton — see docs/c1/design.md.
 + *

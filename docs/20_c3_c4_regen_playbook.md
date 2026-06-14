@@ -112,7 +112,7 @@ cat /tmp/0083-new-files.patch /tmp/0083-mods.patch > /tmp/0083-regen.patch
 
 # Prepend a Subject header:
 cat > /tmp/0083-header <<'EOF'
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: <today>
 Subject: [PATCH] Phase C-3: StoplessArena C++ wrapper over cap_runtime
 

@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Fri, 29 May 2026 12:50:00 +0800
 Subject: [PATCH] Phase C-6 L36/L37: dispatch table is 16-byte caps — fix ×8 → ×16 stride
 

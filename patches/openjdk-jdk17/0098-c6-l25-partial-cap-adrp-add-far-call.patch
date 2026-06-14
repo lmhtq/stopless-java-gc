@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Thu, 28 May 2026 22:50:00 +0800
 Subject: [PATCH] Phase C-6 fix #25 (partial): call_VM_leaf_base adrp+cap-ADD
 

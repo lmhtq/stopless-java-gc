@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Sat, 30 May 2026 18:30:00 +0800
 Subject: [PATCH] Phase C-6 L48: restore "Move SP out of the way" — expression/native stack overlap
 

@@ -2,7 +2,7 @@
 
 **Status:** design draft, paper §3 candidate
 **Date:** 2026-05-27
-**Authors:** lxh
+**Authors:** bluecat
 
 This document specifies the core mechanism of *CHERI-Stopless*, a
 moving garbage collector for the JVM that uses CHERI capability

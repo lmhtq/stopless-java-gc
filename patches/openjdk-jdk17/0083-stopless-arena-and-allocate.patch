@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Wed, 27 May 2026 21:00:00 +0800
 Subject: [PATCH] Phase C-3 + C-4: StoplessArena C++ wrapper + bump-pointer
  allocate wired through mem_allocate
@@ -45,7 +45,7 @@ index 00000000000..a84ec853eef
 +++ b/src/hotspot/share/gc/stopless/stoplessArena.cpp
 @@ -0,0 +1,107 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-3 + C-4 — see docs/c3/design.md and docs/c4/design.md.
 + */
@@ -158,7 +158,7 @@ index 00000000000..06f5163d38e
 +++ b/src/hotspot/share/gc/stopless/stoplessArena.hpp
 @@ -0,0 +1,66 @@
 +/*
-+ * Copyright (c) 2026, lxh. CHERI-Stopless GC for OpenJDK.
++ * Copyright (c) 2026, bluecat. CHERI-Stopless GC for OpenJDK.
 + *
 + * Phase C-3 — see docs/c3/design.md.
 + *

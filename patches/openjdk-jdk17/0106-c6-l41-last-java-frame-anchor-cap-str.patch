@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Fri, 29 May 2026 13:40:00 +0800
 Subject: [PATCH] Phase C-6 L41: set_last_Java_frame stores the anchor as capabilities
 

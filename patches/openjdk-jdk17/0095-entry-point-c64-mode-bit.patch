@@ -1,4 +1,4 @@
-From: lxh <lmhtq1991@gmail.com>
+From: bluecat <lmhtq1991@gmail.com>
 Date: Thu, 28 May 2026 16:30:00 +0800
 Subject: [PATCH] Phase C-6 fix #16: set bit 0 on entry_point before BLR
 

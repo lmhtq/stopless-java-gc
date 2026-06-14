@@ -4,7 +4,7 @@
 **Date:** 2026-05-27
 **Decision:** push to T3-A = full JVM integration, fresh GC subsystem
 designed from scratch (not modifying ZGC/G1/Serial/Epsilon)
-**Owner:** lxh
+**Owner:** bluecat
 
 This document is the **single source of truth** for Phase C. Every
 sub-phase (C-1 through C-12) has its own design + impl + test
