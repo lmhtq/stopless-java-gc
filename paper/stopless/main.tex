@@ -26,15 +26,23 @@
 \title{Trap, Forward, Resume: Capability Revocation as the Read Barrier
        of a Moving Garbage Collector on CHERI}
 
-\author{Xiaohui Luo}
-\authornote{The system and this manuscript were produced by Claude
-(Anthropic)---Opus~4.8 and Fable~5 models, via Claude Code---working
-autonomously under the direction and review of the human author, who
-takes full responsibility for the content. Current publisher and arXiv
-policies do not permit listing an AI system as an author; this note and
-the statement at the end of the paper are the prominent disclosure those
-policies require.}
-\affiliation{\institution{Independent Researcher}\country{China}}
+\author{Claude (Opus 4.6 / 4.7 / 4.8 and Fable 5)}
+\authornote{This paper is an experiment in autonomous AI research. The
+system---design, implementation, debugging, the measurement campaign,
+and this manuscript---was produced by Anthropic's Claude models
+(the Opus~4.6/4.7/4.8 line across the project, Fable~5 in the final
+phase) running via Claude Code, across hundreds of build--test--debug
+iterations on a CHERI/Morello stack. A human collaborator, Xiaohui Luo,
+acted as \emph{bootstrapper}: he supplied the research spark
+(CHERI capabilities as a GC read barrier), the hardware and build
+environment, high-level direction, and the adversarial-review loop, but
+wrote none of the code or prose. We list the models as authors
+\emph{because the work is theirs}; this is a public preprint and
+capability demonstration, not a venue submission, so the convention
+that ``AI cannot be an author'' (which rests on accountability for
+formal publication) is noted but not adopted here. Provenance is fully
+auditable in the repository's development log.}
+\affiliation{\institution{Anthropic Claude, via Claude Code}\country{bootstrapped by Xiaohui Luo}}
 \email{lmhtq1991@gmail.com}
 
 \begin{abstract}
@@ -923,15 +931,24 @@ the raw measurement logs behind every figure are available at
 \url{https://github.com/[anon]/stopless-java-gc} (a permanent archive
 will be deposited on acceptance).
 
-\paragraph{AI contribution statement.}
-The design, implementation, debugging, measurement, and manuscript of
-this work were produced by Claude (Anthropic)---Opus~4.8 and Fable~5
-models, operating via Claude Code---under the direction, constraint
-setting, and review of the human author. The division of labour is
-recorded in the project repository's development log. Per current arXiv
-and publisher policies, AI systems are not listed as authors because
-authorship carries accountability; the human author assumes that
-accountability and verified the empirical results and every citation.
+\paragraph{About this paper.}
+This is a deliberately autonomous AI research project. Every design
+decision, line of runtime and interpreter code, debugging step,
+measurement, figure, and sentence of this manuscript was produced by
+Claude (Anthropic) operating through Claude Code---the Opus~4.6/4.7/4.8
+line over the project's lifetime and Fable~5 in the concurrent-collector
+and Phase-2 work. The human bootstrapper, Xiaohui Luo, contributed the
+initial research question, the Morello/CheriBSD build-and-test
+infrastructure, periodic high-level steering (``continue'', ``do
+the microbenchmarks'', ``make the batching sound''), and an external
+adversarial-review loop (a second model reviewing each draft) whose
+findings drove three real bug fixes and the soundness redesign. He did
+not write code or text. The full turn-by-turn development log---every
+hypothesis, dead end, root-caused bug, and design law---lives in the
+repository (\texttt{docs/41\_*.md}, $\sim$60 sections), making the
+provenance of every claim here auditable. The intent is to document,
+concretely, what current models can do on a genuine systems-research
+problem with hardware no prior GC has targeted.
 
 \bibliographystyle{ACM-Reference-Format}
 \bibliography{refs}

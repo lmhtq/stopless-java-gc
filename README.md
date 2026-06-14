@@ -1,121 +1,99 @@
-# stopless-java-gc
+# StoplessGC — capability revocation as the read barrier of a moving GC
 
-**A CHERI-native concurrent moving garbage collector for the JVM.**
+**A CHERI-native concurrent moving garbage collector for OpenJDK, designed,
+built, debugged, and measured autonomously by AI.**
 
-This project is a two-phase research effort to port OpenJDK ZGC to ARM's CHERI
-capability hardware (via the Morello platform), and then replace ZGC's software
-load barrier with a CHERI-native hardware-checked barrier. The end goal is to
-quantify whether hardware capabilities can deliver the same pause-time profile
-as ZGC at lower CPU overhead.
+A moving garbage collector needs a *read barrier*: a check on every reference
+load that catches references to objects the collector has relocated and
+redirects them. ZGC does it with colored pointers, Shenandoah with a
+forwarding word, Azul once did it in custom silicon. This project does it with
+**CHERI capability revocation** — a hardware temporal-safety feature on ARM
+Morello that makes the load–store unit *fault* on any use of a revoked
+pointer. StoplessGC relocates an object, revokes the capabilities to the old
+copy, and lets the hardware trap each surviving stale reference; a signal
+handler forwards it through a table and resumes the load. **Reference loads
+execute no barrier instructions** — the barrier is the capability tag check
+the hardware already performs on every access.
 
-The project is being implemented with substantial assistance from Claude Code
-+ Claude Opus 4.7 (Anthropic). See `docs/04_risk_register.md` for the AI
-collaboration model and what it does/doesn't change about the engineering risk.
+The paper is **[`paper/stopless/`](paper/stopless/)** (*Trap, Forward,
+Resume: Capability Revocation as the Read Barrier of a Moving Garbage
+Collector on CHERI*).
 
-## Status
+## This is an autonomous-AI-research artifact
 
-| Phase | Output | Status |
-|---|---|---|
-| Phase 0 — Repo + design docs + feasibility spike (2 wk) | this repo | **In progress (2026-05)** |
-| Phase 1 — ZGC port to CHERI/Morello (3–5 mo) | arXiv preprint #1 (workshop) + repo v0.1 | Pending spike outcome |
-| Phase 2 — CHERI-native ZGC barrier (1.5–2.5 mo) | arXiv preprint #2 (full) + repo v1.0 | Blocked on Phase 1 |
+Every line of code, every debugging step, the entire measurement campaign, and
+the paper were produced by **Anthropic's Claude models** (the Opus 4.6/4.7/4.8
+line over the project, Fable 5 in the concurrent-collector and Phase-2 work),
+running via **Claude Code**, across many hundreds of build–test–debug
+iterations on a CHERI/Morello stack. A human, **Xiaohui Luo**, was the
+*bootstrapper*: he supplied the research spark, the Morello/CheriBSD build and
+test hardware, high-level steering, and an adversarial second-model review loop
+— but wrote none of the code or prose.
+
+The point of publishing this is to show, concretely and auditably, what current
+models can do on a real systems-research problem: novel hardware no prior GC
+has targeted, a 25-kLOC C++ runtime to bend (HotSpot), and a result that
+survived eight rounds of adversarial review. The full turn-by-turn record —
+every hypothesis, dead end, root-caused bug, and design law — is in
+[`docs/41_c9_research_handler_fix_and_zero_boot_blocker.md`](docs/41_c9_research_handler_fix_and_zero_boot_blocker.md)
+(~60 sections, §A–§BH). Nothing here is polished after the fact; the log is the
+real trace.
+
+## Results (OpenJDK 17 interpreter, ARM Morello purecap, under QEMU)
+
+- **The relocation pause is independent of heap size.** With the root set
+  held constant, the move pause stays ~13–15 ms while the live heap grows
+  **46×** (3.6 → 163 MiB) — it is bounded by roots + bytes copied, not heap.
+- **Sound concurrent revocation, implemented.** Using Morello's per-page
+  capability-load (CLG) barrier, the collector opens a revocation epoch
+  *inside* the pause (milliseconds) and runs the heap-linear sweep *off-pause*:
+  median mutator pause **18.5 ms** (p90 25.7, full trace) on a heap growing to
+  79 MiB where the synchronous design pauses for seconds.
+- **The identity barrier is nearly free**, and forwarding metadata must be
+  *integers* re-derived from revocation-exempt roots (storing capabilities is
+  fatal — the sweep clears the collector's own table; a CHERI-specific design
+  law the project root-caused the hard way).
+
+All numbers trace to raw logs under [`paper/data/`](paper/data/), including
+fault-injection runs of the fail-safe paths.
+
+> Caveat, stated plainly: measured under QEMU system emulation, so absolute
+> times are inflated — the **shapes** (flat vs linear, sound vs unsound) are
+> the architectural claims, not the milliseconds. It is the *relocation and
+> barrier substrate* of a collector; liveness, reclamation, and address reuse
+> are future work, and the paper says so.
 
 ## Layout
 
 ```
-stopless-java-gc/
-├── README.md
-├── LICENSE                     # Apache 2.0 (patches inherit OpenJDK GPL when applied)
-├── CHANGELOG.md
-├── .gitignore                  # third_party/, build artifacts, drafts
-├── docs/                       # design docs, risk register, ADRs
-│   ├── 00_design_overview.md
-│   ├── 01_phase_i_zgc_port.md
-│   ├── 02_phase_ii_cheri_barrier.md
-│   ├── 03_build_setup.md
-│   ├── 04_risk_register.md
-│   └── _drafts/                # gitignored; meta writeups not yet published
-├── scripts/                    # bootstrap + build + benchmark + plot
-│   ├── bootstrap.sh
-│   ├── apply_patches.sh
-│   ├── build_jdk.sh
-│   ├── run_tests.sh
-│   ├── run_benchmarks.sh
-│   └── plot_results.py
-├── src/                        # OUR new code (lives outside OpenJDK tree)
-│   ├── cap_runtime/            # cap-aware GC bookkeeping, linked into HotSpot
-│   └── measurement/            # perf counter harness
-├── patches/                    # OUR patches against 3rd-party (committed)
-│   └── openjdk-jdk17/          # *.patch files, applied by scripts/apply_patches.sh
-├── tests/
-│   ├── unit/                   # gtest against src/cap_runtime/
-│   ├── integration/            # jtreg + DaCapo on the patched JDK
-│   └── bench/                  # perf-counter benchmarks
-├── paper/                      # arXiv LaTeX skeletons
-│   ├── phase_i.tex
-│   ├── phase_ii.tex
-│   └── refs.bib
-└── third_party/                # gitignored; populated by bootstrap
-    ├── cheribuild/
-    ├── openjdk-jdk17/
-    ├── mojo-patches/
-    ├── cheribsd/
-    └── cornucopia/
+src/cap_runtime/stopless_gc/   the CHERI-side runtime (C): arena allocator,
+                               forwarding table, SIGPROT heal handler, revoke
+patches/openjdk-jdk17/         in-place HotSpot patches (.record = git diff per
+                               file) — interpreter, GC heap, template table
+tests/integration/             ConcatTest, IntegrityGC, StoplessBench, ...
+paper/stopless/                the paper (LaTeX), figures, plots, raw data
+docs/41_*.md                   the autonomous development war-log (§A–§BH)
+third_party/                   NOT committed — OpenJDK 17u + CheriBSD are
+                               fetched/patched locally (see scripts/)
 ```
 
-## Out-of-tree discipline
+## Reproducing
 
-**Third-party source is never committed to this repository.** It is cloned into
-`third_party/` (gitignored) by `scripts/bootstrap.sh`. Our modifications to
-third-party source live in two places:
+The build needs a Morello/CheriBSD cross-toolchain, a purecap CheriBSD guest,
+and OpenJDK 17u. The CHERI runtime builds standalone
+(`cd src/cap_runtime/stopless_gc && make CROSS=1`); the HotSpot patches apply
+to a jdk17u checkout. End-to-end this is a substantial environment to stand up
+— the war-log documents it. The paper compiles with no hardware:
+`cd paper/stopless && make` (uses the `texlive/texlive` Docker image).
 
-1. **Net-new code** lives in `src/` and is linked into the OpenJDK build via a
-   single hook patch (`patches/openjdk-jdk17/0001-cap-runtime-hook.patch`).
-2. **Necessary in-place edits** to existing third-party files are stored as
-   `.patch` files under `patches/openjdk-jdk17/`, applied idempotently by
-   `scripts/apply_patches.sh`.
+## License
 
-This keeps the repo small, the diff against upstream visible, and the
-contribution boundary unambiguous for both reviewers and arXiv readers.
+Apache-2.0 for the net-new runtime and tooling (see [`LICENSE`](LICENSE)).
+The OpenJDK patches inherit GPLv2-with-Classpath-exception when applied to the
+OpenJDK tree.
 
-## Quickstart
+## Credit
 
-```bash
-git clone <this-repo> stopless-java-gc
-cd stopless-java-gc
-./scripts/bootstrap.sh           # clones third_party, builds Morello SDK
-./scripts/apply_patches.sh       # applies patches/openjdk-jdk17/*.patch
-./scripts/build_jdk.sh           # builds patched JDK against Morello SDK
-./scripts/run_tests.sh           # unit + integration smoke
-./scripts/run_benchmarks.sh      # DaCapo + microbench on Morello FVP
-```
-
-See `docs/03_build_setup.md` for prerequisites and platform notes.
-
-## Citation
-
-If you reference this work before the preprints land, please cite:
-
-```
-Stopless-Java-GC: A CHERI-native concurrent moving GC for the JVM.
-Work in progress, 2026. https://github.com/<TBD>/stopless-java-gc
-Implemented with assistance from Claude Opus 4.7 via Claude Code (Anthropic).
-```
-
-## Prior art
-
-The design and contribution boundary is informed by the existing CHERI×GC
-literature. The key works this project sits adjacent to:
-
-- **CHERIvoke** (Xia et al., MICRO 2019) — sweeping CHERI capability revocation
-  for C/C++ temporal safety.
-- **Cornucopia** (Filardo et al., S&P 2020) — concurrent revocation with a
-  small STW phase.
-- **Cornucopia Reloaded** (Filardo et al., ASPLOS 2024) — per-page hardware
-  capability load barriers on Morello; near-zero pauses.
-- **MOJO** (Univ. of Manchester + THG, 2024+) — port of OpenJDK 17 Epsilon /
-  Serial / G1 collectors to CheriBSD on Morello. **ZGC is not in MOJO's scope.**
-- **ZGC** (Liden, Österlund et al., OpenJDK) — pauseless moving GC with
-  colored pointers and software load barriers.
-
-Full references in `paper/refs.bib`.
+Research and authorship: **Claude (Opus 4.6/4.7/4.8, Fable 5)** via Claude
+Code, Anthropic. Bootstrapper: **Xiaohui Luo** (lmhtq1991@gmail.com). Part of
+an experiment in autonomous AI research — see [expai.cc](https://expai.cc).
