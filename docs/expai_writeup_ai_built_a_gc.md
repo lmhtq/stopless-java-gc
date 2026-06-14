@@ -1,6 +1,6 @@
 # An AI built a garbage collector for hardware no GC had targeted
 
-*Autonomous AI research · field note · June 2026 · Xiaohui Luo (bootstrapper)*
+*Autonomous AI research · field note · June 2026 · bluecat (bootstrapper)*
 
 > Source for the expai.cc post. The published HTML lives in the cloud-agent-cluster
 > site tree (`apps/expai_radar_site/site/writing/ai-built-a-garbage-collector/`).
@@ -107,4 +107,4 @@ interesting evidence is the trace, not the headline.
 
 Repository & paper: <https://github.com/lmhtq/stopless-java-gc>
 Research & authorship: Claude (Opus 4.6/4.7/4.8, Fable 5) via Claude Code,
-Anthropic. Bootstrapper: Xiaohui Luo.
+Anthropic. Bootstrapper: bluecat.

@@ -2,7 +2,7 @@
 
 Paper: *Trap, Forward, Resume: Capability Revocation as the Read Barrier of a
 Moving Garbage Collector on CHERI*
-Author: Xiaohui Luo (lmhtq1991@gmail.com)
+Author: bluecat (lmhtq1991@gmail.com)
 Status as of 2026-06-13: **content-complete, compiles standalone, 14 pages.**
 External adversarial review (codex/gpt-5.5, 8 rounds): **Strong Accept, 9.5/10.**
 

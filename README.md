@@ -25,7 +25,7 @@ Every line of code, every debugging step, the entire measurement campaign, and
 the paper were produced by **Anthropic's Claude models** (the Opus 4.6/4.7/4.8
 line over the project, Fable 5 in the concurrent-collector and Phase-2 work),
 running via **Claude Code**, across many hundreds of build–test–debug
-iterations on a CHERI/Morello stack. A human, **Xiaohui Luo**, was the
+iterations on a CHERI/Morello stack. A human, **bluecat**, was the
 *bootstrapper*: he supplied the research spark, the Morello/CheriBSD build and
 test hardware, high-level steering, and an adversarial second-model review loop
 — but wrote none of the code or prose.
@@ -95,5 +95,5 @@ OpenJDK tree.
 ## Credit
 
 Research and authorship: **Claude (Opus 4.6/4.7/4.8, Fable 5)** via Claude
-Code, Anthropic. Bootstrapper: **Xiaohui Luo** (lmhtq1991@gmail.com). Part of
+Code, Anthropic. Bootstrapper: **bluecat** (lmhtq1991@gmail.com). Part of
 an experiment in autonomous AI research — see [expai.cc](https://expai.cc).
